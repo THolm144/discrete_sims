@@ -312,6 +312,10 @@ def add_beam_source(sim, args, world, beam_cfg: dict, units):
 # PHYSICS
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PHYSICS
+# ─────────────────────────────────────────────────────────────────────────────
+
 def configure_physics(sim, args, script_dir: Path, world,
                       caps: dict, target_vol: str, units):
     sim.physics_manager.physics_list_name = args.physics_list
@@ -326,9 +330,9 @@ def configure_physics(sim, args, script_dir: Path, world,
         
         # ── HANDLE CHERENKOV TOGGLE ──────────────────────────────────────────
         if args.disable_cherenkov:
-            sim.physics_manager.optical_options["G4OpticalPhysics"] = {
-                "SetCerenkovActivate": False
-            }
+            # FIX: Must be appended BEFORE init. Geant4 locks physics processes 
+            # upon initialization. Modifying them after causes fIllegalApplicationState.
+            sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov false")
             print("[SIM] Optical physics ENABLED (Scintillation ONLY, Cherenkov DISABLED).")
         else:
             print("[SIM] Optical physics ENABLED (Both Scintillation & Cherenkov ACTIVE).")
@@ -339,7 +343,6 @@ def configure_physics(sim, args, script_dir: Path, world,
     else:
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = False
         print("[SIM] Optical physics DISABLED.")
-
     
     
 # ─────────────────────────────────────────────────────────────────────────────

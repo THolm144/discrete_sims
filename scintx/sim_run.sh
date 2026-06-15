@@ -4,7 +4,7 @@
 # Usage: bash run_sim.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
-WORLD=scintx_simp_array    # world module name
+WORLD=scintx_sipm_array    # world module name
 PARTICLE=proton            # primary particle type (e.g., proton, electron, gamma)
 ENERGY_KEV=50000           # energy in keV (200000 = 200 MeV)
 N_PARTICLES=100            # particles per run

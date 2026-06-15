@@ -1,0 +1,57 @@
+{
+    "world": "scintx_sipm_array",
+    "particle": "proton",
+    "energy_kev": 50000.0,
+    "n_primaries": 100,
+    "threads": 8,
+    "beam_radius_cm": 1.0,
+    "physics_list": "G4EmStandardPhysics_option4",
+    "batch_dir": "runs/scintx_sipm_array/50000keV_20260615_113057",
+    "output_dir": "runs/scintx_sipm_array/50000keV_20260615_113057/run_1",
+    "material": "ScintX",
+    "phantom_cm": [
+        10.0,
+        10.0,
+        0.6
+    ],
+    "target_volume": "scintillator",
+    "detector_volumes": [
+        "sipm_0",
+        "sipm_1",
+        "sipm_2",
+        "sipm_3"
+    ],
+    "expected_dedx": 1.0,
+    "active_z_ranges_mm": [
+        [
+            -3.0,
+            3.0
+        ]
+    ],
+    "dose_spacing_mm": 0.1,
+    "capabilities": {
+        "optical": true,
+        "dose": true,
+        "sipm_hits": true,
+        "optical_exits": true,
+        "calorimeter_mode": false
+    },
+    "beam_config": {
+        "direction": [
+            0,
+            0,
+            -1
+        ],
+        "target_cm": [
+            0,
+            0,
+            0.3
+        ],
+        "offset_cm": 2.0
+    },
+    "dose_size_vox": [
+        100,
+        100,
+        6
+    ]
+}
