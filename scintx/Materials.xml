@@ -116,10 +116,18 @@
         <ve energy="4.13" value="1.53"/>
         <ve energy="6.20" value="1.53"/>
       </propertyvector>
+      
       <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">
-        <ve energy="1.55" value="2.0"/>
-        <ve energy="6.20" value="2.0"/>
+        <ve energy="1.0"  value="1.0e-9"/>
+        <ve energy="2.47" value="1.0e-9"/>
+        
+        <ve energy="2.48" value="10.0"/>
+        <ve energy="3.54" value="10.0"/>
+        
+        <ve energy="3.55" value="1.0e-9"/>
+        <ve energy="10.0" value="1.0e-9"/>
       </propertyvector>
+
       <propertyvector name="SCINTILLATIONCOMPONENT1" energyunit="eV">
         <ve energy="2.2000" value="0.000"/>
         <ve energy="2.2576" value="0.086"/>

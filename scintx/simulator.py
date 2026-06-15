@@ -1,6 +1,4 @@
 """
-simulator.py
-============
 CLI-driven OpenGATE simulation.  World modules declare their capabilities
 via a CAPABILITIES dict; the simulator wires actors accordingly.
 CLI flags can override world defaults (e.g. --optical off).
@@ -159,6 +157,14 @@ def resolve_output_dirs(args, script_dir: Path) -> tuple[Path, Path]:
 # ACTOR WIRING
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTOR WIRING
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTOR WIRING
+# ─────────────────────────────────────────────────────────────────────────────
+
 def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     registry = {
         "optical_exited_actor":  None,
@@ -169,6 +175,8 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
 
     target_vol       = getattr(world, "TARGET_VOLUME_NAME",    "target")
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
+
+    
 
     # ── Optical tracking (full step-by-step, opticalphoton only) ─────────
     if caps.get("track_optical", False) and caps.get("optical", False):
@@ -222,6 +230,22 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
         registry["dose_actor"] = dose
 
     return registry
+    # ── Per-detector hit actors ───────────────────────────────────────────
+    if caps.get("sipm_hits", False) and detector_volumes:
+        for idx, vol_name in enumerate(detector_volumes):
+            if vol_name not in sim.volume_manager.volumes:
+                print(f"  WARNING: detector volume '{vol_name}' not found — skipping.")
+                continue
+            hits = sim.add_actor("PhaseSpaceActor", f"detector_hits_{idx}")
+            hits.attached_to                = vol_name
+            hits.authorize_repeated_volumes = True
+            hits.output_filename            = f"detector_hits_{idx}.root"
+            hits.steps_to_store             = "entering"
+            hits.attributes = [
+                "ParticleName", "KineticEnergy", "Position",
+                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime",
+            ]
+            registry["hit_actors"].append(hits)
 
     # ── Dose actor ────────────────────────────────────────────────────────
     if caps.get("dose", True):
