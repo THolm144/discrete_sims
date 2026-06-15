@@ -92,7 +92,9 @@ def parse_args():
                    help="Override world optical capability. 'world' = respect world manifest.")
     p.add_argument("--dose",         choices=["on", "off", "world"],  default="world")
     p.add_argument("--sipm-hits",    choices=["on", "off", "world"],  default="world")
-    return p.parse_args()
+    # Add this line near the other capability overrides in parse_args()
+    p.add_argument("--disable-cherenkov", action="store_true",
+                   help="Disable Cherenkov radiation process while keeping scintillation.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -321,9 +323,19 @@ def configure_physics(sim, args, script_dir: Path, world,
     if caps["optical"]:
         optical_file = script_dir / "Materials.xml"
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = True
+        
+        # ── HANDLE CHERENKOV TOGGLE ──────────────────────────────────────────
+        if args.disable_cherenkov:
+            sim.physics_manager.optical_options["G4OpticalPhysics"] = {
+                "SetCerenkovActivate": False
+            }
+            print("[SIM] Optical physics ENABLED (Scintillation ONLY, Cherenkov DISABLED).")
+        else:
+            print("[SIM] Optical physics ENABLED (Both Scintillation & Cherenkov ACTIVE).")
+        # ──────────────────────────────────────────────────────────────────────
+        
         if optical_file.exists():
             sim.physics_manager.optical_properties_file = str(optical_file)
-        print("[SIM] Optical physics ENABLED.")
     else:
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = False
         print("[SIM] Optical physics DISABLED.")
