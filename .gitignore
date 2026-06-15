@@ -1,0 +1,13 @@
+# Ignore simulation data and outputs
+*.root
+*.mhd
+*.raw
+*.npy
+*.zraw
+runs/
+
+# Ignore configuration/metadata dumps if unwanted
+*.json
+
+# System files
+.DS_Store

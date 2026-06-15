@@ -1,0 +1,9 @@
+========================================================================
+             RADiCAL SIMULATION TO PAPER COMPARISON REPORT             
+========================================================================
+Functional Target Scaling Fit: sigma_t = (a / sqrt(E)) (+) b
+Paper Constant Fit Parameters: a ~ 256 ps*sqrt(GeV), b ~ 17.5 ps
+------------------------------------------------------------------------
+Energy (GeV) | Sim sigma_t (ps) | Paper Target (ps) | Status        
+------------------------------------------------------------------------
+25           | No Opt/Time Data | 54.1             | Check ROOT    
