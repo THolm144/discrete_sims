@@ -6,7 +6,7 @@
 
 WORLD=radi_cal            # World module name matching your setup
 PARTICLE=e-               # Primary beam particle type used in the paper
-N_PARTICLES=100          # Primary events per run
+N_PARTICLES=1          # Primary events per run
 THREADS=8                 # CPU threads per run
 N_RUNS=1                  # Number of sub-runs to average over
 BEAM_RADIUS=0.2           # Beam radius in cm

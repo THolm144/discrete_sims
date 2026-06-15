@@ -101,7 +101,7 @@ def build_world(sim, units):
     dsb_z_min = (_DSB_CENTER_Z_MM - _DSB_LENGTH_MM / 2) * units.mm
     dsb_z_max = (_DSB_CENTER_Z_MM + _DSB_LENGTH_MM / 2) * units.mm
 
-    # Target volume
+    # Target volume container (Acts as the overarching experimental envelope)
     target = sim.add_volume("Box", TARGET_VOLUME_NAME)
     target.mother   = "world"
     target.size     = [14 * units.mm, 14 * units.mm, cap_total]
@@ -112,58 +112,38 @@ def build_world(sim, units):
         for x, y in _CAP_POSITIONS_MM
     ]
 
-    # Front extension
+    # 1. BUILD CONTINUOUS CAPILLARIES DIRECTLY IN THE TARGET ENVELOPE
+    _build_continuous_capillaries(sim, cap_positions, units, cap_total, dsb_z_min, dsb_z_max)
+
+    # 2. BUILD SOLID LAYERS (Geant4 handles the nested volumes automatically)
     front_gap_thick = (cap_total - stack_thick) / 2.0
     current_z = -(stack_thick / 2.0)
 
-    front_gap = sim.add_volume("Box", "front_capillary_extension")
-    front_gap.mother      = TARGET_VOLUME_NAME
-    front_gap.size        = [14 * units.mm, 14 * units.mm, front_gap_thick]
-    front_gap.translation = [0, 0, current_z - front_gap_thick / 2.0]
-    front_gap.material    = "Air"
-    _add_capillaries(sim, "front_capillary_extension",
-                     front_gap_thick, front_gap.translation[2],
-                     cap_positions, units, dsb_z_min, dsb_z_max)
+    # Front air extension
+    _build_solid_plate(sim, "front_gap", front_gap_thick, "Air", 
+                       current_z - front_gap_thick / 2.0, units)
 
-    # Main stack
+    # Main structural stacking
     for layer_idx in range(29):
         current_z += lyso_thick / 2.0
-        lyso = sim.add_volume("Box", f"lyso_layer_{layer_idx}")
-        lyso.mother      = TARGET_VOLUME_NAME
-        lyso.size        = [14 * units.mm, 14 * units.mm, lyso_thick]
-        lyso.material    = "LYSO"
-        lyso.translation = [0, 0, current_z]
-        _add_capillaries(sim, f"lyso_layer_{layer_idx}",
-                         lyso_thick, current_z,
-                         cap_positions, units, dsb_z_min, dsb_z_max)
+        _build_solid_plate(sim, f"lyso_{layer_idx}", lyso_thick, "LYSO", 
+                           current_z, units)
         current_z += lyso_thick / 2.0
 
         if layer_idx < 28:
-            for label, thick in [("tyvek_f", tyvek_thick),
-                                  ("w",       w_thick),
-                                  ("tyvek_b", tyvek_thick)]:
+            for label, thick, mat in [("tyvek_f", tyvek_thick, "Tyvek"),
+                                      ("w",       w_thick,     "Tungsten"),
+                                      ("tyvek_b", tyvek_thick, "Tyvek")]:
                 current_z += thick / 2.0
-                vol = sim.add_volume("Box", f"{label}_layer_{layer_idx}")
-                vol.mother      = TARGET_VOLUME_NAME
-                vol.size        = [14 * units.mm, 14 * units.mm, thick]
-                vol.material    = ("Tyvek" if "tyvek" in label else "Tungsten")
-                vol.translation = [0, 0, current_z]
-                _add_capillaries(sim, f"{label}_layer_{layer_idx}",
-                                 thick, current_z,
-                                 cap_positions, units, dsb_z_min, dsb_z_max)
+                _build_solid_plate(sim, f"{label}_{layer_idx}", thick, mat, 
+                                     current_z, units)
                 current_z += thick / 2.0
 
-    # Back extension
-    back_gap = sim.add_volume("Box", "back_capillary_extension")
-    back_gap.mother      = TARGET_VOLUME_NAME
-    back_gap.size        = [14 * units.mm, 14 * units.mm, front_gap_thick]
-    back_gap.translation = [0, 0, current_z + front_gap_thick / 2.0]
-    back_gap.material    = "Air"
-    _add_capillaries(sim, "back_capillary_extension",
-                     front_gap_thick, back_gap.translation[2],
-                     cap_positions, units, dsb_z_min, dsb_z_max)
+    # Back air extension
+    _build_solid_plate(sim, "back_gap", front_gap_thick, "Air", 
+                       current_z + front_gap_thick / 2.0, units)
 
-    # SiPMs
+    # 3. SIPMs
     sipm_thick = _SIPM_THICK_MM * units.mm
     sipm_xy    = _SIPM_XY_MM   * units.mm
     z_up = -(cap_total / 2.0) - sipm_thick / 2.0
@@ -183,45 +163,72 @@ def build_world(sim, units):
     return sim
 
 
-def _add_capillaries(sim, mother_name, thickness, slice_center_z,
-                     cap_positions, units, dsb_z_min, dsb_z_max):
-    cap_outer = _CAP_OUTER_MM * units.mm
-    cap_inner = _CAP_INNER_MM * units.mm
+# ─────────────────────────────────────────────────────────────────────────────
+# GEOMETRY HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 
-    slice_z_min = slice_center_z - thickness / 2.0
-    slice_z_max = slice_center_z + thickness / 2.0
-    intersects_dsb = slice_z_max > dsb_z_min and slice_z_min < dsb_z_max
+def _build_continuous_capillaries(sim, cap_positions, units, cap_total, dsb_z_min, dsb_z_max):
+    """Creates unbroken capillary tubes spanning the full target length."""
+    dsb_z_center = _DSB_CENTER_Z_MM * units.mm
+    dsb_length   = _DSB_LENGTH_MM * units.mm
 
     for cap_idx, (cx, cy) in enumerate(cap_positions):
         if cap_idx == 0:
-            hole = sim.add_volume("Tubs", f"hole_air_{mother_name}_{cap_idx}")
-            hole.mother    = mother_name
-            hole.rmin      = 0.0
-            hole.rmax      = cap_outer
-            hole.dz        = thickness / 2.0
+            hole = sim.add_volume("Tubs", "center_air_channel")
+            hole.mother      = TARGET_VOLUME_NAME
+            hole.rmin        = 0.0
+            hole.rmax        = _CAP_OUTER_MM * units.mm
+            hole.dz          = cap_total / 2.0
             hole.translation = [cx, cy, 0]
-            hole.material  = "Air"
+            hole.material    = "Air"
             continue
 
-        wall = sim.add_volume("Tubs", f"cap_wall_{mother_name}_{cap_idx}")
-        wall.mother      = mother_name
-        wall.rmin        = cap_inner
-        wall.rmax        = cap_outer
-        wall.dz          = thickness / 2.0
+        # Continuous Quartz Wall outer sheath
+        wall = sim.add_volume("Tubs", f"cap_{cap_idx}_wall")
+        wall.mother      = TARGET_VOLUME_NAME
+        wall.rmin        = _CAP_INNER_MM * units.mm
+        wall.rmax        = _CAP_OUTER_MM * units.mm
+        wall.dz          = cap_total / 2.0
         wall.translation = [cx, cy, 0]
         wall.material    = "Quartz"
 
-        core = sim.add_volume("Tubs", f"cap_core_{mother_name}_{cap_idx}")
-        core.mother      = mother_name
-        core.rmin        = 0.0
-        core.rmax        = cap_inner
-        core.dz          = thickness / 2.0
-        core.translation = [cx, cy, 0]
-        core.material    = "DSB1" if intersects_dsb else "Quartz"
+        # Inner fluid/core split into 3 segments along Z
+        up_len = (dsb_z_min - (-cap_total / 2.0))
+        if up_len > 0:
+            up_core = sim.add_volume("Tubs", f"cap_{cap_idx}_core_up")
+            up_core.mother      = TARGET_VOLUME_NAME
+            up_core.rmin        = 0.0
+            up_core.rmax        = _CAP_INNER_MM * units.mm
+            up_core.dz          = up_len / 2.0
+            up_core.translation = [cx, cy, -cap_total/2.0 + up_len/2.0]
+            up_core.material    = "Quartz"
+
+        dsb_core = sim.add_volume("Tubs", f"cap_{cap_idx}_core_dsb1")
+        dsb_core.mother      = TARGET_VOLUME_NAME
+        dsb_core.rmin        = 0.0
+        dsb_core.rmax        = _CAP_INNER_MM * units.mm
+        dsb_core.dz          = dsb_length / 2.0
+        dsb_core.translation = [cx, cy, dsb_z_center]
+        dsb_core.material    = "DSB1"
+
+        dn_len = ((cap_total / 2.0) - dsb_z_max)
+        if dn_len > 0:
+            dn_core = sim.add_volume("Tubs", f"cap_{cap_idx}_core_dn")
+            dn_core.mother      = TARGET_VOLUME_NAME
+            dn_core.rmin        = 0.0
+            dn_core.rmax        = _CAP_INNER_MM * units.mm
+            dn_core.dz          = dn_len / 2.0
+            dn_core.translation = [cx, cy, cap_total/2.0 - dn_len/2.0]
+            dn_core.material    = "Quartz"
 
 
-def add_optical_surfaces(sim, units):
-    pass
+def _build_solid_plate(sim, name, thickness, material, z_pos, units):
+    """Creates a clean solid slab block without programmatic errors."""
+    plate = sim.add_volume("Box", name)
+    plate.mother      = TARGET_VOLUME_NAME
+    plate.size        = [14 * units.mm, 14 * units.mm, thickness]
+    plate.translation = [0, 0, z_pos]
+    plate.material    = material
 
 
 # ─────────────────────────────────────────────────────────────────────────────
