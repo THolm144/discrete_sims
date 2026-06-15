@@ -95,7 +95,7 @@ def parse_args():
     # Add this line near the other capability overrides in parse_args()
     p.add_argument("--disable-cherenkov", action="store_true",
                    help="Disable Cherenkov radiation process while keeping scintillation.")
-
+    return p.parse_args()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WORLD LOADING
