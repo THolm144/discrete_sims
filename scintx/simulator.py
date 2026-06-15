@@ -93,8 +93,9 @@ def parse_args():
     p.add_argument("--sipm-hits",     choices=["on", "off", "world"],  default="world")
     p.add_argument("--track-optical", choices=["on", "off", "world"],  default="world",
                    help="Enable step-by-step optical photon tracking.")
+    p.add_argument("--no-cerenkov", action="store_true", default=False,
+               help="Disable Cherenkov production (keep scintillation).")
     return p.parse_args()
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WORLD LOADING
@@ -303,12 +304,24 @@ def configure_physics(sim, args, script_dir: Path, world,
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = True
         if optical_file.exists():
             sim.physics_manager.optical_properties_file = str(optical_file)
-        print("[SIM] Optical physics ENABLED.")
+
+        # ── HANDLE CHERENKOV TOGGLE ──────────────────────────────────────────
+        if args.no_cerenkov:
+            # Send pure Geant4 UI command to turn off Cherenkov
+            sim.g4_commands_before_init.append(
+                "/process/optical/processActivation Cerenkov false"
+            )
+            print("[SIM] Optical physics ENABLED (Scintillation ONLY, Cherenkov DISABLED).")
+        else:
+            # Explicitly force Cherenkov on via Geant4 macro to ensure state clarity
+            sim.g4_commands_before_init.append(
+                "/process/optical/processActivation Cerenkov true"
+            )
+            print("[SIM] Optical physics ENABLED (Both Scintillation & Cherenkov ACTIVE).")
     else:
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = False
         print("[SIM] Optical physics DISABLED.")
-
-    
+        
 # ─────────────────────────────────────────────────────────────────────────────
 # METADATA
 # ─────────────────────────────────────────────────────────────────────────────
