@@ -19,18 +19,19 @@ World analyze() contract
     Returns
     -------
     A dict with any subset of these keys:
-        hits          dict  {process: count}  — photons reaching detectors
-        exits         dict  {process: count}  — photons leaving target volume
-        dose_centers  np.ndarray | None       — depth bin centers in cm
-        dose_edep     np.ndarray | None       — deposited energy per bin (MeV)
-        timing_res_ps float                   — timing resolution in ps (0 = N/A)
-        extra_lines   list[str]               — world-specific report lines
-        plots_saved   list[str]               — filenames of any extra plots saved
+        hits                 dict  {process: count}  — photons reaching detectors
+        exits                dict  {process: count}  — photons leaving target volume
+        dose_centers         np.ndarray | None       — depth bin centers in cm
+        dose_edep            np.ndarray | None       — deposited energy per bin (MeV)
+        timing_res_ps        float                   — timing resolution in ps (0 = N/A)
+        avg_photon_energy_ev float                   — average detected optical photon energy (0 = N/A)
+        extra_lines          list[str]               — world-specific report lines
+        plots_saved          list[str]               — filenames of any extra plots saved
 
 Usage:
     python3 analyze.py
-    python3 analyze.py --world scintx_sipm_array
-    python3 analyze.py --batch-dir runs/scintx_sipm_array/500000keV_20250101_120000
+    python3 analyze.py --world radi_cal
+    python3 analyze.py --batch-dir runs/radi_cal/50000000keV_20250101_120000
 """
 
 import argparse
@@ -39,8 +40,9 @@ import os
 import sys
 from pathlib import Path
 
+import uproot
+import numpy as np
 import analysis_utils as utils
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CLI
@@ -52,7 +54,6 @@ def parse_args():
     p.add_argument("--world",     default=None,
                    help="World name (scopes auto-discovery; auto-detected if omitted)")
     return p.parse_args()
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WORLD LOADING
@@ -68,6 +69,41 @@ def load_world(world_name: str, script_dir: Path):
         print(f"  WARNING: world module '{world_name}' not found — skipping world hooks.")
         return None
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DATA EXTRACTION HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_optical_metrics(hits_files):
+    """Fallback helper to extract timing and energy directly from ROOT files."""
+    all_photon_energies = []
+    timing_resolutions = []
+
+    for file_path in hits_files:
+        try:
+            with uproot.open(file_path) as file:
+                if "Hits" not in file:
+                    continue
+                tree = file["Hits"]
+                
+                # Extract energy
+                if "edep" in tree.keys():
+                    edeps = tree["edep"].array()
+                    # Filter for optical photons (< 1e-5 MeV) and convert to eV
+                    optical_edeps = [e * 1e6 for e in edeps if 0 < e < 1e-5] 
+                    all_photon_energies.extend(optical_edeps)
+
+                # Extract timing
+                if "time" in tree.keys():
+                    times = tree["time"].array()
+                    if len(times) > 1:
+                        timing_resolutions.append(np.std(times))
+        except Exception as e:
+            print(f"  WARNING: Could not parse ROOT file {file_path}: {e}")
+
+    avg_energy = np.mean(all_photon_energies) if all_photon_energies else 0.0
+    avg_timing = np.mean(timing_resolutions) if timing_resolutions else 0.0
+
+    return avg_timing, avg_energy
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REPORT ASSEMBLY
@@ -81,41 +117,36 @@ def build_report(batch_dir: Path, meta: dict, results: dict) -> str:
     total_primaries = meta["total_primaries"]
     total_optical   = meta["total_optical"]
 
-    # Dose totals for metric denominators
     dose_edep  = results.get("dose_edep")
     total_edep = float(dose_edep.sum()) if dose_edep is not None else 0.0
 
     caps = meta.get("capabilities", {})
 
-    # ── Optical section (only if optical was enabled) ─────────────────────
+    # ── Optical section ───────────────────────────────────────────────────
     if caps.get("optical", False) or sum(hits.values()) > 0:
         lines += utils.report_optical_section(
             hits, exits, total_optical, total_primaries, total_edep
         )
 
         timing_res = results.get("timing_res_ps", 0.0)
-        lines += [
-            "", "─" * utils.W, "  CALIBRATION CONSTANTS", "─" * utils.W,
-        ]
+        avg_energy = results.get("avg_photon_energy_ev", 0.0)
+        
+        lines += ["", "─" * utils.W, "  CALIBRATION CONSTANTS", "─" * utils.W]
         c_exp = hits.get("Cerenkov", 0) / total_primaries if total_primaries else 0
-        scint_lce = (hits.get("Scintillation", 0) / total_optical
-                     if total_optical > 0 else 0.0)
+        scint_lce = (hits.get("Scintillation", 0) / total_optical if total_optical > 0 else 0.0)
         edep_per_prim = total_edep / total_primaries if total_primaries else 0.0
+        
         lines += [
             f"  E_dep / primary      : {edep_per_prim:.4f} MeV",
             f"  C_exp (Cer hits/prim): {c_exp:.4f}",
-            f"  e_LCE (Scint hits/created): {scint_lce:.6f}",
-            f"  Timing resolution    : "
-            + (f"{timing_res:.2f} ps" if timing_res > 0 else "N/A"),
+            f"  e_LCE (Scint hits)   : {scint_lce:.6f}",
+            f"  Timing resolution    : " + (f"{timing_res:.2f} ps" if timing_res > 0 else "N/A"),
+            f"  Avg Photon Energy    : " + (f"{avg_energy:.2f} eV" if avg_energy > 0 else "N/A"),
         ]
 
     # ── Dose section ──────────────────────────────────────────────────────
     if caps.get("dose", True):
-        lines += utils.report_dose_section(
-            results.get("dose_centers"),
-            dose_edep,
-            total_primaries,
-        )
+        lines += utils.report_dose_section(results.get("dose_centers"), dose_edep, total_primaries)
 
     # ── World-specific extra lines ────────────────────────────────────────
     extra = results.get("extra_lines", [])
@@ -131,7 +162,6 @@ def build_report(batch_dir: Path, meta: dict, results: dict) -> str:
 
     lines += utils.report_footer()
     return "\n".join(lines)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
@@ -176,27 +206,25 @@ def main():
     (batch_dir / "batch_analysis.txt").write_text(report)
     print(f"\n  Report → {batch_dir / 'batch_analysis.txt'}")
 
-
 def _generic_analyze(batch_dir: Path, run_dirs: list, meta: dict) -> dict:
-    """Fallback: optical hits + exits + dose, no world-specific logic."""
+    """Fallback: optical hits + exits + dose + extracted uproot metrics."""
     hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
     exits_files = [d / "optical_exited.root" for d in run_dirs]
 
     hits        = utils.analyse_hits(hits_files)
     exits       = utils.analyse_exits(exits_files)
     centers, edep = utils.load_dose_mhd(run_dirs, meta["phantom_cm"])
-    timing_res  = (utils.extract_timing_resolution(hits_files)
-                   if hits_files else 0.0)
+    
+    timing_res, avg_energy = _extract_optical_metrics(hits_files)
 
-    # Fixed: Assigned timing_res to timing_res_ps key to match interface contract
     return {
-        "hits":          hits,
-        "exits":         exits,
-        "dose_centers":  centers,
-        "dose_edep":     edep,
-        "timing_res_ps": timing_res,
+        "hits":                 hits,
+        "exits":                exits,
+        "dose_centers":         centers,
+        "dose_edep":            edep,
+        "timing_res_ps":        timing_res,
+        "avg_photon_energy_ev": avg_energy,
     }
-
 
 if __name__ == "__main__":
     main()
