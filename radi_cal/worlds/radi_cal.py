@@ -44,9 +44,6 @@ ACTIVE_Z_RANGES_MM = [
     [0.0, PHANTOM_CM[2] * 10.0]
 ]
 
-# Minimum photons per event per channel to fire the timing trigger.
-# With 10 SiPM channels and ~5.7 hits/primary on average, threshold=1
-# ensures we capture timing data. Raise this as statistics improve.
 TIMING_TRIGGER_THRESHOLD = 1
 
 DETECTOR_VOLUME_NAMES = [
@@ -55,7 +52,7 @@ DETECTOR_VOLUME_NAMES = [
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# INTERNAL GEOMETRY CONSTANTS (used by build_world + get_geometry_primitives)
+# INTERNAL GEOMETRY CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 
 _LYSO_THICK_MM   = 1.5
@@ -79,6 +76,75 @@ _CAP_POSITIONS_MM = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GEOMETRY HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_layer_with_capillaries(sim, name, thickness, material, z_pos, units):
+    """
+    Creates a solid layer plate and populates it with local capillary segments.
+    The daughter segments automatically displace the plate's base material.
+    """
+    # 1. Create the solid plate (Mother volume for this layer's capillary segments)
+    plate = sim.add_volume("Box", name)
+    plate.mother = TARGET_VOLUME_NAME
+    plate.size = [14 * units.mm, 14 * units.mm, thickness]
+    plate.material = material
+    plate.translation = [0, 0, z_pos]
+    
+    # Define absolute Z boundaries of this layer to evaluate DSB doping zone
+    z_min = z_pos - thickness / 2.0
+    z_max = z_pos + thickness / 2.0
+    dsb_z_min = (_DSB_CENTER_Z_MM - _DSB_LENGTH_MM / 2.0) * units.mm
+    dsb_z_max = (_DSB_CENTER_Z_MM + _DSB_LENGTH_MM / 2.0) * units.mm
+
+    # Introduce a microscopic clearance (0.1 microns) to prevent Geant4 
+    # boundary precision spillover into adjacent layers during CheckOverlaps.
+    safety_margin = 0.0001 * units.mm
+    cap_dz = (thickness / 2.0) - safety_margin
+
+    # 2. Populate the plate with local capillary slices
+    for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
+        cx_g4 = cx * units.mm
+        cy_g4 = cy * units.mm
+        
+        if cap_idx == 0:
+            # Center air channel segment (Always Air)
+            air_seg = sim.add_volume("Tubs", f"{name}_cap_0_air")
+            air_seg.mother = name  
+            air_seg.rmin = 0.0
+            air_seg.rmax = _CAP_OUTER_MM * units.mm
+            air_seg.dz = cap_dz  
+            air_seg.translation = [cx_g4, cy_g4, 0]  
+            air_seg.material = "Air"
+        else:
+            # Regular capillary glass wall segment
+            wall_seg = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_wall")
+            wall_seg.mother = name
+            wall_seg.rmin = _CAP_INNER_MM * units.mm
+            wall_seg.rmax = _CAP_OUTER_MM * units.mm
+            wall_seg.dz = cap_dz
+            wall_seg.translation = [cx_g4, cy_g4, 0]
+            wall_seg.material = "Quartz"
+            
+            # Dynamically determine the core material based on this specific layer's Z position
+            if z_min >= dsb_z_min and z_max <= dsb_z_max:
+                core_material = "DSB1"
+            else:
+                core_material = "Quartz"
+                
+            # Capillary core segment
+            core_seg = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_core")
+            core_seg.mother = name
+            core_seg.rmin = 0.0
+            core_seg.rmax = _CAP_INNER_MM * units.mm
+            core_seg.dz = cap_dz
+            core_seg.translation = [cx_g4, cy_g4, 0]
+            core_seg.material = core_material
+
+    return plate
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WORLD CONSTRUCTION
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -90,60 +156,48 @@ def build_world(sim, units):
     lyso_thick  = _LYSO_THICK_MM  * units.mm
     w_thick     = _W_THICK_MM     * units.mm
     tyvek_thick = _TYVEK_THICK_MM * units.mm
+    cap_total   = _CAP_TOTAL_MM   * units.mm
 
-    stack_thick = (
-        29 * lyso_thick
-        + 28 * w_thick
-        + 56 * tyvek_thick
-    )
+    # Compute total thickness of the active sandwich stack
+    stack_thick = (29 * lyso_thick) + (28 * w_thick) + (56 * tyvek_thick)
+    
+    front_gap_thick = (cap_total - stack_thick) / 2.0
+    back_gap_thick = front_gap_thick
 
-    cap_total = _CAP_TOTAL_MM * units.mm
-    dsb_z_min = (_DSB_CENTER_Z_MM - _DSB_LENGTH_MM / 2) * units.mm
-    dsb_z_max = (_DSB_CENTER_Z_MM + _DSB_LENGTH_MM / 2) * units.mm
-
-    # Target volume container (Acts as the overarching experimental envelope)
+    # Target volume container
     target = sim.add_volume("Box", TARGET_VOLUME_NAME)
     target.mother   = "world"
     target.size     = [14 * units.mm, 14 * units.mm, cap_total]
     target.material = "Air"
 
-    cap_positions = [
-        [x * units.mm, y * units.mm]
-        for x, y in _CAP_POSITIONS_MM
-    ]
-
-    # 1. BUILD CONTINUOUS CAPILLARIES DIRECTLY IN THE TARGET ENVELOPE
-    _build_continuous_capillaries(sim, cap_positions, units, cap_total, dsb_z_min, dsb_z_max)
-
-    # 2. BUILD SOLID LAYERS (Geant4 handles the nested volumes automatically)
-    front_gap_thick = (cap_total - stack_thick) / 2.0
+    # Start layout from the far upstream (-Z) boundary of the stack
     current_z = -(stack_thick / 2.0)
 
-    # Front air extension
-    _build_solid_plate(sim, "front_gap", front_gap_thick, "Air", 
-                       current_z - front_gap_thick / 2.0, units)
+    # 1. Build Front Gap Layer
+    _build_layer_with_capillaries(sim, "front_gap", front_gap_thick, "Air", 
+                                  current_z - front_gap_thick / 2.0, units)
 
-    # Main structural stacking
+    # 2. Build the Main Absorber/Scintillator Layers
     for layer_idx in range(29):
+        # LYSO Plate
         current_z += lyso_thick / 2.0
-        _build_solid_plate(sim, f"lyso_{layer_idx}", lyso_thick, "LYSO", 
-                           current_z, units)
+        _build_layer_with_capillaries(sim, f"lyso_{layer_idx}", lyso_thick, "LYSO", current_z, units)
         current_z += lyso_thick / 2.0
-
+        
+        # Interstitial tracking/absorption layers
         if layer_idx < 28:
             for label, thick, mat in [("tyvek_f", tyvek_thick, "Tyvek"),
                                       ("w",       w_thick,     "Tungsten"),
                                       ("tyvek_b", tyvek_thick, "Tyvek")]:
                 current_z += thick / 2.0
-                _build_solid_plate(sim, f"{label}_{layer_idx}", thick, mat, 
-                                     current_z, units)
+                _build_layer_with_capillaries(sim, f"{label}_{layer_idx}", thick, mat, current_z, units)
                 current_z += thick / 2.0
 
-    # Back air extension
-    _build_solid_plate(sim, "back_gap", front_gap_thick, "Air", 
-                       current_z + front_gap_thick / 2.0, units)
+    # 3. Build Back Gap Layer
+    _build_layer_with_capillaries(sim, "back_gap", back_gap_thick, "Air", 
+                                  current_z + back_gap_thick / 2.0, units)
 
-    # 3. SIPMs
+    # 4. SiPMs Placement
     sipm_thick = _SIPM_THICK_MM * units.mm
     sipm_xy    = _SIPM_XY_MM   * units.mm
     z_up = -(cap_total / 2.0) - sipm_thick / 2.0
@@ -151,6 +205,8 @@ def build_world(sim, units):
 
     up_names = ["sipm_up_c", "sipm_up_1", "sipm_up_2", "sipm_up_3", "sipm_up_4"]
     dn_names = ["sipm_dn_c", "sipm_dn_1", "sipm_dn_2", "sipm_dn_3", "sipm_dn_4"]
+
+    cap_positions = [[x * units.mm, y * units.mm] for x, y in _CAP_POSITIONS_MM]
 
     for i, (cx, cy) in enumerate(cap_positions):
         for name, z_pos in [(up_names[i], z_up), (dn_names[i], z_dn)]:
@@ -164,85 +220,10 @@ def build_world(sim, units):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_continuous_capillaries(sim, cap_positions, units, cap_total, dsb_z_min, dsb_z_max):
-    """Creates unbroken capillary tubes spanning the full target length."""
-    dsb_z_center = _DSB_CENTER_Z_MM * units.mm
-    dsb_length   = _DSB_LENGTH_MM * units.mm
-
-    for cap_idx, (cx, cy) in enumerate(cap_positions):
-        if cap_idx == 0:
-            hole = sim.add_volume("Tubs", "center_air_channel")
-            hole.mother      = TARGET_VOLUME_NAME
-            hole.rmin        = 0.0
-            hole.rmax        = _CAP_OUTER_MM * units.mm
-            hole.dz          = cap_total / 2.0
-            hole.translation = [cx, cy, 0]
-            hole.material    = "Air"
-            continue
-
-        # Continuous Quartz Wall outer sheath
-        wall = sim.add_volume("Tubs", f"cap_{cap_idx}_wall")
-        wall.mother      = TARGET_VOLUME_NAME
-        wall.rmin        = _CAP_INNER_MM * units.mm
-        wall.rmax        = _CAP_OUTER_MM * units.mm
-        wall.dz          = cap_total / 2.0
-        wall.translation = [cx, cy, 0]
-        wall.material    = "Quartz"
-
-        # Inner fluid/core split into 3 segments along Z
-        up_len = (dsb_z_min - (-cap_total / 2.0))
-        if up_len > 0:
-            up_core = sim.add_volume("Tubs", f"cap_{cap_idx}_core_up")
-            up_core.mother      = TARGET_VOLUME_NAME
-            up_core.rmin        = 0.0
-            up_core.rmax        = _CAP_INNER_MM * units.mm
-            up_core.dz          = up_len / 2.0
-            up_core.translation = [cx, cy, -cap_total/2.0 + up_len/2.0]
-            up_core.material    = "Quartz"
-
-        dsb_core = sim.add_volume("Tubs", f"cap_{cap_idx}_core_dsb1")
-        dsb_core.mother      = TARGET_VOLUME_NAME
-        dsb_core.rmin        = 0.0
-        dsb_core.rmax        = _CAP_INNER_MM * units.mm
-        dsb_core.dz          = dsb_length / 2.0
-        dsb_core.translation = [cx, cy, dsb_z_center]
-        dsb_core.material    = "DSB1"
-
-        dn_len = ((cap_total / 2.0) - dsb_z_max)
-        if dn_len > 0:
-            dn_core = sim.add_volume("Tubs", f"cap_{cap_idx}_core_dn")
-            dn_core.mother      = TARGET_VOLUME_NAME
-            dn_core.rmin        = 0.0
-            dn_core.rmax        = _CAP_INNER_MM * units.mm
-            dn_core.dz          = dn_len / 2.0
-            dn_core.translation = [cx, cy, cap_total/2.0 - dn_len/2.0]
-            dn_core.material    = "Quartz"
-
-
-def _build_solid_plate(sim, name, thickness, material, z_pos, units):
-    """Creates a clean solid slab block without programmatic errors."""
-    plate = sim.add_volume("Box", name)
-    plate.mother      = TARGET_VOLUME_NAME
-    plate.size        = [14 * units.mm, 14 * units.mm, thickness]
-    plate.translation = [0, 0, z_pos]
-    plate.material    = material
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS HOOK
 # ─────────────────────────────────────────────────────────────────────────────
 
 def analyze(batch_dir, run_dirs, meta, utils):
-    """
-    RADiCAL-specific analysis:
-    - Longitudinal shower profile aggregated across runs
-    - Transverse shower core at shower maximum
-    - SiPM hits split by upstream / downstream
-    - Calorimeter batch aggregation → analyzed_longitudinal_profile.txt
-    """
     import matplotlib.pyplot as plt
 
     hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
@@ -254,20 +235,17 @@ def analyze(batch_dir, run_dirs, meta, utils):
                       threshold_photon=TIMING_TRIGGER_THRESHOLD)
                   if hits_files else 0.0)
 
-    # Longitudinal + transverse .mhd accumulation
     long_arr, trans_arr = utils.load_calorimeter_mhd(
         run_dirs,
         long_glob  = "run_Dose_edep.mhd",
         trans_glob = "transverse_shower_max_edep.mhd",
     )
 
-    # Aggregate batch .txt / .npy files → analyzed_longitudinal_profile.txt
     _aggregate_batch(batch_dir, run_dirs, meta, utils)
 
     extra_lines = []
     plots_saved = []
 
-    # Longitudinal profile plot
     if long_arr is not None:
         dz_mm = meta.get("dose_spacing_mm", 0.1)
         bins  = np.arange(len(long_arr)) * dz_mm
@@ -287,7 +265,6 @@ def analyze(batch_dir, run_dirs, meta, utils):
         extra_lines.append(f"  Peak edep bin: {bins[np.argmax(avg)]:.1f} mm")
         extra_lines.append(f"  Peak edep val: {avg.max():.4f} MeV")
 
-    # Transverse heatmap
     if trans_arr is not None:
         fig, ax = plt.subplots(figsize=(6, 6))
         ext = [-7, 7, -7, 7]
@@ -303,7 +280,6 @@ def analyze(batch_dir, run_dirs, meta, utils):
         plt.close(fig)
         plots_saved.append(out.name)
 
-    # Upstream vs downstream SiPM hit split
     up_hits = sum(
         hits.get(k, 0)
         for k in hits
@@ -318,7 +294,7 @@ def analyze(batch_dir, run_dirs, meta, utils):
     return {
         "hits":          hits,
         "exits":         exits,
-        "dose_centers":  None,   # calorimeter mode — no standard dose profile
+        "dose_centers":  None,
         "dose_edep":     None,
         "timing_res_ps": timing_res,
         "extra_lines":   extra_lines,
@@ -327,7 +303,6 @@ def analyze(batch_dir, run_dirs, meta, utils):
 
 
 def _aggregate_batch(batch_dir, run_dirs, meta, utils):
-    """Write analyzed_longitudinal_profile.txt from per-run _Dose.txt files."""
     dz_mm         = meta.get("dose_spacing_mm", 0.1)
     active_ranges = meta.get("active_z_ranges", None)
     long_acc      = None
@@ -373,7 +348,6 @@ def get_geometry_primitives() -> list[dict]:
     prims = []
     cap_total_cm = _CAP_TOTAL_MM / 10.0
 
-    # Target bounding box
     prims.append({
         "type":      "box",
         "center":    [0.0, 0.0, 0.0],
@@ -384,7 +358,6 @@ def get_geometry_primitives() -> list[dict]:
         "linewidth": 0.8,
     })
 
-    # Capillaries (outer envelope only, one per corner + center)
     for x_mm, y_mm in _CAP_POSITIONS_MM:
         prims.append({
             "type":   "tube",
@@ -397,7 +370,6 @@ def get_geometry_primitives() -> list[dict]:
             "linewidth": 0.6,
         })
 
-    # DSB1 filament
     dsb_cm = _DSB_LENGTH_MM / 10.0
     prims.append({
         "type":   "tube",
@@ -410,7 +382,6 @@ def get_geometry_primitives() -> list[dict]:
         "linewidth": 1.2,
     })
 
-    # Upstream and downstream SiPMs
     z_up_cm = -(cap_total_cm / 2.0) - _SIPM_THICK_MM / 10.0 / 2.0
     z_dn_cm =  (cap_total_cm / 2.0) + _SIPM_THICK_MM / 10.0 / 2.0
     for x_mm, y_mm in _CAP_POSITIONS_MM:
@@ -427,5 +398,3 @@ def get_geometry_primitives() -> list[dict]:
             })
 
     return prims
-
-#test change

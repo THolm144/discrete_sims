@@ -6,3 +6,5 @@ Paper Constant Fit Parameters: a ~ 256 ps*sqrt(GeV), b ~ 17.5 ps
 ------------------------------------------------------------------------
 Energy (GeV) | Sim sigma_t (ps) | Paper Target (ps) | Status        
 ------------------------------------------------------------------------
+25           | No Opt/Time Data | 54.1             | Check ROOT    
+50           | No Opt/Time Data | 39.8             | Check ROOT    

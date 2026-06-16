@@ -230,33 +230,7 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
         registry["dose_actor"] = dose
 
     return registry
-    # ── Per-detector hit actors ───────────────────────────────────────────
-    if caps.get("sipm_hits", False) and detector_volumes:
-        for idx, vol_name in enumerate(detector_volumes):
-            if vol_name not in sim.volume_manager.volumes:
-                print(f"  WARNING: detector volume '{vol_name}' not found — skipping.")
-                continue
-            hits = sim.add_actor("PhaseSpaceActor", f"detector_hits_{idx}")
-            hits.attached_to                = vol_name
-            hits.authorize_repeated_volumes = True
-            hits.output_filename            = f"detector_hits_{idx}.root"
-            hits.steps_to_store             = "entering"
-            hits.attributes = [
-                "ParticleName", "KineticEnergy", "Position",
-                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime",
-            ]
-            registry["hit_actors"].append(hits)
-
-    # ── Dose actor ────────────────────────────────────────────────────────
-    if caps.get("dose", True):
-        phantom_cm = world.PHANTOM_CM
-        dose = _wire_standard_dose(sim, target_vol, phantom_cm, units)
-        if hasattr(world, "configure_dose_actor"):
-            world.configure_dose_actor(dose, units)
-        registry["dose_actor"] = dose
-
-    return registry
-
+    
 
 def _wire_standard_dose(sim, target_vol: str, phantom_cm: list, units):
     dose = sim.add_actor("DoseActor", "dose_actor")
