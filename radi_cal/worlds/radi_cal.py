@@ -2,7 +2,7 @@
 worlds/radi_cal.py
 ==================
 RADiCAL Shashlik calorimeter — 29-layer LYSO/W sampling calorimeter
-with embedded quartz capillaries and a DSB1 wavelength-shifting centre capillary.
+with embedded quartz capillaries and a air centre capillary.
 
 New-contract exports
 --------------------
@@ -370,17 +370,22 @@ def get_geometry_primitives() -> list[dict]:
             "linewidth": 0.6,
         })
 
+    # Fixed: Draw DSB1 filaments in the 4 outer capillaries, skipping the center (idx 0)
     dsb_cm = _DSB_LENGTH_MM / 10.0
-    prims.append({
-        "type":   "tube",
-        "center": [0.0, 0.0, _DSB_CENTER_Z_MM / 10.0],
-        "rmax":   _CAP_INNER_MM / 10.0,
-        "height": dsb_cm,
-        "color":  "#ff9800",
-        "label":  "DSB1 filament",
-        "alpha":  0.9,
-        "linewidth": 1.2,
-    })
+    for idx, (x_mm, y_mm) in enumerate(_CAP_POSITIONS_MM):
+        if idx == 0:
+            continue
+            
+        prims.append({
+            "type":   "tube",
+            "center": [x_mm / 10.0, y_mm / 10.0, _DSB_CENTER_Z_MM / 10.0],
+            "rmax":   _CAP_INNER_MM / 10.0,
+            "height": dsb_cm,
+            "color":  "#ff9800",
+            "label":  "DSB1 filament" if idx == 1 else "",
+            "alpha":  0.9,
+            "linewidth": 1.2,
+        })
 
     z_up_cm = -(cap_total_cm / 2.0) - _SIPM_THICK_MM / 10.0 / 2.0
     z_dn_cm =  (cap_total_cm / 2.0) + _SIPM_THICK_MM / 10.0 / 2.0
@@ -398,3 +403,36 @@ def get_geometry_primitives() -> list[dict]:
             })
 
     return prims
+def add_optical_surfaces(sim, units):
+
+    detector_volumes = getattr(sim.volume_manager, "volumes", {})
+
+    for vol_name in detector_volumes:
+
+        if "lyso" in vol_name.lower() and "_cap_" not in vol_name.lower():
+
+            sim.physics_manager.add_optical_surface(
+                "world",
+                vol_name,
+                "Tyvek",
+            )
+
+            sim.physics_manager.add_optical_surface(
+                vol_name,
+                "world",
+                "Tyvek",
+            )
+
+        if "sipm_up" in vol_name.lower() or "sipm_dn" in vol_name.lower():
+
+            sim.physics_manager.add_optical_surface(
+                "world",
+                vol_name,
+                "SiPM_surface",
+            )
+
+            sim.physics_manager.add_optical_surface(
+                vol_name,
+                "world",
+                "SiPM_surface",
+            )

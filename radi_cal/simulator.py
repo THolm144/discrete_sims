@@ -47,7 +47,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-
+from opengate.actors.filters import GateFilterBuilder
 import numpy as np
 import opengate as gate
 
@@ -170,6 +170,24 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
 
     target_vol       = getattr(world, "TARGET_VOLUME_NAME",    "target")
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
+
+    # ── Time Cut Actor (Kills infinitely trapped optical photons) ──────────
+    if caps["optical"]:
+        print(f"[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in '{target_vol}'")
+        
+
+        time_cut = sim.add_actor("KillActor", "optical_time_breaker")
+        time_cut.attached_to = target_vol
+        F = GateFilterBuilder()
+
+        time_cut.filter = (
+            (F.ParticleName == "opticalphoton")
+            & (F.GlobalTime > 50 * units.ns)
+        )
+        
+       
+        
+       
 
     # ── Optical exits (photons leaving target volume) ─────────────────────
     if caps["optical"] and caps.get("optical_exits", False):

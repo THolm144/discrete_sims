@@ -1,0 +1,336 @@
+Starting 5 runs → runs/radi_cal/50000keV_20260616_112106
+Optical Physics: on
+  Run 0...
+============================================================
+  World       : radi_cal
+  Particle    : proton
+  Energy      : 50.0 MeV
+  Particles   : 100   Threads: 8
+  Capabilities: {'optical': True, 'dose': True, 'sipm_hits': True, 'optical_exits': True, 'calorimeter_mode': True}
+  Beam dir    : [0, 0, 1]
+  Batch dir   : runs/radi_cal/50000keV_20260616_112106
+============================================================
+[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in 'target_volume'
+[SIM] Optical physics ENABLED.
+  Metadata → runs/radi_cal/50000keV_20260616_112106/run_0/sim_metadata.json
+[32mSimulation: create MTRunManager with 8 threads[0m
+[32mSimulation: initialize Geometry[0m
+[32mSimulation: initialize Physics[0m
+[32mSimulation: initialize Sources[0m
+[32mSimulation: initialize G4RunManager (MT mode)[0m
+[32mSimulation: initialize PhysicsEngine[0m
+[32mSimulation: initialize Workers (MT mode)[0m
+[32mSimulation: initialize Actors[0m
+[32mSimulation: check volumes overlap[0m
+[32m--------------------------------------------------------------------------------
+Simulation: START (around 96 events expected)[0m
+■■■■■                                              [00m:00s<00m:00s] ■■■■■■■■■                                          [00m:00s<00m:00s] ■■■■■■■■■■■■■                                      [00m:00s<00m:01s] ■■■■■■■■■■■■■■■■■                                  [00m:00s<00m:01s] ■■■■■■■■■■■■■■■■■■■■■                              [00m:00s<00m:01s] ■■■■■■■■■■■■■■■■■■■■■■■■■■                         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                 [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■             [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ [00m:01s<00m:00s] 
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_0.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_1.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_2.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_4.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_5.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_6.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_7.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_8.root[0m
+[32mSimulation: STOP. Run: 1. Time: 5.3 seconds.
+--------------------------------------------------------------------------------[0m
+⚠️ [33m[1m8 warnings occurred in this simulation:[0m
+⚠️ [33m[1m(1) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_0.root[0m
+⚠️ [33m[1m(2) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_1.root[0m
+⚠️ [33m[1m(3) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_2.root[0m
+⚠️ [33m[1m(4) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_4.root[0m
+⚠️ [33m[1m(5) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_5.root[0m
+⚠️ [33m[1m(6) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_6.root[0m
+⚠️ [33m[1m(7) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_7.root[0m
+⚠️ [33m[1m(8) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_0/detector_hits_8.root[0m
+
+Done. Results in: runs/radi_cal/50000keV_20260616_112106/run_0
+  Longitudinal profile → run_0_Dose.txt
+  Transverse matrix    → run_0_Hits.npy
+  Run 1...
+============================================================
+  World       : radi_cal
+  Particle    : proton
+  Energy      : 50.0 MeV
+  Particles   : 100   Threads: 8
+  Capabilities: {'optical': True, 'dose': True, 'sipm_hits': True, 'optical_exits': True, 'calorimeter_mode': True}
+  Beam dir    : [0, 0, 1]
+  Batch dir   : runs/radi_cal/50000keV_20260616_112106
+============================================================
+[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in 'target_volume'
+[SIM] Optical physics ENABLED.
+  Metadata → runs/radi_cal/50000keV_20260616_112106/run_1/sim_metadata.json
+[32mSimulation: create MTRunManager with 8 threads[0m
+[32mSimulation: initialize Geometry[0m
+[32mSimulation: initialize Physics[0m
+[32mSimulation: initialize Sources[0m
+[32mSimulation: initialize G4RunManager (MT mode)[0m
+[32mSimulation: initialize PhysicsEngine[0m
+[32mSimulation: initialize Workers (MT mode)[0m
+[32mSimulation: initialize Actors[0m
+[32mSimulation: check volumes overlap[0m
+[32m--------------------------------------------------------------------------------
+Simulation: START (around 96 events expected)[0m
+■■■■■                                              [00m:00s<00m:00s] ■■■■■■■■■                                          [00m:00s<00m:00s] ■■■■■■■■■■■■■                                      [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■                                  [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■                              [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■                         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                 [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■             [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ [00m:00s<00m:00s] 
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_0.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_1.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_2.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_3.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_4.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_5.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_6.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_7.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_8.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_9.root[0m
+[32mSimulation: STOP. Run: 1. Time: 5.4 seconds.
+--------------------------------------------------------------------------------[0m
+⚠️ [33m[1m10 warnings occurred in this simulation:[0m
+⚠️ [33m[1m(1) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_0.root[0m
+⚠️ [33m[1m(2) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_1.root[0m
+⚠️ [33m[1m(3) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_2.root[0m
+⚠️ [33m[1m(4) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_3.root[0m
+⚠️ [33m[1m(5) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_4.root[0m
+⚠️ [33m[1m(6) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_5.root[0m
+⚠️ [33m[1m(7) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_6.root[0m
+⚠️ [33m[1m(8) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_7.root[0m
+⚠️ [33m[1m(9) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_8.root[0m
+⚠️ [33m[1m(10) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_1/detector_hits_9.root[0m
+
+Done. Results in: runs/radi_cal/50000keV_20260616_112106/run_1
+  Longitudinal profile → run_1_Dose.txt
+  Transverse matrix    → run_1_Hits.npy
+  Run 2...
+============================================================
+  World       : radi_cal
+  Particle    : proton
+  Energy      : 50.0 MeV
+  Particles   : 100   Threads: 8
+  Capabilities: {'optical': True, 'dose': True, 'sipm_hits': True, 'optical_exits': True, 'calorimeter_mode': True}
+  Beam dir    : [0, 0, 1]
+  Batch dir   : runs/radi_cal/50000keV_20260616_112106
+============================================================
+[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in 'target_volume'
+[SIM] Optical physics ENABLED.
+  Metadata → runs/radi_cal/50000keV_20260616_112106/run_2/sim_metadata.json
+[32mSimulation: create MTRunManager with 8 threads[0m
+[32mSimulation: initialize Geometry[0m
+[32mSimulation: initialize Physics[0m
+[32mSimulation: initialize Sources[0m
+[32mSimulation: initialize G4RunManager (MT mode)[0m
+[32mSimulation: initialize PhysicsEngine[0m
+[32mSimulation: initialize Workers (MT mode)[0m
+[32mSimulation: initialize Actors[0m
+[32mSimulation: check volumes overlap[0m
+[32m--------------------------------------------------------------------------------
+Simulation: START (around 96 events expected)[0m
+■■■■■                                              [00m:00s<00m:00s] ■■■■■■■■■                                          [00m:00s<00m:00s] ■■■■■■■■■■■■■                                      [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■                                  [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■                              [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■                         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                 [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■             [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ [00m:00s<00m:00s] 
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_0.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_1.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_2.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_3.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_4.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_5.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_6.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_7.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_8.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_9.root[0m
+[32mSimulation: STOP. Run: 1. Time: 5.6 seconds.
+--------------------------------------------------------------------------------[0m
+⚠️ [33m[1m10 warnings occurred in this simulation:[0m
+⚠️ [33m[1m(1) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_0.root[0m
+⚠️ [33m[1m(2) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_1.root[0m
+⚠️ [33m[1m(3) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_2.root[0m
+⚠️ [33m[1m(4) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_3.root[0m
+⚠️ [33m[1m(5) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_4.root[0m
+⚠️ [33m[1m(6) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_5.root[0m
+⚠️ [33m[1m(7) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_6.root[0m
+⚠️ [33m[1m(8) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_7.root[0m
+⚠️ [33m[1m(9) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_8.root[0m
+⚠️ [33m[1m(10) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_2/detector_hits_9.root[0m
+
+Done. Results in: runs/radi_cal/50000keV_20260616_112106/run_2
+  Longitudinal profile → run_2_Dose.txt
+  Transverse matrix    → run_2_Hits.npy
+  Run 3...
+============================================================
+  World       : radi_cal
+  Particle    : proton
+  Energy      : 50.0 MeV
+  Particles   : 100   Threads: 8
+  Capabilities: {'optical': True, 'dose': True, 'sipm_hits': True, 'optical_exits': True, 'calorimeter_mode': True}
+  Beam dir    : [0, 0, 1]
+  Batch dir   : runs/radi_cal/50000keV_20260616_112106
+============================================================
+[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in 'target_volume'
+[SIM] Optical physics ENABLED.
+  Metadata → runs/radi_cal/50000keV_20260616_112106/run_3/sim_metadata.json
+[32mSimulation: create MTRunManager with 8 threads[0m
+[32mSimulation: initialize Geometry[0m
+[32mSimulation: initialize Physics[0m
+[32mSimulation: initialize Sources[0m
+[32mSimulation: initialize G4RunManager (MT mode)[0m
+[32mSimulation: initialize PhysicsEngine[0m
+[32mSimulation: initialize Workers (MT mode)[0m
+[32mSimulation: initialize Actors[0m
+[32mSimulation: check volumes overlap[0m
+[32m--------------------------------------------------------------------------------
+Simulation: START (around 96 events expected)[0m
+■■■■■                                              [00m:00s<00m:00s] ■■■■■■■■■                                          [00m:00s<00m:01s] ■■■■■■■■■■■■■                                      [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■                                  [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■                              [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■                         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                 [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■             [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ [00m:00s<00m:00s] 
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_0.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_1.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_2.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_3.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_4.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_5.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_6.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_7.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_8.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_9.root[0m
+[32mSimulation: STOP. Run: 1. Time: 4.9 seconds.
+--------------------------------------------------------------------------------[0m
+⚠️ [33m[1m10 warnings occurred in this simulation:[0m
+⚠️ [33m[1m(1) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_0.root[0m
+⚠️ [33m[1m(2) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_1.root[0m
+⚠️ [33m[1m(3) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_2.root[0m
+⚠️ [33m[1m(4) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_3.root[0m
+⚠️ [33m[1m(5) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_4.root[0m
+⚠️ [33m[1m(6) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_5.root[0m
+⚠️ [33m[1m(7) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_6.root[0m
+⚠️ [33m[1m(8) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_7.root[0m
+⚠️ [33m[1m(9) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_8.root[0m
+⚠️ [33m[1m(10) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_3/detector_hits_9.root[0m
+
+Done. Results in: runs/radi_cal/50000keV_20260616_112106/run_3
+  Longitudinal profile → run_3_Dose.txt
+  Transverse matrix    → run_3_Hits.npy
+  Run 4...
+============================================================
+  World       : radi_cal
+  Particle    : proton
+  Energy      : 50.0 MeV
+  Particles   : 100   Threads: 8
+  Capabilities: {'optical': True, 'dose': True, 'sipm_hits': True, 'optical_exits': True, 'calorimeter_mode': True}
+  Beam dir    : [0, 0, 1]
+  Batch dir   : runs/radi_cal/50000keV_20260616_112106
+============================================================
+[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in 'target_volume'
+[SIM] Optical physics ENABLED.
+  Metadata → runs/radi_cal/50000keV_20260616_112106/run_4/sim_metadata.json
+[32mSimulation: create MTRunManager with 8 threads[0m
+[32mSimulation: initialize Geometry[0m
+[32mSimulation: initialize Physics[0m
+[32mSimulation: initialize Sources[0m
+[32mSimulation: initialize G4RunManager (MT mode)[0m
+[32mSimulation: initialize PhysicsEngine[0m
+[32mSimulation: initialize Workers (MT mode)[0m
+[32mSimulation: initialize Actors[0m
+[32mSimulation: check volumes overlap[0m
+[32m--------------------------------------------------------------------------------
+Simulation: START (around 96 events expected)[0m
+■■■■■                                              [00m:00s<00m:00s] ■■■■■■■■■                                          [00m:00s<00m:00s] ■■■■■■■■■■■■■                                      [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■                                  [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■                              [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■                         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                 [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■             [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■         [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■     [00m:00s<00m:00s] ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ [00m:00s<00m:00s] 
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_0.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_1.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_2.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_3.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_4.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_5.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_6.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_7.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_8.root[0m
+⚠️ [33m[1mEmpty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_9.root[0m
+[32mSimulation: STOP. Run: 1. Time: 5.4 seconds.
+--------------------------------------------------------------------------------[0m
+⚠️ [33m[1m10 warnings occurred in this simulation:[0m
+⚠️ [33m[1m(1) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_0.root[0m
+⚠️ [33m[1m(2) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_1.root[0m
+⚠️ [33m[1m(3) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_2.root[0m
+⚠️ [33m[1m(4) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_3.root[0m
+⚠️ [33m[1m(5) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_4.root[0m
+⚠️ [33m[1m(6) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_5.root[0m
+⚠️ [33m[1m(7) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_6.root[0m
+⚠️ [33m[1m(8) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_7.root[0m
+⚠️ [33m[1m(9) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_8.root[0m
+⚠️ [33m[1m(10) Empty output, no particles stored in /home/uakgun/gate_sims/discrete_sims/radi_cal/runs/radi_cal/50000keV_20260616_112106/run_4/detector_hits_9.root[0m
+
+Done. Results in: runs/radi_cal/50000keV_20260616_112106/run_4
+  Longitudinal profile → run_4_Dose.txt
+  Transverse matrix    → run_4_Hits.npy
+Done. Analysing...
+  Batch dir   : runs/radi_cal/50000keV_20260616_112106
+  Run count   : 5
+  World module loaded  : radi_cal
+  Dispatching to radi_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : radi_cal
+  Geometry      : 1.4 × 1.4 × 18.3 cm
+  Batch Dir     : runs/radi_cal/50000keV_20260616_112106
+  Total Primaries: 500
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      4            0
+  Scintillation           530,575            0
+  Other                     5,321            2
+  ────────────────────────────────────────────
+  TOTAL                   535,900            2
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Grid escape efficiency  : 35.9951%
+  System efficiency       : 0.0001%
+  Detector capture effic. : 0.0004%
+  Hits / primary          : 0.0040
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Peak edep bin: 75.0 mm
+  Peak edep val: 305.6204 MeV
+  Upstream SiPM hits   : 0
+  Downstream SiPM hits : 2
+
+──────────────────────────────────────────────────────────────────
+  PLOTS SAVED
+──────────────────────────────────────────────────────────────────
+  → radical_longitudinal_profile.png
+  → radical_transverse_core.png
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/radi_cal/50000keV_20260616_112106/batch_analysis.txt
+Rendering 3D visualisation...
+  Batch dir   : runs/radi_cal/50000keV_20260616_112106
+  World       : radi_cal
+  Phantom     : [1.4, 1.4, 18.3]
+  Geometry    : 17 primitives from world hook
+  Loaded      : 1 hits, 150 exits
+  Rendering   : perspective
+    → 3d_perspective.png
+  Rendering   : top
+    → 3d_top.png
+  Rendering   : side_xz
+    → 3d_side_xz.png
+  Rendering   : side_yz
+    → 3d_side_yz.png
+  → 3d_panel.png
+
+Done. 5 images saved to runs/radi_cal/50000keV_20260616_112106
+Results in: runs/radi_cal/50000keV_20260616_112106
