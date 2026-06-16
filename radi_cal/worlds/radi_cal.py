@@ -46,9 +46,17 @@ ACTIVE_Z_RANGES_MM = [
 
 TIMING_TRIGGER_THRESHOLD = 1
 
+# Screen volume names match old SiPM names so analyze.py/metadata are unchanged
+# Sensitive detector volumes: capillary tubes in the gap layers.
+# front_gap = upstream face, back_gap = downstream face.
+# cap_0_air = centre air bore; cap_N_core = quartz core of outer capillaries.
 DETECTOR_VOLUME_NAMES = [
-    "sipm_up_1", "sipm_up_2", "sipm_up_3", "sipm_up_4", "sipm_up_c",
-    "sipm_dn_1", "sipm_dn_2", "sipm_dn_3", "sipm_dn_4", "sipm_dn_c",
+    "front_gap_cap_0_air",
+    "front_gap_cap_1_core", "front_gap_cap_2_core",
+    "front_gap_cap_3_core", "front_gap_cap_4_core",
+    "back_gap_cap_0_air",
+    "back_gap_cap_1_core", "back_gap_cap_2_core",
+    "back_gap_cap_3_core", "back_gap_cap_4_core",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,8 +71,8 @@ _CAP_INNER_MM    = 0.475
 _DSB_LENGTH_MM   = 15.0
 _DSB_CENTER_Z_MM = -17.6
 _CAP_TOTAL_MM    = 183.0
-_SIPM_THICK_MM   = 1.0
-_SIPM_XY_MM      = 1.5
+_SCREEN_THICK_MM = 0.1   # thin air screen — transparent to optical photons
+_SCREEN_XY_MM    = 1.5   # slightly larger than capillary outer diameter
 
 _CAP_POSITIONS_MM = [
     [0,    0   ],
@@ -84,40 +92,32 @@ def _build_layer_with_capillaries(sim, name, thickness, material, z_pos, units):
     Creates a solid layer plate and populates it with local capillary segments.
     The daughter segments automatically displace the plate's base material.
     """
-    # 1. Create the solid plate (Mother volume for this layer's capillary segments)
     plate = sim.add_volume("Box", name)
     plate.mother = TARGET_VOLUME_NAME
     plate.size = [14 * units.mm, 14 * units.mm, thickness]
     plate.material = material
     plate.translation = [0, 0, z_pos]
-    
-    # Define absolute Z boundaries of this layer to evaluate DSB doping zone
+
     z_min = z_pos - thickness / 2.0
     z_max = z_pos + thickness / 2.0
     dsb_z_min = (_DSB_CENTER_Z_MM - _DSB_LENGTH_MM / 2.0) * units.mm
     dsb_z_max = (_DSB_CENTER_Z_MM + _DSB_LENGTH_MM / 2.0) * units.mm
 
-    # Introduce a microscopic clearance (0.1 microns) to prevent Geant4 
-    # boundary precision spillover into adjacent layers during CheckOverlaps.
-    safety_margin = 0.0001 * units.mm
-    cap_dz = (thickness / 2.0) - safety_margin
+    cap_dz = (thickness / 2.0)
 
-    # 2. Populate the plate with local capillary slices
     for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         cx_g4 = cx * units.mm
         cy_g4 = cy * units.mm
-        
+
         if cap_idx == 0:
-            # Center air channel segment (Always Air)
             air_seg = sim.add_volume("Tubs", f"{name}_cap_0_air")
-            air_seg.mother = name  
+            air_seg.mother = name
             air_seg.rmin = 0.0
             air_seg.rmax = _CAP_OUTER_MM * units.mm
-            air_seg.dz = cap_dz  
-            air_seg.translation = [cx_g4, cy_g4, 0]  
+            air_seg.dz = cap_dz
+            air_seg.translation = [cx_g4, cy_g4, 0]
             air_seg.material = "Air"
         else:
-            # Regular capillary glass wall segment
             wall_seg = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_wall")
             wall_seg.mother = name
             wall_seg.rmin = _CAP_INNER_MM * units.mm
@@ -125,14 +125,12 @@ def _build_layer_with_capillaries(sim, name, thickness, material, z_pos, units):
             wall_seg.dz = cap_dz
             wall_seg.translation = [cx_g4, cy_g4, 0]
             wall_seg.material = "Quartz"
-            
-            # Dynamically determine the core material based on this specific layer's Z position
+
             if z_min >= dsb_z_min and z_max <= dsb_z_max:
                 core_material = "DSB1"
             else:
                 core_material = "Quartz"
-                
-            # Capillary core segment
+
             core_seg = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_core")
             core_seg.mother = name
             core_seg.rmin = 0.0
@@ -142,6 +140,8 @@ def _build_layer_with_capillaries(sim, name, thickness, material, z_pos, units):
             core_seg.material = core_material
 
     return plate
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,11 +158,10 @@ def build_world(sim, units):
     tyvek_thick = _TYVEK_THICK_MM * units.mm
     cap_total   = _CAP_TOTAL_MM   * units.mm
 
-    # Compute total thickness of the active sandwich stack
     stack_thick = (29 * lyso_thick) + (28 * w_thick) + (56 * tyvek_thick)
-    
+
     front_gap_thick = (cap_total - stack_thick) / 2.0
-    back_gap_thick = front_gap_thick
+    back_gap_thick  = front_gap_thick
 
     # Target volume container
     target = sim.add_volume("Box", TARGET_VOLUME_NAME)
@@ -173,18 +172,16 @@ def build_world(sim, units):
     # Start layout from the far upstream (-Z) boundary of the stack
     current_z = -(stack_thick / 2.0)
 
-    # 1. Build Front Gap Layer
-    _build_layer_with_capillaries(sim, "front_gap", front_gap_thick, "Air", 
+    # 1. Front gap
+    _build_layer_with_capillaries(sim, "front_gap", front_gap_thick, "Air",
                                   current_z - front_gap_thick / 2.0, units)
 
-    # 2. Build the Main Absorber/Scintillator Layers
+    # 2. Main absorber/scintillator stack
     for layer_idx in range(29):
-        # LYSO Plate
         current_z += lyso_thick / 2.0
         _build_layer_with_capillaries(sim, f"lyso_{layer_idx}", lyso_thick, "LYSO", current_z, units)
         current_z += lyso_thick / 2.0
-        
-        # Interstitial tracking/absorption layers
+
         if layer_idx < 28:
             for label, thick, mat in [("tyvek_f", tyvek_thick, "Tyvek"),
                                       ("w",       w_thick,     "Tungsten"),
@@ -193,28 +190,10 @@ def build_world(sim, units):
                 _build_layer_with_capillaries(sim, f"{label}_{layer_idx}", thick, mat, current_z, units)
                 current_z += thick / 2.0
 
-    # 3. Build Back Gap Layer
-    _build_layer_with_capillaries(sim, "back_gap", back_gap_thick, "Air", 
+    # 3. Back gap
+    _build_layer_with_capillaries(sim, "back_gap", back_gap_thick, "Air",
                                   current_z + back_gap_thick / 2.0, units)
 
-    # 4. SiPMs Placement
-    sipm_thick = _SIPM_THICK_MM * units.mm
-    sipm_xy    = _SIPM_XY_MM   * units.mm
-    z_up = -(cap_total / 2.0) - sipm_thick / 2.0
-    z_dn =  (cap_total / 2.0) + sipm_thick / 2.0
-
-    up_names = ["sipm_up_c", "sipm_up_1", "sipm_up_2", "sipm_up_3", "sipm_up_4"]
-    dn_names = ["sipm_dn_c", "sipm_dn_1", "sipm_dn_2", "sipm_dn_3", "sipm_dn_4"]
-
-    cap_positions = [[x * units.mm, y * units.mm] for x, y in _CAP_POSITIONS_MM]
-
-    for i, (cx, cy) in enumerate(cap_positions):
-        for name, z_pos in [(up_names[i], z_up), (dn_names[i], z_dn)]:
-            sv = sim.add_volume("Box", name)
-            sv.mother      = "world"
-            sv.size        = [sipm_xy, sipm_xy, sipm_thick]
-            sv.translation = [cx, cy, z_pos]
-            sv.material    = "G4_Si"
 
     return sim
 
@@ -249,80 +228,61 @@ def analyze(batch_dir, run_dirs, meta, utils):
     if long_arr is not None:
         dz_mm = meta.get("dose_spacing_mm", 0.1)
         avg   = long_arr / max(len(run_dirs), 1)
-        
-        # 1. Define geometry constants matching build_world (in mm)
+
         lyso_thick  = _LYSO_THICK_MM
         w_thick     = _W_THICK_MM
         tyvek_thick = _TYVEK_THICK_MM
         cap_total   = _CAP_TOTAL_MM
-        
+
         stack_thick = (29 * lyso_thick) + (28 * w_thick) + (56 * tyvek_thick)
         front_gap   = (cap_total - stack_thick) / 2.0
-        
-        # Lists to hold the integrated energy per discrete layer
+
         layer_numbers = list(range(1, 30))
         layer_edeps   = []
-        
-        current_z = front_gap 
 
-        # 2. Integrate the continuous voxel values across each LYSO layer span
+        current_z = front_gap
+
         for layer_idx in range(29):
             z_start = current_z
             z_end   = current_z + lyso_thick
-            
-            # Convert physical boundaries to array index slices
+
             idx_start = int(round(z_start / dz_mm))
-            idx_end   = int(round(z_end / dz_mm))
-            
-            # Guard against array boundaries
+            idx_end   = int(round(z_end   / dz_mm))
+
             idx_start = max(0, min(idx_start, len(avg)))
-            idx_end   = max(0, min(idx_end, len(avg)))
-            
-            # SUM the energy deposited inside this discrete LYSO layer segment
+            idx_end   = max(0, min(idx_end,   len(avg)))
+
             layer_energy = float(np.sum(avg[idx_start:idx_end]))
             layer_edeps.append(layer_energy)
-            
-            # Step to the next layer
+
             current_z += lyso_thick
             if layer_idx < 28:
                 current_z += (tyvek_thick * 2) + w_thick
 
-        # 3. Create the discrete Layer-by-Layer Plot
         fig, ax = plt.subplots(figsize=(10, 4.5))
-        
-        # Use a bar chart to emphasize discrete physical detector channels
-        ax.bar(layer_numbers, layer_edeps, color="#00bcd4", alpha=0.7, 
+        ax.bar(layer_numbers, layer_edeps, color="#00bcd4", alpha=0.7,
                edgecolor="#00838f", linewidth=1.2, width=0.8, label="LYSO Layer Total")
-        
-        # Draw a subtle trendline over the bars to capture the shower profile shape
-        ax.plot(layer_numbers, layer_edeps, color="#00838f", linestyle="--", alpha=0.5, marker="o", ms=4)
-
-        # 4. Set discrete axis ticks and formatting
+        ax.plot(layer_numbers, layer_edeps, color="#00838f", linestyle="--",
+                alpha=0.5, marker="o", ms=4)
         ax.set_xlabel("LYSO Layer Number")
         ax.set_ylabel("Integrated Energy Deposition (MeV)")
         ax.set_title(f"RADiCAL Longitudinal Profile by Active Layer — {len(run_dirs)} run(s)")
-        
         ax.set_xticks(layer_numbers)
         ax.set_xticklabels([str(n) for n in layer_numbers], fontsize=8)
         ax.set_xlim(0, 30)
-        
         ax.grid(True, alpha=0.2, linestyle="--", axis="y")
         ax.legend(loc="upper right")
-        
         fig.tight_layout()
         out = batch_dir / "radical_longitudinal_profile.png"
         fig.savefig(out, dpi=200)
         plt.close(fig)
-        
         plots_saved.append(out.name)
-        
-        # Update extra lines metrics to point to the specific peak layer
+
         if layer_edeps:
             max_layer_idx = np.argmax(layer_edeps)
             extra_lines.append(f"  Peak LYSO Layer: {layer_numbers[max_layer_idx]}")
             extra_lines.append(f"  Peak Layer edep: {layer_edeps[max_layer_idx]:.4f} MeV")
 
-            
     if trans_arr is not None:
         fig, ax = plt.subplots(figsize=(6, 6))
         ext = [-7, 7, -7, 7]
@@ -345,8 +305,8 @@ def analyze(batch_dir, run_dirs, meta, utils):
     )
     dn_hits = sum(hits.values()) - up_hits
     extra_lines += [
-        f"  Upstream SiPM hits   : {up_hits:,}",
-        f"  Downstream SiPM hits : {dn_hits:,}",
+        f"  Upstream screen hits   : {up_hits:,}",
+        f"  Downstream screen hits : {dn_hits:,}",
     ]
 
     return {
@@ -428,12 +388,10 @@ def get_geometry_primitives() -> list[dict]:
             "linewidth": 0.6,
         })
 
-    # Fixed: Draw DSB1 filaments in the 4 outer capillaries, skipping the center (idx 0)
     dsb_cm = _DSB_LENGTH_MM / 10.0
     for idx, (x_mm, y_mm) in enumerate(_CAP_POSITIONS_MM):
         if idx == 0:
             continue
-            
         prims.append({
             "type":   "tube",
             "center": [x_mm / 10.0, y_mm / 10.0, _DSB_CENTER_Z_MM / 10.0],
@@ -445,53 +403,43 @@ def get_geometry_primitives() -> list[dict]:
             "linewidth": 1.2,
         })
 
-    z_up_cm = -(cap_total_cm / 2.0) - _SIPM_THICK_MM / 10.0 / 2.0
-    z_dn_cm =  (cap_total_cm / 2.0) + _SIPM_THICK_MM / 10.0 / 2.0
-    for x_mm, y_mm in _CAP_POSITIONS_MM:
-        for z_cm, lbl in [(z_up_cm, "SiPM upstream" if (x_mm, y_mm) == _CAP_POSITIONS_MM[0] else ""),
-                          (z_dn_cm, "SiPM downstream" if (x_mm, y_mm) == _CAP_POSITIONS_MM[0] else "")]:
+    # Draw screens instead of SiPMs
+    screen_thick_cm = _SCREEN_THICK_MM / 10.0
+    screen_xy_cm    = _SCREEN_XY_MM    / 10.0
+    z_up_cm = -(cap_total_cm / 2.0) + screen_thick_cm / 2.0
+    z_dn_cm =  (cap_total_cm / 2.0) - screen_thick_cm / 2.0
+
+    for i, (x_mm, y_mm) in enumerate(_CAP_POSITIONS_MM):
+        for z_cm, lbl_up, lbl_dn in [
+            (z_up_cm,
+             "Screen upstream"   if i == 0 else "",
+             ""),
+            (z_dn_cm,
+             "",
+             "Screen downstream" if i == 0 else ""),
+        ]:
+            label = lbl_up or lbl_dn
             prims.append({
                 "type":      "box",
                 "center":    [x_mm / 10.0, y_mm / 10.0, z_cm],
-                "half":      [_SIPM_XY_MM / 20.0, _SIPM_XY_MM / 20.0, _SIPM_THICK_MM / 20.0],
+                "half":      [screen_xy_cm / 2.0, screen_xy_cm / 2.0, screen_thick_cm / 2.0],
                 "color":     "#f1c40f",
-                "label":     lbl,
-                "alpha":     0.9,
-                "linewidth": 1.2,
+                "label":     label,
+                "alpha":     0.6,
+                "linewidth": 1.0,
             })
 
     return prims
 
-def add_optical_surfaces(sim, units):
 
+def add_optical_surfaces(sim, units):
     detector_volumes = getattr(sim.volume_manager, "volumes", {})
 
     for vol_name in detector_volumes:
-
         if "lyso" in vol_name.lower() and "_cap_" not in vol_name.lower():
-
             sim.physics_manager.add_optical_surface(
-                "world",
-                vol_name,
-                "Tyvek",
-            )
-
+                TARGET_VOLUME_NAME, vol_name, "Tyvek")
             sim.physics_manager.add_optical_surface(
-                vol_name,
-                "world",
-                "Tyvek",
-            )
-
-        if "sipm_up" in vol_name.lower() or "sipm_dn" in vol_name.lower():
-
-            sim.physics_manager.add_optical_surface(
-                "world",
-                vol_name,
-                "SiPM_surface",
-            )
-
-            sim.physics_manager.add_optical_surface(
-                vol_name,
-                "world",
-                "SiPM_surface",
-            )
+                vol_name, TARGET_VOLUME_NAME, "Tyvek")
+        # Screens live inside target_volume — no optical surface needed;
+        # they record crossings without perturbing photon transport.

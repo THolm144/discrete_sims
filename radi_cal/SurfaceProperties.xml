@@ -45,12 +45,13 @@
   </surface>
   <surface name="Tyvek" model="glisur" finish="ground" type="dielectric_metal" value="1.0">
       <property name="REFLECTIVITY">
+          <value energy="1.0 eV" value="0.98"/>
           <value energy="2.0 eV" value="0.98"/>
-          <value energy="3.5 eV" value="0.98"/>
+          <value energy="3.0 eV" value="0.98"/> <value energy="4.5 eV" value="0.98"/>
       </property>
       <property name="EFFICIENCY">
-          <value energy="2.0 eV" value="0.0"/>
-          <value energy="3.5 eV" value="0.0"/>
+          <value energy="1.0 eV" value="0.0"/>
+          <value energy="4.5 eV" value="0.0"/>
       </property>
   </surface>
 </surfaces>

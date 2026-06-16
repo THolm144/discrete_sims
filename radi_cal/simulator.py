@@ -65,7 +65,7 @@ DEFAULT_CAPABILITIES = {
 }
 
 DEFAULT_BEAM_CONFIG = {
-    "direction": [0, 0, 1],   # +Z  (beam travels in +Z by default)
+    "direction": [0, 0, 1],
     "target_cm": [0, 0, 0],
     "offset_cm": 2.0,
 }
@@ -109,10 +109,6 @@ def load_world(world_name: str, script_dir: Path):
 
 
 def resolve_capabilities(world, args) -> dict:
-    """
-    Merge world CAPABILITIES with CLI overrides.
-    CLI values of 'on'/'off' take precedence; 'world' defers to the manifest.
-    """
     caps = {**DEFAULT_CAPABILITIES, **getattr(world, "CAPABILITIES", {})}
 
     override_map = {
@@ -125,7 +121,6 @@ def resolve_capabilities(world, args) -> dict:
             caps[key] = True
         elif val == "off":
             caps[key] = False
-        # 'world' → leave caps[key] as-is
 
     return caps
 
@@ -171,25 +166,18 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     target_vol       = getattr(world, "TARGET_VOLUME_NAME",    "target")
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
 
-    # ── Time Cut Actor (Kills infinitely trapped optical photons) ──────────
+    # ── Time Cut Actor ────────────────────────────────────────────────────
     if caps["optical"]:
         print(f"[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in '{target_vol}'")
-        
-
         time_cut = sim.add_actor("KillActor", "optical_time_breaker")
         time_cut.attached_to = target_vol
         F = GateFilterBuilder()
-
         time_cut.filter = (
             (F.ParticleName == "opticalphoton")
             & (F.GlobalTime > 50 * units.ns)
         )
-        
-       
-        
-       
 
-    # ── Optical exits (photons leaving target volume) ─────────────────────
+    # ── Optical exits ─────────────────────────────────────────────────────
     if caps["optical"] and caps.get("optical_exits", False):
         exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
         exited.attached_to     = target_vol
@@ -201,20 +189,21 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
         ]
         registry["optical_exited_actor"] = exited
 
-    # ── Per-detector hit actors ───────────────────────────────────────────
+    # ── Per-channel screen hit actors ─────────────────────────────────────
     if caps["sipm_hits"] and detector_volumes:
+        print(f"[ACTOR] Registered volumes: {list(sim.volume_manager.volumes.keys())[:20]} ...")
         for idx, vol_name in enumerate(detector_volumes):
             if vol_name not in sim.volume_manager.volumes:
-                print(f"  WARNING: detector volume '{vol_name}' not found — skipping.")
+                print(f"  WARNING: screen volume '{vol_name}' not found — skipping.")
                 continue
             hits = sim.add_actor("PhaseSpaceActor", f"detector_hits_{idx}")
-            hits.attached_to     = vol_name
+            hits.attached_to                = vol_name
             hits.authorize_repeated_volumes = True
-            hits.output_filename = f"detector_hits_{idx}.root"
-            hits.steps_to_store  = "entering"
+            hits.output_filename            = f"detector_hits_{idx}.root"
+            hits.steps_to_store             = "all"
             hits.attributes = [
                 "ParticleName", "KineticEnergy", "Position",
-                "TrackCreatorProcess", "TrackID", "EventID",
+                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime",
             ]
             registry["hit_actors"].append(hits)
 
@@ -293,17 +282,12 @@ def _wire_calorimeter_dose(sim, world, target_vol: str, phantom_cm: list, units)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def add_beam_source(sim, args, world, beam_cfg: dict, units):
-    """
-    Position the beam source offset_cm upstream of the beam target point,
-    along the beam direction.
-    """
     direction = np.array(beam_cfg["direction"], dtype=float)
-    direction /= np.linalg.norm(direction)                  # ensure unit vector
+    direction /= np.linalg.norm(direction)
 
     target_cm  = np.array(beam_cfg["target_cm"], dtype=float)
     offset_cm  = beam_cfg["offset_cm"]
 
-    # Source sits offset_cm behind the target, opposite to beam direction
     source_pos_cm = target_cm - direction * offset_cm
 
     source = sim.add_source("GenericSource", f"{args.particle}_beam")
@@ -346,8 +330,7 @@ def configure_physics(sim, args, script_dir: Path, world,
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = False
         print("[SIM] Optical physics DISABLED.")
 
-    
-    
+
 # ─────────────────────────────────────────────────────────────────────────────
 # METADATA
 # ─────────────────────────────────────────────────────────────────────────────
