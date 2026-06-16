@@ -6,10 +6,10 @@
 
 WORLD=radi_cal    # world module name
 PARTICLE=e-            # primary particle type (e.g., proton, electron, gamma)
-ENERGY_KEV=5000000        # energy in keV (200000 = 200 MeV)
+ENERGY_KEV=50000000         # energy in keV (200000 = 200 MeV)
 N_PARTICLES=100        # particles per run
 THREADS=8               # CPU threads per run
-N_RUNS=5                # number of runs
+N_RUNS=1                # number of runs
 BEAM_RADIUS=0.01         # beam radius in cm
 OPTICAL="on"           # "on" for full optics, "off" for fast dose analysis
 PHYSICS_LIST="QGSP_BERT_EMV"  # Physics config
