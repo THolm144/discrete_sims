@@ -169,41 +169,52 @@ def _ensure_str(arr: np.ndarray) -> np.ndarray:
 # TIMING RESOLUTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_timing_resolution(hits_files: list[Path], threshold_photon: int =1 ) -> float:
+def extract_timing_resolution(hits_files: list[Path], threshold_photon: int = 1) -> float:
     """
     Simulate a leading-edge trigger at the N-th arriving photon per event per channel.
     Returns the best (lowest sigma) timing resolution in picoseconds across channels.
-    Returns 0.0 if GlobalTime branch is absent or insufficient statistics.
+    Returns 0.0 if time branches are absent or insufficient statistics.
     """
     import uproot
 
     channel_resolutions = []
+    
     for path in hits_files:
-        if not path.exists():
-            continue
-        if "hole_air" in path.name:
+        if not path.exists() or "hole_air" in path.name:
             continue
 
         event_trigger_times = []
-        with uproot.open(path) as f:
-            key = first_tree_key(f, "detector", "phasespace")
-            if not key:
-                continue
-            tree = f[key]
-            if "GlobalTime" not in tree.keys():
-                continue
+        try:
+            with uproot.open(path) as f:
+                key = first_tree_key(f, "detector", "phasespace")
+                if not key:
+                    continue
+                tree = f[key]
+                
+                # Flexible branch checking
+                time_keys = [k for k in ["GlobalTime", "time", "Time"] if k in tree.keys()]
+                if not time_keys:
+                    continue
+                time_branch = time_keys[0]
 
-            events = tree["EventID"].array(library="np")
-            times  = tree["GlobalTime"].array(library="np")
+                events = tree["EventID"].array(library="np")
+                times  = tree[time_branch].array(library="np")
 
-            for ev in np.unique(events):
-                ev_times = np.sort(times[events == ev])
-                if len(ev_times) >= threshold_photon:
-                    event_trigger_times.append(ev_times[threshold_photon - 1] * 1000.0)
+                for ev in np.unique(events):
+                    ev_times = np.sort(times[events == ev])
+                    if len(ev_times) >= threshold_photon:
+                        event_trigger_times.append(ev_times[threshold_photon - 1] * 1000.0)
+                        
+        except Exception as e:
+            print(f"  Warning: Could not process {path.name} for timing: {e}")
+            continue
 
-        if len(event_trigger_times) >= 1:
+        # CRITICAL FIX: Need at least 2 events for a standard deviation
+        if len(event_trigger_times) >= 2:
             sigma = float(np.std(event_trigger_times))
-            channel_resolutions.append(sigma)
+            # Ignore mathematically perfect 0.0 values (likely artifacts)
+            if sigma > 0.0:
+                channel_resolutions.append(sigma)
 
     return float(np.min(channel_resolutions)) if channel_resolutions else 0.0
 
