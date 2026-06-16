@@ -248,23 +248,81 @@ def analyze(batch_dir, run_dirs, meta, utils):
 
     if long_arr is not None:
         dz_mm = meta.get("dose_spacing_mm", 0.1)
-        bins  = np.arange(len(long_arr)) * dz_mm
         avg   = long_arr / max(len(run_dirs), 1)
+        
+        # 1. Define geometry constants matching build_world (in mm)
+        lyso_thick  = _LYSO_THICK_MM
+        w_thick     = _W_THICK_MM
+        tyvek_thick = _TYVEK_THICK_MM
+        cap_total   = _CAP_TOTAL_MM
+        
+        stack_thick = (29 * lyso_thick) + (28 * w_thick) + (56 * tyvek_thick)
+        front_gap   = (cap_total - stack_thick) / 2.0
+        
+        # Lists to hold the integrated energy per discrete layer
+        layer_numbers = list(range(1, 30))
+        layer_edeps   = []
+        
+        current_z = front_gap 
 
-        fig, ax = plt.subplots(figsize=(9, 4))
-        ax.plot(bins, avg, color="#d32f2f", lw=2, label="Avg edep per bin")
-        ax.set_xlabel("Depth (mm)")
-        ax.set_ylabel("Energy deposition (MeV)")
-        ax.set_title(f"RADiCAL longitudinal profile — {len(run_dirs)} run(s)")
-        ax.grid(True, alpha=0.3, linestyle="--")
+        # 2. Integrate the continuous voxel values across each LYSO layer span
+        for layer_idx in range(29):
+            z_start = current_z
+            z_end   = current_z + lyso_thick
+            
+            # Convert physical boundaries to array index slices
+            idx_start = int(round(z_start / dz_mm))
+            idx_end   = int(round(z_end / dz_mm))
+            
+            # Guard against array boundaries
+            idx_start = max(0, min(idx_start, len(avg)))
+            idx_end   = max(0, min(idx_end, len(avg)))
+            
+            # SUM the energy deposited inside this discrete LYSO layer segment
+            layer_energy = float(np.sum(avg[idx_start:idx_end]))
+            layer_edeps.append(layer_energy)
+            
+            # Step to the next layer
+            current_z += lyso_thick
+            if layer_idx < 28:
+                current_z += (tyvek_thick * 2) + w_thick
+
+        # 3. Create the discrete Layer-by-Layer Plot
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        
+        # Use a bar chart to emphasize discrete physical detector channels
+        ax.bar(layer_numbers, layer_edeps, color="#00bcd4", alpha=0.7, 
+               edgecolor="#00838f", linewidth=1.2, width=0.8, label="LYSO Layer Total")
+        
+        # Draw a subtle trendline over the bars to capture the shower profile shape
+        ax.plot(layer_numbers, layer_edeps, color="#00838f", linestyle="--", alpha=0.5, marker="o", ms=4)
+
+        # 4. Set discrete axis ticks and formatting
+        ax.set_xlabel("LYSO Layer Number")
+        ax.set_ylabel("Integrated Energy Deposition (MeV)")
+        ax.set_title(f"RADiCAL Longitudinal Profile by Active Layer — {len(run_dirs)} run(s)")
+        
+        ax.set_xticks(layer_numbers)
+        ax.set_xticklabels([str(n) for n in layer_numbers], fontsize=8)
+        ax.set_xlim(0, 30)
+        
+        ax.grid(True, alpha=0.2, linestyle="--", axis="y")
+        ax.legend(loc="upper right")
+        
         fig.tight_layout()
         out = batch_dir / "radical_longitudinal_profile.png"
         fig.savefig(out, dpi=200)
         plt.close(fig)
+        
         plots_saved.append(out.name)
-        extra_lines.append(f"  Peak edep bin: {bins[np.argmax(avg)]:.1f} mm")
-        extra_lines.append(f"  Peak edep val: {avg.max():.4f} MeV")
+        
+        # Update extra lines metrics to point to the specific peak layer
+        if layer_edeps:
+            max_layer_idx = np.argmax(layer_edeps)
+            extra_lines.append(f"  Peak LYSO Layer: {layer_numbers[max_layer_idx]}")
+            extra_lines.append(f"  Peak Layer edep: {layer_edeps[max_layer_idx]:.4f} MeV")
 
+            
     if trans_arr is not None:
         fig, ax = plt.subplots(figsize=(6, 6))
         ext = [-7, 7, -7, 7]
@@ -403,6 +461,7 @@ def get_geometry_primitives() -> list[dict]:
             })
 
     return prims
+
 def add_optical_surfaces(sim, units):
 
     detector_volumes = getattr(sim.volume_manager, "volumes", {})

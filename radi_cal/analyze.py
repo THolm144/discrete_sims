@@ -188,11 +188,12 @@ def _generic_analyze(batch_dir: Path, run_dirs: list, meta: dict) -> dict:
     timing_res  = (utils.extract_timing_resolution(hits_files)
                    if hits_files else 0.0)
 
+    # Fixed: Assigned timing_res to timing_res_ps key to match interface contract
     return {
-        "hits":         hits,
-        "exits":        exits,
-        "dose_centers": centers,
-        "dose_edep":    edep,
+        "hits":          hits,
+        "exits":         exits,
+        "dose_centers":  centers,
+        "dose_edep":     edep,
         "timing_res_ps": timing_res,
     }
 
