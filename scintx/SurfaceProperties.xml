@@ -53,4 +53,12 @@
           <value energy="3.5 eV" value="0.0"/>
       </property>
   </surface>
+  <surface model="unified"
+         name="ScintX_air_surface"
+         type="dielectric_dielectric"
+         finish="ground"
+         sigmaalpha="0.2">
+  <propertiestable>
+  </propertiestable>
+</surface>
 </surfaces>

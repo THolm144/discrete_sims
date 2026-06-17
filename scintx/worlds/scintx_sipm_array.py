@@ -134,8 +134,11 @@ def build_world(sim, units):
 
 
 def add_optical_surfaces(sim, units):
-    pass   # ScintX-Air and ScintX-Si handled by G4 optical boundary process
-
+    sim.physics_manager.add_optical_surface(
+        volume_from="scintillator",
+        volume_to="world",
+        g4_surface_name="ScintX_air_surface",
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS HOOK
