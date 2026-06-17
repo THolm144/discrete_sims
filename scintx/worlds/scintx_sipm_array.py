@@ -137,7 +137,7 @@ def add_optical_surfaces(sim, units):
     sim.physics_manager.add_optical_surface(
         volume_from="scintillator",
         volume_to="world",
-        g4_surface_name="ScintX_air_surface",
+        g4_surface_name="Tyvek",
     )
 
 # ─────────────────────────────────────────────────────────────────────────────

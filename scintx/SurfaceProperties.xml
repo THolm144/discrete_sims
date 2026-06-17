@@ -43,15 +43,45 @@
     </propertiestable>
 
   </surface>
-  <surface name="Tyvek" model="glisur" finish="ground" type="dielectric_metal" value="1.0">
-      <property name="REFLECTIVITY">
-          <value energy="2.0 eV" value="0.98"/>
-          <value energy="3.5 eV" value="0.98"/>
-      </property>
-      <property name="EFFICIENCY">
-          <value energy="2.0 eV" value="0.0"/>
-          <value energy="3.5 eV" value="0.0"/>
-      </property>
+  <surface model="unified"
+           name="Tyvek"
+           type="dielectric_dielectric"
+           finish="groundfrontpainted"
+           sigmaalpha="0.1">
+
+    <propertiestable>
+
+      <propertyvector name="SPECULARLOBECONSTANT" energyunit="eV">
+        <ve energy="2.0" value="0.0"/>
+        <ve energy="3.5" value="0.0"/>
+      </propertyvector>
+
+      <propertyvector name="SPECULARSPIKECONSTANT" energyunit="eV">
+        <ve energy="2.0" value="0.0"/>
+        <ve energy="3.5" value="0.0"/>
+      </propertyvector>
+
+      <propertyvector name="BACKSCATTERCONSTANT" energyunit="eV">
+        <ve energy="2.0" value="0.0"/>
+        <ve energy="3.5" value="0.0"/>
+      </propertyvector>
+
+      <propertyvector name="DIFFUSELOBECONSTANT" energyunit="eV">
+        <ve energy="2.0" value="1.0"/>
+        <ve energy="3.5" value="1.0"/>
+      </propertyvector>
+
+      <propertyvector name="REFLECTIVITY" energyunit="eV">
+        <ve energy="2.0" value="0.95"/>
+        <ve energy="3.5" value="0.95"/>
+      </propertyvector>
+
+      <propertyvector name="EFFICIENCY" energyunit="eV">
+        <ve energy="2.0" value="0.0"/>
+        <ve energy="3.5" value="0.0"/>
+      </propertyvector>
+
+    </propertiestable>
   </surface>
   <surface model="unified"
          name="ScintX_air_surface"
