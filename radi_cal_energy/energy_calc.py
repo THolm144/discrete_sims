@@ -61,7 +61,7 @@ def reconstruct_shower_profile(e_energy: float, t_energy: float):
     return layers, best_curve
 
 def load_truth_dose(batch_dir: Path):
-    """Loads the DoseActor truth data for comparison."""
+    """Loads the pre-binned DoseActor truth data for comparison."""
     dose_file = batch_dir / "analyzed_longitudinal.txt"
     if not dose_file.exists():
         return None
@@ -71,33 +71,19 @@ def load_truth_dose(batch_dir: Path):
         if data.size == 0:
             return None
         
-        # Robust array dimension handling
-        if data.ndim == 1:
-            avg_dose = data # Single column file
-        elif data.ndim == 2:
-            if data.shape[1] > 1:
-                avg_dose = data[:, 1] # Take the second column
-            else:
-                avg_dose = data[:, 0] # 2D array but only 1 column
+        # Extract the 1D array depending on how analyze.py formatted it
+        if data.ndim == 2:
+            avg_dose = data[:, 1] if data.shape[1] > 1 else data[:, 0]
         else:
-            return None
+            avg_dose = data
             
-        layer_edeps = []
-        # Calculate start position based on geometry constants
-        current_z = (183.0 - ((29 * 1.5) + (28 * 2.5))) / 2.0 
-
-        for layer_idx in range(29):
-            z_start = current_z
-            z_end = current_z + 1.5
-            idx_start = max(0, min(int(round(z_start / 0.1)), len(avg_dose)))
-            idx_end   = max(0, min(int(round(z_end / 0.1)), len(avg_dose)))
+        # Since radi_cal_energy already bins this into 29 layers, return it directly!
+        if len(avg_dose) == 29:
+            return avg_dose
+        else:
+            print(f"  [Warning]: Expected 29 layers, but found {len(avg_dose)} in truth data.")
+            return avg_dose
             
-            # Slice the array and sum the 0.1mm bins into the 1.5mm LYSO layer
-            layer_edeps.append(float(np.sum(avg_dose[idx_start:idx_end])))
-            current_z += 1.5 + (2.5 if layer_idx < 28 else 0)
-
-        return np.array(layer_edeps)
-        
     except Exception as e:
         print(f"  [Dose Parsing Error]: {e}")
         return None
