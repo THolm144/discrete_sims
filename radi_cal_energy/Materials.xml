@@ -20,7 +20,7 @@
 
   <material name="LYSO">
     <propertiestable>
-      <property name="SCINTILLATIONYIELD"         value="3200"/>
+      <property name="SCINTILLATIONYIELD"         value="320"/>
       <property name="RESOLUTIONSCALE"            value="1.0"/>
       <property name="SCINTILLATIONTIMECONSTANT1" value="40" unit="ns"/>
       <property name="SCINTILLATIONYIELD1"        value="1.0"/>
@@ -174,11 +174,10 @@
         <ve energy="1.55" value="1000.0"/>
         <ve energy="2.49" value="1000.0"/>
         <ve energy="2.50" value="1.000"/>
-        <ve energy="2.70" value="0.0001"/> 
-        <ve energy="2.95" value="0.0001"/>
-        <ve energy="3.10" value="0.0001"/>
-        <ve energy="3.54" value="0.0001"/>
-        <ve energy="6.20" value="0.0001"/>
+        <ve energy="2.95" value="0.010"/>
+        <ve energy="3.10" value="0.002"/>
+        <ve energy="3.54" value="0.001"/>
+        <ve energy="6.20" value="0.001"/>
       </propertyvector>
       
       <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">

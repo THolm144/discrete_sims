@@ -76,6 +76,11 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
 
     cap_dz = (thickness / 2.0) * units.mm - 0.01 * units.mm  # Slightly reduced to avoid overlap issues
 
+    # Define indices for the kitty-corner E-type channels
+    # Index 1 is [-3.5, -3.5] (Bottom-Left)
+    # Index 4 is [3.5, 3.5]   (Top-Right)
+    e_type_indices = [1, 4]
+
     for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if cap_idx == 0:
             air = sim.add_volume("Tubs", f"{name}_cap_0_air")
@@ -93,7 +98,14 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
         wall.translation = [cx * units.mm, cy * units.mm, 0]
         wall.material = "Quartz"
 
-        core_mat = "DSB1" if is_shower_max else "Quartz"
+        # Apply kitty-corner logic:
+        # If it's an E-type capillary, it is always DSB1. 
+        # Otherwise, it behaves as a T-type (DSB1 only at shower max).
+        if cap_idx in e_type_indices:
+            core_mat = "DSB1"
+        else:
+            core_mat = "DSB1" if is_shower_max else "Quartz"
+
         core = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_core")
         core.mother = name
         core.rmin, core.rmax = 0.0, _CAP_INNER_MM * units.mm
@@ -114,13 +126,13 @@ def _build_sipms(sim, units):
         front = sim.add_volume("Box", f"sipm_front_{cap_idx}")
         front.mother = "world"
         front.size = [_SIPM_XY_MM * units.mm, _SIPM_XY_MM * units.mm, _SIPM_THICK_MM * units.mm]
-        front.material = "Quartz"
+        front.material = "G4_Si"
         front.translation = [cx * units.mm, cy * units.mm, z_front * units.mm]
 
         back = sim.add_volume("Box", f"sipm_back_{cap_idx}")
         back.mother = "world"
         back.size = [_SIPM_XY_MM * units.mm, _SIPM_XY_MM * units.mm, _SIPM_THICK_MM * units.mm]
-        back.material = "Quartz"
+        back.material = "G4_Si"
         back.translation = [cx * units.mm, cy * units.mm, z_back * units.mm]
 
 # ─────────────────────────────────────────────────────────────────────────────
