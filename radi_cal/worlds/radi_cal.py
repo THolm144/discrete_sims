@@ -69,6 +69,18 @@ _CAP_POSITIONS_MM = [
 # GEOMETRY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def get_active_ranges():
+    """Generates the Z-bounds for the 29 LYSO layers to pass into meta."""
+    ranges = []
+    stack_thick = (29 * _LYSO_THICK_MM) + (28 * _W_THICK_MM)
+    gap_thick = (_CAP_TOTAL_MM - stack_thick) / 2.0
+    current_z = -(_CAP_TOTAL_MM / 2.0) + gap_thick
+    
+    for i in range(29):
+        ranges.append((current_z, current_z + _LYSO_THICK_MM))
+        current_z += (_LYSO_THICK_MM + _W_THICK_MM)
+    return ranges
+
 def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=False):
     plate = sim.add_volume("Box", name)
     plate.mother = TARGET_VOLUME_NAME
@@ -178,12 +190,11 @@ def analyze(batch_dir, run_dirs, meta, utils):
     extra_lines = []
     plots_saved = []
 
-    # ── Extract Timing and Photon Energy (Case-Insensitive) ──────────────────
+    # ── Extract Timing and Photon Energy ─────────────────────────────────────
     all_energies, times = [], []
     for f in hits_files:
         try:
             with uproot.open(f) as file:
-                # Grab the first available tree (ignores the hardcoded "Hits" requirement)
                 tree_names = [k for k in file.keys() if ";" in k]
                 if not tree_names: continue
                 
@@ -191,19 +202,16 @@ def analyze(batch_dir, run_dirs, meta, utils):
                 keys = tree.keys()
                 key_map = {k.lower(): k for k in keys}
                 
-                # Debug output to terminal: Shows exact Tree & Branches Gate generated
                 if not times: 
                     extra_lines.append(f"  [DEBUG] ROOT Tree    : {tree_names[0]}")
                     extra_lines.append(f"  [DEBUG] ROOT Branches: {', '.join(keys[:10])}")
 
-                # Extract Energy
                 for e_name in ["energy", "kineticenergy", "edep"]:
                     if e_name in key_map:
                         arr = tree[key_map[e_name]].array(library="np") * 1e6
                         all_energies.extend([val for val in arr if val > 1e-5])
                         break
                         
-                # Extract Time
                 for t_name in ["time", "globaltime", "localtime"]:
                     if t_name in key_map:
                         times.extend(tree[key_map[t_name]].array(library="np"))
@@ -218,40 +226,8 @@ def analyze(batch_dir, run_dirs, meta, utils):
     _aggregate_batch(batch_dir, run_dirs, meta, utils)
     centers, dose_edep = utils.load_dose_mhd(run_dirs, meta["phantom_cm"])
 
-    # ── Plotting to match the Reference Paper ────────────────────────────────
-    analyzed_txt = batch_dir / "analyzed_longitudinal.txt"
-    if analyzed_txt.exists():
-        try:
-            layers, energies_mev = np.loadtxt(analyzed_txt, unpack=True)
-            
-            if layers.ndim == 0:
-                layers = np.array([layers])
-                energies_mev = np.array([energies_mev])
-            
-            e0_mev = meta.get("energy_kev", 50000000) / 1000.0
-            norm_energies = energies_mev / e0_mev
-            layers_0_indexed = layers - 1 
-            
-            plt.figure(figsize=(8, 5))
-            plt.plot(layers_0_indexed, norm_energies, marker='o', linestyle='-', color='b', markersize=6)
-            
-            xlabel = "Depth Bin" if meta.get("active_z_ranges") is None else "Layer Index (0-Indexed)"
-            plt.xlabel(xlabel)
-            plt.ylabel(r"$E_{dep} / E_0$")
-            plt.title(f"RADiCAL Longitudinal Shower Profile ({e0_mev/1000:.1f} GeV)")
-            plt.grid(True, linestyle='--', alpha=0.6)
-            
-            plot_file = batch_dir / "radical_longitudinal.png"
-            plt.savefig(plot_file, dpi=300, bbox_inches="tight")
-            plt.close()
-            
-            plots_saved.append(plot_file.name)
-            
-            shower_max_layer = layers_0_indexed[np.argmax(norm_energies)]
-            extra_lines.append(f"  Shower Max Bin       : {int(shower_max_layer)}")
-            
-        except Exception as e:
-            extra_lines.append(f"  Warning: Could not plot longitudinal data: {e}")
+    # ── Modular Plotting Hook ────────────────────────────────────────────────
+    _generate_bar_plot(batch_dir, meta, plots_saved, extra_lines)
 
     return {
         "hits": hits, 
@@ -264,9 +240,45 @@ def analyze(batch_dir, run_dirs, meta, utils):
         "plots_saved": plots_saved
     }
 
+def _generate_bar_plot(batch_dir, meta, plots_saved, extra_lines):
+    """Generates the absolute MeV bar chart matching the requested style."""
+    analyzed_txt = batch_dir / "analyzed_longitudinal.txt"
+    if not analyzed_txt.exists():
+        return
+        
+    try:
+        layers, energies_mev = np.loadtxt(analyzed_txt, unpack=True)
+        
+        # Ensure array shapes handle single-layer edge cases
+        if layers.ndim == 0:
+            layers = np.array([layers])
+            energies_mev = np.array([energies_mev])
+            
+        plt.figure(figsize=(10, 5))
+        plt.bar(layers, energies_mev, color='#48cae4', edgecolor='#0077b6', width=0.8)
+        
+        plt.xlabel("LYSO Layer Number", fontsize=12)
+        plt.ylabel("Energy Deposition (MeV)", fontsize=12)
+        plt.title("RADiCAL Longitudinal Shower Profile", fontsize=14)
+        plt.xlim(0, 30)
+        plt.grid(False)
+        
+        plot_file = batch_dir / "radical_longitudinal.png"
+        plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+        plt.close()
+        
+        plots_saved.append(plot_file.name)
+        
+        shower_max_layer = layers[np.argmax(energies_mev)]
+        extra_lines.append(f"  Shower Max Layer     : {int(shower_max_layer)}")
+        
+    except Exception as e:
+        extra_lines.append(f"  Warning: Could not plot longitudinal data: {e}")
+
 def _aggregate_batch(batch_dir, run_dirs, meta, utils):
     dz_mm = meta.get("dose_spacing_mm", 0.1)
-    active_ranges = meta.get("active_z_ranges", None)
+    # Default to the generator if none provided by the runner
+    active_ranges = meta.get("active_z_ranges", get_active_ranges())
     long_acc, n = None, 0
 
     for run_dir in run_dirs:
