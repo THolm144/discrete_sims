@@ -1,9 +1,9 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_sim.sh — OpenGATE simulation launcher (Organized Multi-Energy)
+# run_sim_sweep.sh — OpenGATE simulation launcher (Organized Multi-Energy)
 # ─────────────────────────────────────────────────────────────────────────────
 
-WORLD="radi_cal"
+WORLD="radi_cal_energy"
 PARTICLE="e-"
 # Adjusted energies to match some of the paper's test beam data points
 ENERGIES_KEV=(25000000 50000000 100000000 150000000) 
@@ -63,12 +63,13 @@ for ENERGY_KEV in "${ENERGIES_KEV[@]}"; do
     echo "Analysing ${ENERGY_KEV} keV standard run data..."
     python3 analyze.py --batch-dir "$OUT_DIR" | tee -a "$SUMMARY_FILE"
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # NEW: Run Timing Resolution Analysis
-    # ─────────────────────────────────────────────────────────────────────────
+    # Run Timing Resolution Analysis
     echo "Reconstructing Timing Resolution for ${ENERGY_KEV} keV..."
-    # Passing the batch-dir so timing_res.py knows where the ROOT/hit files are
     python3 timing_res.py --batch-dir "$OUT_DIR" | tee -a "$SUMMARY_FILE"
+
+    # NEW: Run Energy Calculation & LYSO Histogram
+    echo "Calculating Theoretical Energy & LYSO Histogram for ${ENERGY_KEV} keV..."
+    python3 energy_calc.py --batch-dir "$OUT_DIR" | tee -a "$SUMMARY_FILE"
 
     # Generate 3D Visualization
     echo "Rendering 3D visualisation..."

@@ -51,7 +51,7 @@ def simulate_sipm_waveform(photon_times_ns, time_step_ps=10, max_time_ps=5000, y
     # Multiply the amplitude of the optical pulse by 10
     # to simulate the missing 90% of the LYSO light!
     # ---------------------------------------------------------
-    pulse_shape = pulse_shape * yield_scale_factor
+    pulse_shape = pulse_shape 
     
     # 6. Simulate the rising edge of the voltage waveform (integrating charge)
     waveform = np.cumsum(pulse_shape) 

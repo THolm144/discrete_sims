@@ -5,6 +5,7 @@ RADiCAL Shashlik calorimeter — 29-layer LYSO/W sampling calorimeter
 with localized shower-max DSB1 inserts and physical SiPM detectors.
 """
 
+from matplotlib import units
 import numpy as np
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,7 +75,8 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
     plate.material = material
     plate.translation = [0, 0, z_pos * units.mm]
 
-    cap_dz = (thickness / 2.0) * units.mm - 0.01 * units.mm  # Slightly reduced to avoid overlap issues
+    _OVERLAP_EPS = 1e-4  # fraction of half-thickness, i.e. 0.01% — enough for G4 tolerance, not enough to matter physically
+    cap_dz = (thickness / 2.0) * (1.0 - _OVERLAP_EPS) * units.mm
 
     for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if cap_idx == 0:
