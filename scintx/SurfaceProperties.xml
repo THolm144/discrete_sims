@@ -57,7 +57,7 @@
          name="ScintX_air_surface"
          type="dielectric_dielectric"
          finish="ground"
-         sigmaalpha="0.2">
+         sigmaalpha="0.1">
   <propertiestable>
   </propertiestable>
 </surface>

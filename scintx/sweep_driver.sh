@@ -2,8 +2,8 @@
 set -e
 
 VALUES=(0.0 0.05 0.1 0.2 0.4)
-N=2000
-THREADS=32
+N=100
+THREADS=8
 ENERGY_KEV=9000
 
 TEMPLATE="SurfaceProperties_template.xml"
@@ -30,11 +30,15 @@ PYEOF
     python3 simulator.py \
         --world scintx_sipm_array \
         --n $N --threads $THREADS \
+        --particle e- \
         --energy-kev $ENERGY_KEV \
-        --output-dir "$OUTDIR/run_0" \
-        --optical on --sipm-hits on
+        --output-dir "$OUTDIR" \
+        --optical on --sipm-hits on --track-optical on
 
     python3 analyze.py --batch-dir "$OUTDIR" --world scintx_sipm_array
+
+    echo "  Rendering 3D plot..."
+    python3 plot_3d.py --batch-dir "$OUTDIR"
 done
 
 cp "$TEMPLATE.bak" "$TARGET"  # restore original

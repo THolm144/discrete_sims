@@ -76,7 +76,7 @@ VIEW_PARAMS: dict[str, tuple[int, int, str]] = {
 }
 
 TRACK_STYLES = {
-    "Cerenkov":      ("#00ffff", "Cerenkov"),
+    "Cerenkov":      ("#1138e2", "Cerenkov"),
     "Scintillation": ("#ff9900", "Scintillation"),
     "other":         ("#aaaaaa", "Other"),
 }
