@@ -74,7 +74,7 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
     plate.material = material
     plate.translation = [0, 0, z_pos * units.mm]
 
-    cap_dz = (thickness / 2.0) * units.mm
+    cap_dz = (thickness / 2.0) * units.mm - 0.01 * units.mm  # Slightly reduced to avoid overlap issues
 
     for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if cap_idx == 0:
