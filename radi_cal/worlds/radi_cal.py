@@ -6,8 +6,6 @@ with localized shower-max DSB1 inserts and physical SiPM detectors.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
-import uproot
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SIMULATOR CONTRACT
@@ -33,7 +31,7 @@ PHANTOM_CM = [1.4, 1.4, 18.3]
 EXPECTED_DEDX = 1.0
 ACTIVATE_CALORIMETER_SETTINGS = True
 CALORIMETER_Z_RES_MM = 0.1
-ACTIVE_Z_RANGES_MM = None
+ACTIVE_Z_RANGES_MM = [[0.0, PHANTOM_CM[2] * 10.0]]
 TIMING_TRIGGER_THRESHOLD = 1
 
 DETECTOR_VOLUME_NAMES = [
@@ -68,18 +66,6 @@ _CAP_POSITIONS_MM = [
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
-
-def get_active_ranges():
-    """Generates the Z-bounds for the 29 LYSO layers to pass into meta."""
-    ranges = []
-    stack_thick = (29 * _LYSO_THICK_MM) + (28 * _W_THICK_MM)
-    gap_thick = (_CAP_TOTAL_MM - stack_thick) / 2.0
-    current_z = -(_CAP_TOTAL_MM / 2.0) + gap_thick
-    
-    for i in range(29):
-        ranges.append((current_z, current_z + _LYSO_THICK_MM))
-        current_z += (_LYSO_THICK_MM + _W_THICK_MM)
-    return ranges
 
 def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=False):
     plate = sim.add_volume("Box", name)
@@ -181,104 +167,56 @@ def build_world(sim, units):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def analyze(batch_dir, run_dirs, meta, utils):
+    import matplotlib.pyplot as plt
+
     hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
     exits_files = [d / "optical_exited.root" for d in run_dirs]
 
     hits       = utils.analyse_hits(hits_files)
     exits      = utils.analyse_exits(exits_files)
-    
+    timing_res = (utils.extract_timing_resolution(hits_files, threshold_photon=TIMING_TRIGGER_THRESHOLD) if hits_files else 0.0)
+
+    long_arr, trans_arr = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
+    _aggregate_batch(batch_dir, run_dirs, meta, utils)
+
     extra_lines = []
     plots_saved = []
 
-    # ── Extract Timing and Photon Energy ─────────────────────────────────────
-    all_energies, times = [], []
-    for f in hits_files:
-        try:
-            with uproot.open(f) as file:
-                tree_names = [k for k in file.keys() if ";" in k]
-                if not tree_names: continue
-                
-                tree = file[tree_names[0]]
-                keys = tree.keys()
-                key_map = {k.lower(): k for k in keys}
-                
-                if not times: 
-                    extra_lines.append(f"  [DEBUG] ROOT Tree    : {tree_names[0]}")
-                    extra_lines.append(f"  [DEBUG] ROOT Branches: {', '.join(keys[:10])}")
+    if long_arr is not None:
+        dz_mm = meta.get("dose_spacing_mm", 0.1)
+        avg   = long_arr / max(len(run_dirs), 1)
 
-                for e_name in ["energy", "kineticenergy", "edep"]:
-                    if e_name in key_map:
-                        arr = tree[key_map[e_name]].array(library="np") * 1e6
-                        all_energies.extend([val for val in arr if val > 1e-5])
-                        break
-                        
-                for t_name in ["time", "globaltime", "localtime"]:
-                    if t_name in key_map:
-                        times.extend(tree[key_map[t_name]].array(library="np"))
-                        break
-        except Exception as e: 
-            extra_lines.append(f"  [DEBUG] Uproot Error on {f.name}: {e}")
+        stack_thick = (29 * _LYSO_THICK_MM) + (28 * _W_THICK_MM)
+        front_gap   = (_CAP_TOTAL_MM - stack_thick) / 2.0
+        layer_numbers, layer_edeps = list(range(1, 30)), []
+        current_z = front_gap
 
-    timing_res = float(np.std(times)) if len(times) > 1 else 0.0
-    avg_energy = float(np.mean(all_energies)) if len(all_energies) > 0 else 0.0
+        for layer_idx in range(29):
+            z_start, z_end = current_z, current_z + _LYSO_THICK_MM
+            idx_start = max(0, min(int(round(z_start / dz_mm)), len(avg)))
+            idx_end   = max(0, min(int(round(z_end / dz_mm)), len(avg)))
+            layer_edeps.append(float(np.sum(avg[idx_start:idx_end])))
+            current_z += _LYSO_THICK_MM + (_W_THICK_MM if layer_idx < 28 else 0)
 
-    # ── Aggregate Dose Data ──────────────────────────────────────────────────
-    _aggregate_batch(batch_dir, run_dirs, meta, utils)
-    centers, dose_edep = utils.load_dose_mhd(run_dirs, meta["phantom_cm"])
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        ax.bar(layer_numbers, layer_edeps, color="#00bcd4", alpha=0.7, edgecolor="#00838f", linewidth=1.2, width=0.8)
+        ax.set_xlabel("LYSO Layer Number")
+        ax.set_ylabel("Energy Deposition (MeV)")
+        fig.tight_layout()
+        out = batch_dir / "radical_longitudinal.png"
+        fig.savefig(out, dpi=200)
+        plt.close(fig)
+        plots_saved.append(out.name)
 
-    # ── Modular Plotting Hook ────────────────────────────────────────────────
-    _generate_bar_plot(batch_dir, meta, plots_saved, extra_lines)
+    up_hits = sum(hits.get(k, 0) for k in hits if "sipm_front" in k)
+    dn_hits = sum(hits.get(k, 0) for k in hits if "sipm_back" in k)
+    extra_lines += [f"  Upstream SiPM hits: {up_hits:,}", f"  Downstream SiPM hits: {dn_hits:,}"]
 
-    return {
-        "hits": hits, 
-        "exits": exits, 
-        "timing_res_ps": timing_res, 
-        "avg_photon_energy_ev": avg_energy,
-        "dose_centers": centers,
-        "dose_edep": dose_edep,
-        "extra_lines": extra_lines, 
-        "plots_saved": plots_saved
-    }
-
-def _generate_bar_plot(batch_dir, meta, plots_saved, extra_lines):
-    """Generates the absolute MeV bar chart matching the requested style."""
-    analyzed_txt = batch_dir / "analyzed_longitudinal.txt"
-    if not analyzed_txt.exists():
-        return
-        
-    try:
-        layers, energies_mev = np.loadtxt(analyzed_txt, unpack=True)
-        
-        # Ensure array shapes handle single-layer edge cases
-        if layers.ndim == 0:
-            layers = np.array([layers])
-            energies_mev = np.array([energies_mev])
-            
-        plt.figure(figsize=(10, 5))
-        plt.bar(layers, energies_mev, color='#48cae4', edgecolor='#0077b6', width=0.8)
-        
-        plt.xlabel("LYSO Layer Number", fontsize=12)
-        plt.ylabel("Energy Deposition (MeV)", fontsize=12)
-        plt.title("RADiCAL Longitudinal Shower Profile", fontsize=14)
-        plt.xlim(0, 30)
-        plt.grid(False)
-        
-        plot_file = batch_dir / "radical_longitudinal.png"
-        plt.savefig(plot_file, dpi=300, bbox_inches="tight")
-        plt.close()
-        
-        plots_saved.append(plot_file.name)
-        
-        shower_max_layer = layers[np.argmax(energies_mev)]
-        extra_lines.append(f"  Shower Max Layer     : {int(shower_max_layer)}")
-        
-    except Exception as e:
-        extra_lines.append(f"  Warning: Could not plot longitudinal data: {e}")
+    return {"hits": hits, "exits": exits, "timing_res_ps": timing_res, "extra_lines": extra_lines, "plots_saved": plots_saved}
 
 def _aggregate_batch(batch_dir, run_dirs, meta, utils):
     dz_mm = meta.get("dose_spacing_mm", 0.1)
-    # Default to the generator if none provided by the runner
-    active_ranges = meta.get("active_z_ranges", get_active_ranges())
+    active_ranges = meta.get("active_z_ranges", None)
     long_acc, n = None, 0
 
     for run_dir in run_dirs:
