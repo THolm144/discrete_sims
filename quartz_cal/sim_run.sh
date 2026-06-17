@@ -5,7 +5,7 @@
 
 WORLD="quartz_cal"  # Target the NxN Quartz crystal / SiPM scanner array
 PARTICLE="proton"          # Primary beam particle type
-ENERGY_KEV=50000000         # Beam energy in keV (5000000 keV = 5 GeV)
+ENERGY_KEV=1000000000       # Beam energy in keV (1000000000 keV = 1 TeV)
 N_PARTICLES=100            # Total primary particles per run
 THREADS=8                  # CPU threads per run execution
 N_RUNS=5                   # Number of independent simulation runs
