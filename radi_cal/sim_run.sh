@@ -6,7 +6,7 @@
 
 WORLD=radi_cal    # world module name
 PARTICLE=e-            # primary particle type (e.g., proton, electron, gamma)
-ENERGY_KEV=50000000         # energy in keV (200000 = 200 MeV)
+ENERGY_KEV=20000000         # energy in keV (200000 = 200 MeV)
 N_PARTICLES=100        # particles per run
 THREADS=8               # CPU threads per run
 N_RUNS=1                # number of runs
