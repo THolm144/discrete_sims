@@ -152,5 +152,11 @@ if __name__ == "__main__":
         if len(real_waveforms) > 0:
             sigma_t = get_timing_resolution(real_waveforms, threshold=threshold_pe, ref_times_mcp=mock_mcp_refs)
             print(f"Calculated Timing Resolution (sigma_t): {sigma_t:.2f} ps")
+            
+            # --- SAVE RESULTS TO THE RUN DIRECTORY ---
+            output_txt = batch_path / "timing_resolution.txt"
+            with open(output_txt, "w") as out_file:
+                out_file.write(f"Timing Resolution (sigma_t): {sigma_t:.2f} ps\n")
+            print(f"Saved tracking log to: {output_txt}")
         else:
             print("No valid waveforms generated to calculate timing resolution.")

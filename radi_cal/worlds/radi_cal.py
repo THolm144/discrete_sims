@@ -75,8 +75,7 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
     plate.material = material
     plate.translation = [0, 0, z_pos * units.mm]
 
-    _OVERLAP_EPS = 1e-4  # relative shrink, scales with layer thickness
-    cap_dz = (thickness / 2.0) * (1.0 - _OVERLAP_EPS) * units.mm
+    cap_dz = (thickness / 2.0) * units.mm
 
     for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if cap_idx == 0:
@@ -88,22 +87,15 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
             air.material = "Air"
             continue
 
-        wall = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_wall")
-        wall.mother = name
-        wall.rmin, wall.rmax = _CAP_INNER_MM * units.mm, _CAP_OUTER_MM * units.mm
-        wall.dz = cap_dz
-        wall.translation = [cx * units.mm, cy * units.mm, 0]
-        wall.material = "Quartz"
-        #sim.physics_manager.set_max_step_size(wall.name, 0.05 * units.mm)   # NEW
-
-        core_mat = "DSB1" if is_shower_max else "Quartz"
-        core = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_core")
-        core.mother = name
-        core.rmin, core.rmax = 0.0, _CAP_INNER_MM * units.mm
-        core.dz = cap_dz
-        core.translation = [cx * units.mm, cy * units.mm, 0]
-        core.material = core_mat
-        #sim.physics_manager.set_max_step_size(core.name, 0.05 * units.mm)   # NEW
+        # Single solid tube: entirely DSB1 or entirely Quartz
+        cap_mat = "DSB1" if is_shower_max else "Quartz"
+        
+        cap = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}")
+        cap.mother = name
+        cap.rmin, cap.rmax = 0.0, _CAP_OUTER_MM * units.mm
+        cap.dz = cap_dz
+        cap.translation = [cx * units.mm, cy * units.mm, 0]
+        cap.material = cap_mat
 
     return plate
 
@@ -249,7 +241,58 @@ def get_geometry_primitives() -> list[dict]:
 
 def add_optical_surfaces(sim, units):
     detector_volumes = getattr(sim.volume_manager, "volumes", {})
+    
+    # 1. Standard Inter-Volume Boundaries (LYSO Wraps and Core Interfaces)
     for vol_name in detector_volumes:
         if vol_name.startswith("lyso_") and "_cap_" not in vol_name:
             sim.physics_manager.add_optical_surface(TARGET_VOLUME_NAME, vol_name, "Tyvek")
             sim.physics_manager.add_optical_surface(vol_name, TARGET_VOLUME_NAME, "Tyvek")
+            
+            try:
+                layer_idx = int(vol_name.split("_")[1])
+            except (IndexError, ValueError):
+                layer_idx = -1
+
+            is_dsb1_layer = layer_idx in _SHOWER_MAX_RANGE
+            
+            for cap_idx in range(1, 5):
+                cap_name = f"{vol_name}_cap_{cap_idx}"
+                if cap_name in detector_volumes:
+                    surf_type = "lyso/dsb1" if is_dsb1_layer else "lyso/quartz"
+                    sim.physics_manager.add_optical_surface(vol_name, cap_name, surf_type)
+                    sim.physics_manager.add_optical_surface(cap_name, vol_name, surf_type)
+
+    # 2. Sequential Segment-to-Segment Transitions (Continuous Longitudinal Tracking)
+    # We construct the ordered sequence of all physical layers in the stack
+    layer_sequence = []
+    layer_sequence.append(("front_gap", False)) # (volume_prefix, is_dsb1)
+    for idx in range(29):
+        layer_sequence.append((f"lyso_{idx}", idx in _SHOWER_MAX_RANGE))
+        if idx < 28:
+            layer_sequence.append((f"w_{idx}", False))
+    layer_sequence.append(("back_gap", False))
+
+    # Link the capillary segment face of layer i to the corresponding segment face of layer i+1
+    for i in range(len(layer_sequence) - 1):
+        current_layer, current_is_dsb1 = layer_sequence[i]
+        next_layer, next_is_dsb1       = layer_sequence[i+1]
+        
+        for cap_idx in range(1, 5):
+            # Formulate the explicit names used by the volume manager
+            # Note: front_gap and back_gap do not contain capillaries in the script loop, 
+            # but we protect against missing keys with the conditional check below.
+            curr_cap_name = f"{current_layer}_cap_{cap_idx}"
+            next_cap_name = f"{next_layer}_cap_{cap_idx}"
+            
+            if curr_cap_name in detector_volumes and next_cap_name in detector_volumes:
+                # Determine transition material types to map to the ideal XML surfaces
+                if current_is_dsb1 and next_is_dsb1:
+                    surf_name = "dsb1/dsb1_ideal"
+                elif not current_is_dsb1 and not next_is_dsb1:
+                    surf_name = "quartz/quartz_ideal"
+                else:
+                    surf_name = "dsb1/quartz_ideal"
+                
+                # Apply the perfect pass-through optical surface boundary bidirectionally
+                sim.physics_manager.add_optical_surface(curr_cap_name, next_cap_name, surf_name)
+                sim.physics_manager.add_optical_surface(next_cap_name, curr_cap_name, surf_name)

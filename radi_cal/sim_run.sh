@@ -4,13 +4,13 @@
 # Usage: bash run_sim.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
-WORLD=radi_cal    # world module name
+WORLD=radi_cal         # world module name
 PARTICLE=e-            # primary particle type (e.g., proton, electron, gamma)
-ENERGY_KEV=20000000         # energy in keV (200000 = 200 MeV)
-N_PARTICLES=100        # particles per run
-THREADS=10               # CPU threads per run
-N_RUNS=1                # number of runs
-BEAM_RADIUS=0.01         # beam radius in cm
+ENERGY_KEV=20000000    # energy in keV (20000000 = 20 GeV)
+N_PARTICLES=1          # particles per run
+THREADS=1              # CPU threads per run
+N_RUNS=1               # number of runs
+BEAM_RADIUS=0.01       # beam radius in cm
 OPTICAL="on"           # "on" for full optics, "off" for fast dose analysis
 PHYSICS_LIST="QGSP_BERT_EMV"  # Physics config
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,8 +33,14 @@ for i in $(seq 0 $((N_RUNS - 1))); do
         --output-dir  $OUT_DIR
 done
 
-echo "Done. Analysing..."
+echo "Done. Analysing standard data..."
 python3 analyze.py --batch-dir $OUT_DIR
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW ADDITION: CALLING WAFEFORM TIMING ANALYZER
+# ─────────────────────────────────────────────────────────────────────────────
+echo "Calculating waveform and timing resolution..."
+python3 timing_res.py --batch-dir $OUT_DIR
 
 echo "Rendering 3D visualisation..."
 python3 plot_3d.py --batch-dir $OUT_DIR
