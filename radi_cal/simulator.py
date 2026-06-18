@@ -424,6 +424,8 @@ def main():
         sim.random_seed = 1000 + args.run_id
     sim.output_dir = str(run_dir)
 
+   
+
     stats = sim.add_actor("SimulationStatisticsActor", "sim_stats")
     stats.output_filename  = "stats.json"
     stats.track_types_flag = True
@@ -433,7 +435,7 @@ def main():
     if hasattr(world, "add_optical_surfaces"):
         world.add_optical_surfaces(sim, units)
 
-    target_vol   = getattr(world, "TARGET_VOLUME_NAME", "target")
+    target_vol     = getattr(world, "TARGET_VOLUME_NAME", "target")
     actor_registry = wire_actors(sim, world, caps, run_dir, units)
 
     add_beam_source(sim, args, world, beam_cfg, units)
@@ -447,7 +449,23 @@ def main():
     sim.progress_bar      = True
 
     save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
+
+    # ─── NATIVE STEP CEILING LOOP BREAKER ─────────────────────────────────
+    # Create an actor to kill particles that take too many steps (stuck on boundaries)
+    target_vol = getattr(world, "TARGET_VOLUME_NAME", "target")
+    
+    loop_killer = sim.add_actor("KillActor", "boundary_loop_killer")
+    loop_killer.attached_to = target_vol
+    
+    # Configure a filter that triggers when a track exceeds 5000 steps
+    from opengate.actors.filters import GateFilterBuilder
+    F = GateFilterBuilder()
+    loop_killer.filter = (F.CurrentStepNumber> 5000)
+    # ───────────────────────────────────────────────────────────────────────
+
+    # Run at full C++ speed safely
     sim.run()
+
     print(f"\nDone. Results in: {run_dir}")
 
     if caps["calorimeter_mode"]:

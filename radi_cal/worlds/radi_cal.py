@@ -75,7 +75,7 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
     plate.material = material
     plate.translation = [0, 0, z_pos * units.mm]
 
-    _OVERLAP_EPS = 1e-4  # fraction of half-thickness, i.e. 0.01% — enough for G4 tolerance, not enough to matter physically
+    _OVERLAP_EPS = 1e-4  # relative shrink, scales with layer thickness
     cap_dz = (thickness / 2.0) * (1.0 - _OVERLAP_EPS) * units.mm
 
     for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
@@ -94,6 +94,7 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
         wall.dz = cap_dz
         wall.translation = [cx * units.mm, cy * units.mm, 0]
         wall.material = "Quartz"
+        #sim.physics_manager.set_max_step_size(wall.name, 0.05 * units.mm)   # NEW
 
         core_mat = "DSB1" if is_shower_max else "Quartz"
         core = sim.add_volume("Tubs", f"{name}_cap_{cap_idx}_core")
@@ -102,6 +103,7 @@ def _build_layer(sim, name, thickness, material, z_pos, units, is_shower_max=Fal
         core.dz = cap_dz
         core.translation = [cx * units.mm, cy * units.mm, 0]
         core.material = core_mat
+        #sim.physics_manager.set_max_step_size(core.name, 0.05 * units.mm)   # NEW
 
     return plate
 
