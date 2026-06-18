@@ -451,33 +451,24 @@ def main():
     save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
 
 
-# ─── OPTICAL PHOTON TIME CUT ON ALL CAP VOLUMES ───────────────────────
+# ─── OPTICAL PHOTON TIME CUT (GLOBAL FAIL-SAFE) ───────────────────────
     if caps["optical"]:
-        from opengate.actors.filters import AttributeFilterString, AttributeFilterDouble
-
-        cap_volumes = [
-            v for v in sim.volume_manager.volumes.keys()
-            if v.startswith("cap_")
-        ]
-
-        for i, vname in enumerate(cap_volumes):
-            # Kill non-opticalphotons is wrong — we want to kill opticalphotons
-            # past 50ns. Use a single actor with just the time filter,
-            # attached only to cap volumes (photons are the only long-lived
-            # particles in there anyway).
-            tf = AttributeFilterDouble(
-                name=f"tf_cap_{i}",
-                attribute="GlobalTime",
-                compare_value=5 * units.ns,
-                compare_operation="gt",
-            )
-            tc = sim.add_actor("KillActor", f"optical_time_breaker_cap_{i}")
-            tc.attached_to = vname
-            tc.filter = tf
-    # ───────────────────────────────────────────────────────────────────────
-
-
-    # ───────────────────────────────────────────────────────────────────────
+        print("[ACTOR] Attaching global optical photon lifetime tracking cut.")
+        
+        # We attach to 'world' so it monitors tracking across the entire geometry
+        global_time_cut = sim.add_actor("KillActor", "global_optical_time_breaker")
+        global_time_cut.attached_to = "world" 
+        
+        # Build a robust multi-conditional expression filter
+        from opengate.actors.filters import GateFilterBuilder
+        F = GateFilterBuilder()
+        
+        # CRITICAL: Only target optical photons, and only kill them after 50 ns
+        global_time_cut.filter = (
+            (F.ParticleName == "opticalphoton") & 
+            (F.GlobalTime > 50.0 * units.ns)
+        )
+# ───────────────────────────────────────────────────────────────────────
 
     sim.run() 
 
