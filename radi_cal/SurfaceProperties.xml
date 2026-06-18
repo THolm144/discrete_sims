@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <surfaces>
+<surface name="wls_surface" type="dielectric_dielectric" model="unified" finish="polished">
+    <propertiestable>
+      </propertiestable>
+  </surface>
 
   <surface model="unified"
            name="SiPM_surface"

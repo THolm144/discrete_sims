@@ -450,27 +450,36 @@ def main():
 
     save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
 
-    # ─── NATIVE STEP CEILING LOOP BREAKER ─────────────────────────────────
-    # Create an actor to kill particles that take too many steps (stuck on boundaries)
-    target_vol = getattr(world, "TARGET_VOLUME_NAME", "target")
-    
-    loop_killer = sim.add_actor("KillActor", "boundary_loop_killer")
-    loop_killer.attached_to = target_vol
-    
-    # Configure a filter that triggers when a track exceeds 5000 steps
-    from opengate.actors.filters import GateFilterBuilder
-    F = GateFilterBuilder()
-    loop_killer.filter = (F.CurrentStepNumber> 5000)
+
+# ─── OPTICAL PHOTON TIME CUT ON ALL CAP VOLUMES ───────────────────────
+    if caps["optical"]:
+        from opengate.actors.filters import AttributeFilterString, AttributeFilterDouble
+
+        cap_volumes = [
+            v for v in sim.volume_manager.volumes.keys()
+            if v.startswith("cap_")
+        ]
+
+        for i, vname in enumerate(cap_volumes):
+            # Kill non-opticalphotons is wrong — we want to kill opticalphotons
+            # past 50ns. Use a single actor with just the time filter,
+            # attached only to cap volumes (photons are the only long-lived
+            # particles in there anyway).
+            tf = AttributeFilterDouble(
+                name=f"tf_cap_{i}",
+                attribute="GlobalTime",
+                compare_value=5 * units.ns,
+                compare_operation="gt",
+            )
+            tc = sim.add_actor("KillActor", f"optical_time_breaker_cap_{i}")
+            tc.attached_to = vname
+            tc.filter = tf
     # ───────────────────────────────────────────────────────────────────────
 
-    # Run at full C++ speed safely
-    sim.run()
 
-    print(f"\nDone. Results in: {run_dir}")
+    # ───────────────────────────────────────────────────────────────────────
 
-    if caps["calorimeter_mode"]:
-        run_id = args.run_id if args.run_id is not None else 0
-        postprocess_calorimeter(run_dir, batch_dir, run_id, world)
+    sim.run() 
 
 
 if __name__ == "__main__":

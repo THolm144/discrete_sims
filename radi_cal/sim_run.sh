@@ -7,8 +7,8 @@
 WORLD=radi_cal         # world module name
 PARTICLE=e-            # primary particle type (e.g., proton, electron, gamma)
 ENERGY_KEV=20000000    # energy in keV (20000000 = 20 GeV)
-N_PARTICLES=1          # particles per run
-THREADS=1              # CPU threads per run
+N_PARTICLES=5          # particles per run
+THREADS=5              # CPU threads per run
 N_RUNS=1               # number of runs
 BEAM_RADIUS=0.01       # beam radius in cm
 OPTICAL="on"           # "on" for full optics, "off" for fast dose analysis
