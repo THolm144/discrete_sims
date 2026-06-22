@@ -203,7 +203,7 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             hits.steps_to_store             = "all"
             hits.attributes = [
                 "ParticleName", "KineticEnergy", "Position",
-                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime",
+                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime", "LocalTime",
             ]
             registry["hit_actors"].append(hits)
 
@@ -424,6 +424,8 @@ def main():
         sim.random_seed = 1000 + args.run_id
     sim.output_dir = str(run_dir)
 
+   
+
     stats = sim.add_actor("SimulationStatisticsActor", "sim_stats")
     stats.output_filename  = "stats.json"
     stats.track_types_flag = True
@@ -433,7 +435,7 @@ def main():
     if hasattr(world, "add_optical_surfaces"):
         world.add_optical_surfaces(sim, units)
 
-    target_vol   = getattr(world, "TARGET_VOLUME_NAME", "target")
+    target_vol     = getattr(world, "TARGET_VOLUME_NAME", "target")
     actor_registry = wire_actors(sim, world, caps, run_dir, units)
 
     add_beam_source(sim, args, world, beam_cfg, units)
@@ -447,12 +449,28 @@ def main():
     sim.progress_bar      = True
 
     save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
-    sim.run()
-    print(f"\nDone. Results in: {run_dir}")
 
-    if caps["calorimeter_mode"]:
-        run_id = args.run_id if args.run_id is not None else 0
-        postprocess_calorimeter(run_dir, batch_dir, run_id, world)
+
+# ─── OPTICAL PHOTON TIME CUT (GLOBAL FAIL-SAFE) ───────────────────────
+    if caps["optical"]:
+        print("[ACTOR] Attaching global optical photon lifetime tracking cut.")
+        
+        # We attach to 'world' so it monitors tracking across the entire geometry
+        global_time_cut = sim.add_actor("KillActor", "global_optical_time_breaker")
+        global_time_cut.attached_to = "world" 
+        
+        # Build a robust multi-conditional expression filter
+        from opengate.actors.filters import GateFilterBuilder
+        F = GateFilterBuilder()
+        
+        # CRITICAL: Only target optical photons, and only kill them after 50 ns
+        global_time_cut.filter = (
+            (F.ParticleName == "opticalphoton") & 
+            (F.GlobalTime > 50.0 * units.ns)
+        )
+# ───────────────────────────────────────────────────────────────────────
+
+    sim.run() 
 
 
 if __name__ == "__main__":

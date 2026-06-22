@@ -174,10 +174,11 @@
         <ve energy="1.55" value="1000.0"/>
         <ve energy="2.49" value="1000.0"/>
         <ve energy="2.50" value="1.000"/>
-        <ve energy="2.95" value="0.010"/>
-        <ve energy="3.10" value="0.002"/>
-        <ve energy="3.54" value="0.001"/>
-        <ve energy="6.20" value="0.001"/>
+        <ve energy="2.70" value="0.0001"/> 
+        <ve energy="2.95" value="0.0001"/>
+        <ve energy="3.10" value="0.0001"/>
+        <ve energy="3.54" value="0.0001"/>
+        <ve energy="6.20" value="0.0001"/>
       </propertyvector>
       
       <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">
@@ -233,6 +234,78 @@
       <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">
         <ve energy="1.55" value="0.001"/>
         <ve energy="6.20" value="0.001"/>
+      </propertyvector>
+    </propertiestable>
+  </material>
+
+  <material name="BCF92">
+    <propertiestable>
+      <property name="WLSTIMECONSTANT" value="2.7" unit="ns"/>
+      
+      <propertyvector name="RINDEX" energyunit="eV">
+        <ve energy="1.00" value="1.60"/>
+        <ve energy="2.00" value="1.60"/>
+        <ve energy="2.25" value="1.60"/>
+        <ve energy="2.48" value="1.60"/>
+        <ve energy="2.52" value="1.60"/>
+        <ve energy="2.64" value="1.60"/>
+        <ve energy="2.76" value="1.60"/>
+        <ve energy="2.88" value="1.60"/>
+        <ve energy="3.02" value="1.60"/>
+        <ve energy="3.10" value="1.60"/>
+        <ve energy="3.31" value="1.60"/>
+      </propertyvector>
+      
+      <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">
+        <ve energy="1.00" value="3.5"/>
+        <ve energy="2.00" value="3.5"/>
+        <ve energy="2.25" value="3.5"/>
+        <ve energy="2.48" value="3.5"/>
+        <ve energy="2.52" value="3.5"/>
+        <ve energy="2.64" value="3.5"/>
+        <ve energy="2.76" value="3.5"/>
+        <ve energy="2.88" value="3.5"/>
+        <ve energy="3.02" value="3.5"/>
+        <ve energy="3.10" value="3.5"/>
+        <ve energy="3.31" value="3.5"/>
+      </propertyvector>
+      
+      <propertyvector name="WLSABSLENGTH" unit="m" energyunit="eV">
+        <ve energy="1.00" value="10000.0"/>
+        <ve energy="2.00" value="10000.0"/>
+        <ve energy="2.25" value="10000.0"/>
+        <ve energy="2.48" value="10000.0"/>
+        <ve energy="2.52" value="8.0"/>
+        <ve energy="2.64" value="1.0"/>
+        <ve energy="2.76" value="0.050"/>
+        <ve energy="2.88" value="0.003"/>
+        <ve energy="3.02" value="0.0003"/>
+        <ve energy="3.10" value="0.0005"/>
+        <ve energy="3.31" value="0.001"/>
+      </propertyvector>
+      
+      <propertyvector name="WLSCOMPONENT" energyunit="eV">
+        <ve energy="1.00" value="0.00"/>
+        <ve energy="2.00" value="0.00"/>
+        <ve energy="2.25" value="0.30"/>
+        <ve energy="2.48" value="0.90"/>
+        <ve energy="2.52" value="1.00"/>
+        <ve energy="2.64" value="0.55"/>
+        <ve energy="2.76" value="0.10"/>
+        <ve energy="2.88" value="0.00"/>
+        <ve energy="3.02" value="0.00"/>
+        <ve energy="3.10" value="0.00"/>
+        <ve energy="3.31" value="0.00"/>
+      </propertyvector>
+    </propertiestable>
+</material>
+  
+
+  <material name="Galactic">
+    <propertiestable>
+      <propertyvector name="RINDEX" energyunit="eV">
+        <ve energy="1.50" value="1.0"/>
+        <ve energy="6.50" value="1.0"/>
       </propertyvector>
     </propertiestable>
   </material>

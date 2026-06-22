@@ -1,0 +1,19 @@
+======================================================================
+ RADiCAL Multi-Energy Sweep Summary
+ Date    : Mon Jun 22 02:40:45 PM CDT 2026
+ Threads : 16 per run  |  Runs : 5  |  Particles : 1000
+ Total cores in use per energy : 80
+======================================================================
+
+Sweep directory : runs/radi_cal/sweep_20260622_144045
+Optical physics : on
+
+======================================================================
+  ENERGY : 25000000 keV
+======================================================================
+  Launching run 0 → log: runs/radi_cal/sweep_20260622_144045/logs/25000000keV_run0.log
+  Launching run 1 → log: runs/radi_cal/sweep_20260622_144045/logs/25000000keV_run1.log
+  Launching run 2 → log: runs/radi_cal/sweep_20260622_144045/logs/25000000keV_run2.log
+  Launching run 3 → log: runs/radi_cal/sweep_20260622_144045/logs/25000000keV_run3.log
+  Launching run 4 → log: runs/radi_cal/sweep_20260622_144045/logs/25000000keV_run4.log
+  Waiting for 5 runs to complete...
