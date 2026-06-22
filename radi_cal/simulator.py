@@ -203,7 +203,7 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             hits.steps_to_store             = "all"
             hits.attributes = [
                 "ParticleName", "KineticEnergy", "Position",
-                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime",
+                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime", "LocalTime",
             ]
             registry["hit_actors"].append(hits)
 
