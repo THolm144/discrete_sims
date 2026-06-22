@@ -182,22 +182,12 @@ def _build_capillaries(sim, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
 
         if i in _E_TYPE_INDICES:
-            # ── E-type: solid quartz rod, no bore ────────────────────────
-            rod           = vol_module.TubsVolume(name=f"cap_{i}")
-            rod.rmin      = 0.0
-            rod.rmax      = _CAP_OUTER_MM * mm
-            rod.dz        = half_cap
-            rod.name      = f"cap_{i}"
-            rod.mother    = "world"
-            rod.material  = "G4_SILICON_DIOXIDE"
-            rod.translation = [cx * mm, cy * mm, 0]
-            sim.add_volume(rod)
-
-            # BCF-92 filament — full length, sits inside the quartz rod
-            filament             = sim.add_volume("Tubs", f"cap_{i}_filament")
+            # ── E-type: Solid BCF-92 rod, no quartz ──────────────────────
+            # Fills the entire 1.15 mm diameter bore hole with BCF-92
+            filament             = sim.add_volume("Tubs", f"cap_{i}")
             filament.mother      = "world"
             filament.rmin        = 0.0
-            filament.rmax        = _FILAMENT_R_MM * mm
+            filament.rmax        = _CAP_OUTER_MM * mm     
             filament.dz          = half_cap               # full 183 mm
             filament.translation = [cx * mm, cy * mm, 0]
             filament.material    = "BCF92"

@@ -33,30 +33,31 @@ def reconstruct_shower_profile(e_energy: float, t_energy: float):
     target_ratio = t_energy / e_energy if e_energy > 0 else 0
     target_ratio = min(max(target_ratio, 0.01), 0.99) # Keep in bounds
 
-    # We assume the peak is roughly around layer 10.5 (center of T-type region)
-    # For a Gamma distribution x^a * e^-bx, the peak is at a/b. 
-    # Therefore, a = 10.5 * b. We will scan 'b' to find the curve width 
-    # that places exactly target_ratio of the area into layers 10, 11, and 12.
     best_b = 0.5
+    best_a = 5.0
     min_diff = float('inf')
     best_curve = np.zeros(29)
 
-    for b in np.linspace(0.1, 1.5, 150):
-        a = 10.5 * b
-        curve = (layers**a) * np.exp(-b * layers)
-        
-        # Normalize curve so the sum of all 29 layers equals E-type total energy
-        curve = curve * (e_energy / np.sum(curve))
-        
-        # Check how much energy falls in the T-type region (indices 9, 10, 11 -> layers 10, 11, 12)
-        t_region_sum = np.sum(curve[9:12])
-        ratio = t_region_sum / e_energy
-        
-        diff = abs(ratio - target_ratio)
-        if diff < min_diff:
-            min_diff = diff
-            best_b = b
-            best_curve = curve
+    # 2D Grid Search: sweep the peak location and the curve width (b parameter)
+    # Peak of x^a * e^-bx is at x = a/b, so a = peak * b
+    for peak in np.linspace(6.0, 15.0, 30):
+        for b in np.linspace(0.1, 1.5, 50):
+            a = peak * b
+            curve = (layers**a) * np.exp(-b * layers)
+            
+            # Normalize curve so the sum of all 29 layers equals E-type total energy
+            curve = curve * (e_energy / np.sum(curve))
+            
+            # Check energy in the T-type region (indices 8, 9, 10, 11 -> layers 9, 10, 11, 12)
+            t_region_sum = np.sum(curve[8:12])
+            ratio = t_region_sum / e_energy
+            
+            diff = abs(ratio - target_ratio)
+            if diff < min_diff:
+                min_diff = diff
+                best_b = b
+                best_a = a
+                best_curve = curve
 
     return layers, best_curve
 
@@ -93,6 +94,7 @@ def main():
     parser.add_argument("--batch-dir", required=True, type=str)
     parser.add_argument("--ly", type=float, default=12000.0, help="Light yield (photons/MeV)")
     parser.add_argument("--pde", type=float, default=0.25, help="SiPM PDE")
+    parser.add_argument("--eff", type=float, default=0.005, help="Optical collection efficiency (e.g., 0.005 for 0.5%)")
     args = parser.parse_args()
 
     batch_dir = Path(args.batch_dir)
@@ -110,12 +112,15 @@ def main():
 
     hits = utils.analyse_hits(hits_files)
     
-    # 2. Extract E-Type and T-Type Data
-    e_hits = get_channel_hits(hits, [1, 4]) # Kitty-corner E-type
-    t_hits = get_channel_hits(hits, [2, 3]) # Kitty-corner T-type
+    # 2. Extract E-Type and T-Type Data (Fixed Indices)
+    t_hits = get_channel_hits(hits, [0, 1]) # T-type (shower-max localized)
+    e_hits = get_channel_hits(hits, [2, 3]) # E-type (full length)
 
-    e_energy_mev = (e_hits * args.pde) / args.ly
-    t_energy_mev = (t_hits * args.pde) / args.ly
+    # Convert SiPM hits to Deposited Energy (Fixed Math)
+    # Energy = Hits / (Light Yield * PDE * Collection Efficiency)
+    calib_factor = args.ly * args.pde * args.eff
+    e_energy_mev = e_hits / calib_factor
+    t_energy_mev = t_hits / calib_factor
 
     print(f"  Total E-type energy: {e_energy_mev:.2f} MeV")
     print(f"  Shower-max T-type energy: {t_energy_mev:.2f} MeV")
@@ -134,8 +139,8 @@ def main():
     # Plot Reconstructed Data as a sharp line
     ax.plot(layers, recon_curve, color="#2196F3", linewidth=2.5, marker="o", markersize=4, label="Reconstructed via SiPM Optics")
     
-    # Highlight the T-type window (Layers 10, 11, 12)
-    ax.axvspan(9.5, 12.5, color="#ffeb3b", alpha=0.3, label="T-Type Localized Window")
+    # Highlight the T-type window (Layers 9, 10, 11, 12)
+    ax.axvspan(8.5, 12.5, color="#ffeb3b", alpha=0.3, label="T-Type Localized Window (Layers 9-12)")
 
     ax.set_title("Longitudinal Energy Deposition: Reconstructed vs. Truth")
     ax.set_xlabel("LYSO Layer Number")
