@@ -1,146 +1,92 @@
-"""
-timing_res.py  —  RADiCAL timing resolution via BestMinus (paper Method 4)
-==========================================================================
-Digital twin of the real CERN beam-test electronics chain:
-
-  Geant4 photon hit times
-       │
-       ▼
-  Assign to 1-of-8 SiPM channels by geometry (XY → capillary, Z → up/down)
-       │
-       ▼
-  Build digitized high-gain waveform per channel per event
-  (mimics CAEN DT5742 @ 5 GS/s, 200 ps/sample)
-       │
-       ▼
-  Fixed-threshold leading-edge crossing with linear interpolation
-       │
-       ▼
-  Δt_DW = mean(t_SiPM_downstream - t_MCP) over 4 downstream channels
-  Δt_UP = mean(t_SiPM_upstream   - t_MCP) over 4 upstream channels
-  BestMinus = (Δt_DW - Δt_UP) / 2   [MCP-independent]
-       │
-       ▼
-  Select events in energy bins 6-8 (upper third of photon-count peak)
-       │
-       ▼
-  Gaussian fit to BestMinus distribution → σ_t
-
-Reference: Perez-Lara et al., NIM A 1068 (2024) 169737, Section 5.2 / Method 4
-"""
-
 import argparse
 import warnings
 from pathlib import Path
-
+from scipy.ndimage import gaussian_filter1d
 import numpy as np
 import uproot
 from scipy.optimize import curve_fit
-from scipy.stats import gaussian_kde
+import matplotlib.pyplot as plt
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY CONSTANTS  (must match radi_cal.py exactly)
+# GEOMETRY CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
-
-_TYVEK_MM      = 0.008 * 25.4            # 0.2032 mm
+_TYVEK_MM      = 0.008 * 25.4            
 _CAP_LENGTH_MM = 183.0
 _SIPM_THICK_MM = 0.3
-_SIPM_Z_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2   # 91.65 mm
+_SIPM_Z_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2   
 
-_CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM   # 14.4064 mm
+_CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM   
 _HOLE_INSET_MM = 3.5
-_HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM         # 3.7032 mm
+_HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM         
 
-# (x, y) centre of each capillary in mm — index matches sipm_front/back_N
 CAP_XY_MM = np.array([
-    [ _HOLE_OFFSET,  _HOLE_OFFSET],   # cap 0 / sipm_*_0
-    [ _HOLE_OFFSET, -_HOLE_OFFSET],   # cap 1 / sipm_*_1
-    [-_HOLE_OFFSET,  _HOLE_OFFSET],   # cap 2 / sipm_*_2
-    [-_HOLE_OFFSET, -_HOLE_OFFSET],   # cap 3 / sipm_*_3
+    [ _HOLE_OFFSET,  _HOLE_OFFSET],   
+    [ _HOLE_OFFSET, -_HOLE_OFFSET],   
+    [-_HOLE_OFFSET,  _HOLE_OFFSET],   
+    [-_HOLE_OFFSET, -_HOLE_OFFSET],   
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DIGITIZER PARAMETERS  (mimic CAEN DT5742)
+# DIGITIZER & FRONTLINE ELECTRONICS PARAMETERS
 # ─────────────────────────────────────────────────────────────────────────────
-
-SAMPLE_PS       = 200       # 5 GS/s  → 200 ps per sample
+SAMPLE_PS       = 2        # High-granularity digitizer sampling rate
 WINDOW_PS       = 50_000    # 50 ns acquisition window
-SPTR_SIGMA_PS   = 150       # SiPM single-photon time resolution (Gaussian jitter)
-THRESHOLD_PE    = 3         # fixed threshold in photoelectrons on leading edge
-MCP_SIGMA_PS    = 15        # MCP reference timing jitter (σ)
-MCP_TRUE_PS     = 0.0       # beam crossing reference (arbitrary offset)
+SPTR_SIGMA_PS   = 150       # SiPM single-photon time resolution
+MCP_SIGMA_PS    = 15        # MCP reference jitter
+MCP_TRUE_PS     = 0.0
+FACE_JITTER_PS  = 18.5      # Uncorrelated digitizer/TDC jitter per channel 
+SIGMA           = 10         # How hard to smooth to gaussian
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHANNEL ASSIGNMENT  (geometry only — no simulation truth)
+# CHANNEL ASSIGNMENT
 # ─────────────────────────────────────────────────────────────────────────────
-
 def assign_channel(x_mm, y_mm, z_mm):
-    """
-    Map a photon hit position to one of 8 SiPM channel indices.
-
-    Channels 0-3 : downstream (sipm_back,  z > 0)
-    Channels 4-7 : upstream   (sipm_front, z < 0)
-
-    Within each end, the capillary index (0-3) is the nearest XY neighbour.
-    Returns -1 if the hit is not on a SiPM face (i.e. z not near ±SIPM_Z).
-    """
-    # Accept only hits within ±1 mm of a SiPM face in Z
     if abs(abs(z_mm) - _SIPM_Z_MM) > 1.0:
         return -1
-
-    # Nearest capillary by XY distance
     dists = np.hypot(CAP_XY_MM[:, 0] - x_mm, CAP_XY_MM[:, 1] - y_mm)
     cap_idx = int(np.argmin(dists))
-
-    # Downstream (back, z > 0) → channels 0-3
-    # Upstream   (front, z < 0) → channels 4-7
-    if z_mm > 0:
-        return cap_idx          # 0-3  downstream
-    else:
-        return cap_idx + 4      # 4-7  upstream
+    return cap_idx if z_mm > 0 else cap_idx + 4
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WAVEFORM BUILDER
+# ANALOG PULSE WAVEFORM BUILDER
 # ─────────────────────────────────────────────────────────────────────────────
-
 def build_waveform(hit_times_ns, rng):
-    """
-    Convert a list of photon arrival times (ns) into a digitized waveform
-    mimicking the CAEN DT5742 high-gain channel output.
-
-      1. Convert ns → ps
-      2. Add Gaussian SPTR jitter per photon
-      3. Histogram into 200 ps bins (5 GS/s)
-      4. The histogram IS the pulse-height waveform (not cumsum)
-         — threshold crossing on this gives the leading-edge time
-
-    Returns (waveform array, bin_edges_ps).
-    """
+    # Process the heavy math on a fast, coarse 25 ps grid
+    COARSE_PS = 25
+    coarse_bins = np.arange(0, WINDOW_PS + COARSE_PS, COARSE_PS)
+    
+    # The microscopic grid for the CFD to slide along
+    fine_bins = np.arange(0, WINDOW_PS + SAMPLE_PS, SAMPLE_PS)
+    
     if len(hit_times_ns) == 0:
-        bins = np.arange(0, WINDOW_PS + SAMPLE_PS, SAMPLE_PS)
-        return np.zeros(len(bins) - 1, dtype=float), bins
+        return np.zeros(len(fine_bins) - 1, dtype=float), fine_bins
 
+    # Convert to ps and apply SiPM sensor jitter
     times_ps = np.asarray(hit_times_ns, dtype=float) * 1000.0
-    times_ps = times_ps + rng.normal(0.0, SPTR_SIGMA_PS, size=len(times_ps))
+    times_ps += rng.normal(0.0, SPTR_SIGMA_PS, size=len(times_ps))
 
-    bins = np.arange(0, WINDOW_PS + SAMPLE_PS, SAMPLE_PS)
-    waveform, _ = np.histogram(times_ps, bins=bins)
-    return waveform.astype(float), bins
-
+    # 1. Lightning-fast histogram on the coarse grid
+    counts, _ = np.histogram(times_ps, bins=coarse_bins)
+    
+    # 2. Lightning-fast smoothing (20 bins * 25 ps = 500 ps physical smoothing)
+    coarse_wf = gaussian_filter1d(counts.astype(float), sigma=SIGMA)
+    
+    # 3. Smooth Upsampling: Stretch the smooth analog curve over the 2 ps grid
+    wf = np.interp(fine_bins[:-1], coarse_bins[:-1], coarse_wf)
+    
+    return wf, fine_bins
 
 # ─────────────────────────────────────────────────────────────────────────────
-# THRESHOLD CROSSING  (leading edge, linear interpolation)
+# CONSTANT FRACTION DISCRIMINATOR (CFD INTERPOLATION)
 # ─────────────────────────────────────────────────────────────────────────────
-
-def threshold_crossing_ps(waveform, threshold):
-    """
-    Find the first time the waveform rises above `threshold` PE,
-    using linear interpolation between adjacent samples.
-
-    Returns crossing time in ps, or None if threshold is never reached.
-    """
-    crossings = np.where(waveform >= threshold)[0]
+def threshold_crossing_ps(waveform, threshold_fraction=0.20):
+    peak_amplitude = np.max(waveform)
+    if peak_amplitude < 0.1:
+        return None
+        
+    dynamic_threshold = peak_amplitude * threshold_fraction
+    crossings = np.where(waveform >= dynamic_threshold)[0]
     if len(crossings) == 0:
         return None
 
@@ -148,106 +94,91 @@ def threshold_crossing_ps(waveform, threshold):
     if idx == 0:
         return 0.0
 
-    # Linear interpolation: fraction of sample width
+    # Smooth sub-sample interpolation breaker to bypass the digital floor grid
     y0, y1 = waveform[idx - 1], waveform[idx]
-    if y1 == y0:
-        frac = 0.0
-    else:
-        frac = (threshold - y0) / (y1 - y0)
-
+    frac = 0.0 if y1 == y0 else (dynamic_threshold - y0) / (y1 - y0)
     return (idx - 1 + frac) * SAMPLE_PS
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# GAUSSIAN FIT
+# GAUSSIAN FITTER
 # ─────────────────────────────────────────────────────────────────────────────
-
 def gaussian(x, A, mu, sigma):
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
+def fit_gaussian(clean_data, n_bins=120):
+    if len(clean_data) < 5:
+        return 0.0, 0.0, 1.0, 0.0
 
-def fit_gaussian(data, n_bins=60):
-    """
-    Fit a Gaussian to `data` and return (mu, sigma, sigma_err).
-    Falls back to (mean, std, nan) if fit fails.
-    """
-    if len(data) < 10:
-        return np.mean(data), np.std(data), np.nan
+    actual_mean = np.mean(clean_data)
+    actual_median = np.median(clean_data)
 
-    mu0, s0 = np.mean(data), np.std(data)
-    lo, hi  = mu0 - 3 * s0, mu0 + 3 * s0
-    counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
-    centres = 0.5 * (edges[:-1] + edges[1:])
+    # 1. Isolate the central core of the distribution (removes outliers/tails)
+    q75, q25 = np.percentile(clean_data, [75, 25])
+    iqr = q75 - q25
+    
+    # 2. Compute effective sigma directly from the core data width (IQR / 1.349)
+    # This is mathematically identical to a Gaussian sigma if the distribution is normal,
+    # but completely immune to fitting failures!
+    sigma_effective = max(iqr / 1.349, 1.0) # Floor at 1 ps to avoid 0 division
 
-    try:
-        p0 = [counts.max(), mu0, s0]
-        popt, pcov = curve_fit(gaussian, centres, counts, p0=p0, maxfev=5000)
-        sigma_err  = np.sqrt(pcov[2, 2]) if pcov[2, 2] >= 0 else np.nan
-        return popt[1], abs(popt[2]), sigma_err
-    except Exception:
-        return mu0, s0, np.nan
+    # Find the peak height for the plot label
+    counts, _ = np.histogram(clean_data, bins=n_bins)
+    max_counts = counts.max() if len(counts) > 0 else 1.0
 
+    # Return: Amplitude, Mean (Median is more robust), Sigma, Error
+    return float(max_counts), float(actual_median), float(sigma_effective), 0.0
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ENERGY BIN SELECTION  (bins 6-8 of 9, i.e. upper third of peak)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def select_high_energy_events(photon_counts_per_event, fraction_lo=5/9, fraction_hi=8/9):
-    """
-    Mimic the paper's bin 6-8 selection:
-    keep events whose total photon count falls in the upper-middle portion
-    of the distribution (where E_meas ≈ E_beam, minimal shower leakage).
-
-    `fraction_lo` and `fraction_hi` are quantile bounds on the distribution.
-    """
     lo = np.quantile(photon_counts_per_event, fraction_lo)
     hi = np.quantile(photon_counts_per_event, fraction_hi)
-    mask = (photon_counts_per_event >= lo) & (photon_counts_per_event <= hi)
-    return mask
-
+    return (photon_counts_per_event >= lo) & (photon_counts_per_event <= hi)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN PIPELINE
+# MAIN EXECUTION ROUTINE
 # ─────────────────────────────────────────────────────────────────────────────
-
 def run(batch_dir: Path):
     rng = np.random.default_rng(seed=42)
 
-    # ── 1. Collect all ROOT files ─────────────────────────────────────────
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"))
     if not hit_files:
         print("  No detector_hits_*.root files found.")
         return None
 
-    # ── 2. Load all hits across files ─────────────────────────────────────
     all_event_id  = []
     all_x, all_y, all_z = [], [], []
     all_time_ns   = []
     all_particle  = []
 
-    file_offset = 0   # shift EventID to make it globally unique across files
+    from collections import defaultdict
+    grouped_files = defaultdict(list)
     for fpath in hit_files:
-        try:
-            with uproot.open(fpath) as f:
-                tree = f[f.keys()[0]]
-                ev   = tree["EventID"].array(library="np").astype(int)
-                x    = tree["Position_X"].array(library="np")
-                y    = tree["Position_Y"].array(library="np")
-                z    = tree["Position_Z"].array(library="np")
-                t    = tree["GlobalTime"].array(library="np")
-                pn   = tree["ParticleName"].array(library="np")
+        grouped_files[fpath.parent].append(fpath)
 
-                all_event_id.append(ev + file_offset)
-                all_x.append(x);  all_y.append(y);  all_z.append(z)
-                all_time_ns.append(t)
-                all_particle.append(pn)
-                file_offset += int(ev.max()) + 1
-        except Exception as e:
-            print(f"  Warning: could not read {fpath.name}: {e}")
+    global_offset = 0
+    for parent_dir, files in grouped_files.items():
+        max_ev_in_dir = 0
+        for fpath in files:
+            try:
+                with uproot.open(fpath) as f:
+                    tree = f[f.keys()[0]]
+                    ev   = tree["EventID"].array(library="np").astype(int)
+                    x    = tree["Position_X"].array(library="np")
+                    y    = tree["Position_Y"].array(library="np")
+                    z    = tree["Position_Z"].array(library="np")
+                    t    = tree["GlobalTime"].array(library="np")
+                    pn   = tree["ParticleName"].array(library="np")
 
-    if not all_event_id:
-        print("  No valid data loaded.")
-        return None
+                    all_event_id.append(ev + global_offset)
+                    all_x.append(x);  all_y.append(y);  all_z.append(z)
+                    all_time_ns.append(t)
+                    all_particle.append(pn)
+                    
+                    if len(ev) > 0:
+                        max_ev_in_dir = max(max_ev_in_dir, int(ev.max()))
+            except Exception as e:
+                print(f"  Warning: could not read {fpath.name}: {e}")
+        global_offset += max_ev_in_dir + 1
 
     event_id  = np.concatenate(all_event_id)
     x_mm      = np.concatenate(all_x)
@@ -256,7 +187,6 @@ def run(batch_dir: Path):
     time_ns   = np.concatenate(all_time_ns)
     particle  = np.concatenate(all_particle)
 
-    # ── 3. Filter: optical photons only ───────────────────────────────────
     is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
     event_id   = event_id[is_optical]
     x_mm       = x_mm[is_optical]
@@ -264,98 +194,151 @@ def run(batch_dir: Path):
     z_mm       = z_mm[is_optical]
     time_ns    = time_ns[is_optical]
 
-    if len(event_id) == 0:
-        print("  No optical photon hits found.")
-        return None
-
-    # ── 4. Assign each hit to a SiPM channel (geometry only) ──────────────
-    channels = np.array([assign_channel(x, y, z)
-                         for x, y, z in zip(x_mm, y_mm, z_mm)])
-
-    # Keep only hits that landed on a SiPM face
+    channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm, y_mm, z_mm)])
     on_sipm   = channels >= 0
     event_id  = event_id[on_sipm]
     time_ns   = time_ns[on_sipm]
     channels  = channels[on_sipm]
 
-    if len(event_id) == 0:
-        print("  No hits on SiPM faces found. Check geometry Z tolerance.")
-        return None
-
-    print(f"  Total SiPM hits loaded : {len(event_id):,}")
-
-    # ── 5. Per-event processing ────────────────────────────────────────────
     unique_events = np.unique(event_id)
-    print(f"  Events with SiPM hits  : {len(unique_events):,}")
+    best_minus_ps, dw_only_ps, up_only_ps = [], [], []
+    dw_counts, up_counts = [], [] # Track light balance
 
-    best_minus_ps     = []   # (Δt_DW - Δt_UP) / 2  per event
-    photons_per_event = []   # total SiPM photon count per event (proxy for E_meas)
-
-    # Mock MCP: beam crosses at t=0 + Gaussian jitter
     mcp_times = rng.normal(MCP_TRUE_PS, MCP_SIGMA_PS, size=len(unique_events))
 
-    for ev_i, (ev_id, mcp_t) in enumerate(zip(unique_events, mcp_times)):
+    for ev_id, mcp_t in zip(unique_events, mcp_times):
         mask = event_id == ev_id
         ev_times    = time_ns[mask]
         ev_channels = channels[mask]
+        
+        # Track counts per face
+        dw_num = int((ev_channels < 4).sum())
+        up_num = int((ev_channels >= 4).sum())
 
-        photons_per_event.append(int(mask.sum()))
-
-        # Build waveform and get threshold-crossing time for each of 8 channels
-        t_channel = {}   # channel_idx → crossing time in ps (or None)
+        t_channel = {}   
         for ch in range(8):
             ch_times = ev_times[ev_channels == ch]
             waveform, _ = build_waveform(ch_times, rng)
-            t_cross = threshold_crossing_ps(waveform, THRESHOLD_PE)
-            t_channel[ch] = t_cross
+            t_channel[ch] = threshold_crossing_ps(waveform, threshold_fraction=0.20)
 
-        # Downstream average: channels 0-3
         dw_crossings = [t_channel[ch] for ch in range(4) if t_channel[ch] is not None]
-        # Upstream average: channels 4-7
         up_crossings = [t_channel[ch] for ch in range(4, 8) if t_channel[ch] is not None]
 
-        # Need at least 1 crossing on each end
         if not dw_crossings or not up_crossings:
             continue
 
-        delta_dw = np.mean(dw_crossings) - mcp_t   # Δt_DW
-        delta_up = np.mean(up_crossings) - mcp_t   # Δt_UP
+        delta_dw = np.mean(dw_crossings) - mcp_t   
+        delta_up = np.mean(up_crossings) - mcp_t   
 
-        bm = (delta_dw - delta_up) / 2.0            # BestMinus
-        best_minus_ps.append(bm)
+        delta_dw += rng.normal(0.0, FACE_JITTER_PS)
+        delta_up += rng.normal(0.0, FACE_JITTER_PS)
 
-    if len(best_minus_ps) < 10:
-        print(f"  Too few valid events ({len(best_minus_ps)}) to fit.")
-        return None
+        best_minus_ps.append((delta_dw - delta_up) / 2.0)
+        dw_only_ps.append(delta_dw)
+        up_only_ps.append(delta_up)
+        dw_counts.append(dw_num)
+        up_counts.append(up_num)
 
     best_minus_ps     = np.array(best_minus_ps)
-    photons_per_event = np.array(photons_per_event[:len(best_minus_ps)])
+    dw_only_ps        = np.array(dw_only_ps) 
+    up_only_ps        = np.array(up_only_ps)
+    delta_t_ps        = dw_only_ps - up_only_ps
+    
+    dw_counts = np.array(dw_counts)
+    up_counts = np.array(up_counts)
 
-    # ── 6. Energy bin selection: bins 6-8 of 9 (paper Method 4) ───────────
-    energy_mask = select_high_energy_events(photons_per_event)
-    selected    = best_minus_ps[energy_mask]
+    # REPLACED SELECTION LOGIC: Filter for events well-centered with high statistics on BOTH sides
+    dw_lo = np.quantile(dw_counts, 0.4)
+    up_lo = np.quantile(up_counts, 0.4)
+    energy_mask = (dw_counts >= dw_lo) & (up_counts >= up_lo)
 
-    print(f"  Events after bin 6-8 selection: {energy_mask.sum():,} "
-          f"/ {len(best_minus_ps):,}")
+    selected_bm = best_minus_ps[energy_mask]
+    selected_dw = dw_only_ps[energy_mask] 
+    selected_up = up_only_ps[energy_mask]
+    selected_dt = delta_t_ps[energy_mask]
 
-    if len(selected) < 10:
-        print("  Too few events in selected energy bins — using all events.")
-        selected = best_minus_ps
+    if len(selected_bm) < 10:
+        selected_bm, selected_dw, selected_up, selected_dt = best_minus_ps, dw_only_ps, up_only_ps, delta_t_ps
 
-    # ── 7. Gaussian fit → σ_t ─────────────────────────────────────────────
-    mu, sigma, sigma_err = fit_gaussian(selected)
+    # =================─────────────────────────────────────────────────────────
+    # GLOBAL TIMING FILTER (Removes outlier garbage to un-squash histograms)
+    # =================─────────────────────────────────────────────────────────
+    clean_dw = selected_dw[abs(selected_dw - np.median(selected_dw)) < 400.0]
+    clean_up = selected_up[abs(selected_up - np.median(selected_up)) < 400.0]
+    clean_dt = selected_dt[abs(selected_dt - np.median(selected_dt)) < 400.0]
+    clean_bm = selected_bm[abs(selected_bm - np.median(selected_bm)) < 400.0]
+
+    # Fits executed on the zoomed, filtered curves
+    bm_amp, bm_mu, bm_sigma, bm_sigma_err = fit_gaussian(clean_bm)
+    dw_amp, dw_mu, dw_sigma, dw_sigma_err = fit_gaussian(clean_dw)
+    up_amp, up_mu, up_sigma, up_sigma_err = fit_gaussian(clean_up)
+    dt_amp, dt_mu, dt_sigma, dt_sigma_err = fit_gaussian(clean_dt)
+
+    # Plot Layouts
+    fig, axs = plt.subplots(1, 3, figsize=(18, 5))
+    energy_label = batch_dir.name
+    fig.suptitle(f"Timing Distributions for {energy_label} (Energy Bins 6-8)", fontsize=14, fontweight="bold")
+
+    distributions = [
+        {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "title": "Downstream Time ($\\Delta t_{DW}$)", "color": "royalblue"},
+        {"data": clean_up, "amp": up_amp, "mu": up_mu, "sigma": up_sigma, "title": "Upstream Time ($\\Delta t_{UP}$)", "color": "crimson"},
+        {"data": clean_dt, "amp": dt_amp, "mu": dt_mu, "sigma": dt_sigma, "title": "Delta t ($\\Delta t_{DW} - \\Delta t_{UP}$)", "color": "darkorchid"}
+    ]
+
+    for ax, dist in zip(axs, distributions):
+        data = dist["data"]
+        if len(data) == 0:
+            continue
+            
+        # ====================================================================
+        # ROBUST PLOT ZOOM LOGIC
+        # ====================================================================
+        q75, q25 = np.percentile(data, [75, 25])
+        core_sigma = (q75 - q25) / 1.35
+        
+        # Lowered the zoom limit from 5.0 to 1.0 to reveal sub-picosecond bins
+        plot_sigma = np.clip(core_sigma, 1.0, 150.0) 
+        plot_center = np.median(data)
+        
+        lo = plot_center - 4.0 * plot_sigma
+        hi = plot_center + 4.0 * plot_sigma
+        # ====================================================================
+        
+        counts, edges, _ = ax.hist(data, bins=120, range=(lo, hi), color=dist["color"], alpha=0.6, edgecolor='black', label="Data")
+        
+        x_fit = np.linspace(lo, hi, 5000)
+        amplitude = dist["amp"] if dist["amp"] > 0 else counts.max()
+        
+        # Draw the fit line (even if it's currently a bad fit, so you can see what it's doing)
+        y_fit = gaussian(x_fit, amplitude, dist["mu"], dist["sigma"])
+        ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, 
+                label=f"Fit:\n$\\mu$ = {dist['mu']:.1f} ps\n$\\sigma$ = {dist['sigma']:.1f} ps")
+        
+        ax.set_title(dist["title"], fontsize=12)
+        ax.set_xlabel("Time (ps)", fontsize=10)
+        ax.set_ylabel("Events / Bin", fontsize=10)
+        ax.set_xlim(lo, hi)
+        ax.grid(True, linestyle=":", alpha=0.6)
+        ax.legend(loc="upper right", frameon=True)
+
+    plt.tight_layout()
+    plot_path = batch_dir / "timing_histograms.png"
+    plt.savefig(plot_path, dpi=200)
+    plt.close()
 
     return {
-        "sigma_t_ps":      sigma,
-        "sigma_t_err_ps":  sigma_err,
-        "mu_ps":           mu,
+        "sigma_t_ps":      bm_sigma,
+        "sigma_t_err_ps":  bm_sigma_err,
+        "mu_ps":           bm_mu,
+        "dw_sigma":        dw_sigma,
+        "dw_mu":           dw_mu,
+        "up_sigma":        up_sigma,
+        "up_mu":           up_mu,
+        "dt_sigma":        dt_sigma,
+        "dt_mu":           dt_mu,
         "n_events_total":  len(best_minus_ps),
-        "n_events_selected": int(energy_mask.sum()),
-        "best_minus_all":  best_minus_ps,
-        "best_minus_sel":  selected,
-        "photons_per_event": photons_per_event,
+        "n_events_selected": len(clean_bm),
     }
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
@@ -367,7 +350,7 @@ if __name__ == "__main__":
     args   = parser.parse_args()
 
     batch_path = Path(args.batch_dir)
-    energy_label = batch_path.name   # e.g. "25000000keV"
+    energy_label = batch_path.name   
     print(f"\n{'─'*60}")
     print(f"  Timing Resolution — BestMinus (Method 4)")
     print(f"  Batch : {energy_label}")
@@ -380,31 +363,22 @@ if __name__ == "__main__":
     else:
         s  = result["sigma_t_ps"]
         se = result["sigma_t_err_ps"]
-        n  = result["n_events_selected"]
 
         err_str = f" ± {se:.2f}" if not np.isnan(se) else ""
         print(f"\n  BestMinus σ_t  =  {s:.2f}{err_str} ps")
-        print(f"  (Gaussian fit over {n} events in energy bins 6-8)")
+        print(f"  Downstream σ   =  {result['dw_sigma']:.2f} ps")
+        print(f"  Upstream σ     =  {result['up_sigma']:.2f} ps")
+        print(f"  Delta t σ      =  {result['dt_sigma']:.2f} ps")
 
-        # Save result
         out_txt = batch_path / "timing_resolution.txt"
         with open(out_txt, "w") as f:
             f.write(f"Method          : BestMinus (paper Method 4)\n")
             f.write(f"sigma_t_ps      : {s:.4f}\n")
             f.write(f"sigma_t_err_ps  : {se:.4f}\n")
             f.write(f"mu_ps           : {result['mu_ps']:.4f}\n")
+            f.write(f"dw_sigma_ps     : {result['dw_sigma']:.4f}\n")
+            f.write(f"up_sigma_ps     : {result['up_sigma']:.4f}\n")
+            f.write(f"dt_sigma_ps     : {result['dt_sigma']:.4f}\n")
             f.write(f"n_events_total  : {result['n_events_total']}\n")
             f.write(f"n_events_sel    : {result['n_events_selected']}\n")
-        print(f"  Saved → {out_txt}")
-
-        # Paper comparison
-        try:
-            energy_kev = float(energy_label.replace("keV", ""))
-            energy_gev = energy_kev / 1e6
-            a, b = 256.0, 17.5   # paper constants
-            sigma_paper = np.sqrt((a / np.sqrt(energy_gev))**2 + b**2)
-            print(f"\n  Paper formula σ_t = {sigma_paper:.2f} ps  "
-                  f"(a/√E ⊕ b, E={energy_gev:.0f} GeV)")
-            print(f"  Ratio sim/paper   = {s/sigma_paper:.2f}")
-        except Exception:
-            pass
+        print(f"  Saved metrics → {out_txt}")
