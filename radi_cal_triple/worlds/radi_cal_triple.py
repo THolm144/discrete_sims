@@ -1,25 +1,25 @@
 """
-worlds/radi_cal_energy.py
+worlds/radi_cal_triple.py
 =========================
-RADiCAL Shashlik calorimeter — energy-measurement variant.
+RADiCAL Shashlik calorimeter — energy-measurement variant (Triple LYSO thickness).
 
 Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
-        LYSO | W | LYSO | W | … | W | LYSO   (125.29 mm total)
+        LYSO | W | LYSO | W | … | W | LYSO   (212.29 mm total)
 
 Capillaries (4, no central hole):
     T-type (indices 0, 1) — diagonal pair:
-        Quartz rod (Ø1.15 mm, 183 mm) with a short bore at shower-max
-        (LYSO layers 8–11) holding a BCF-92 WLS filament (Ø0.90 mm, ~15 mm).
+        Quartz rod (Ø1.15 mm, ~270.0 mm) with a short bore at shower-max
+        (LYSO layers 8–11) holding a BCF-92 WLS filament (Ø0.90 mm).
         Quartz rod fills both arms above and below the filament.
 
     E-type (indices 2, 3) — kitty-corner pair:
-        Solid quartz rod (Ø1.15 mm, 183 mm) with NO bore subtraction.
-        A BCF-92 WLS filament (Ø0.90 mm) runs the full 183 mm length,
-        placed as a world daughter inside the quartz rod inner region.
+        Solid quartz rod (Ø1.15 mm, ~270.0 mm) with NO bore subtraction.
+        A BCF-92 WLS filament (Ø0.90 mm) runs the active length,
+        spliced to passive quartz tails extending outside the active volume.
 
 SiPMs:  6 silicon tiles (2 front T-type, 4 back) + 2 upstream E-type Tyvek plugs + 2 FR4 readout cards.
 
-Geometry style: boolean subtraction (same as radi_cal.py).
+Geometry style: boolean subtraction.
 Coordinate origin: centre of the calorimeter stack (= centre of world).
 """
 
@@ -45,19 +45,22 @@ TARGET_VOLUME_NAME = "calorimeter"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _LYSO_XY_MM      = 14.0
-_LYSO_THICK_MM   = 1.5
+_LYSO_THICK_MM   = 4.5                    # 1.5 mm * 3
 _TYVEK_THICK_MM  = 0.008 * 25.4           # 0.2032 mm
 _W_THICK_MM      = 2.5
 _N_LYSO          = 29
 _N_W             = 28
 
-_GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   # 1.9064 mm
+_GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   # 4.9064 mm
 _CALOR_XY_MM     = _LYSO_XY_MM    + 2 * _TYVEK_THICK_MM   # 14.4064 mm
-_CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 125.2856 mm
+_CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 212.2856 mm
 
 _CAP_OUTER_MM    = 1.150 / 2              # 0.575 mm  — quartz rod outer radius
 _CAP_INNER_MM    = 0.950 / 2              # 0.475 mm  — bore / inner radius
-_CAP_LENGTH_MM   = 183.0
+
+# Dynamically link capillary length to maintain original 28.8572 mm overhang 
+_CAP_LENGTH_MM   = _CALOR_THICK_MM + 57.7144
+
 _HOLE_INSET_MM   = 3.5
 _HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM      # 3.7032 mm
 
@@ -71,10 +74,10 @@ _FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
 _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
 _BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
 _BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
-_FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             # ~15.13 mm
+_FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             
 _FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5*(_BAND_FRONT_MM + _BAND_BACK_MM)
 
-# ── SiPM / card geometry (matches radi_cal.py) ───────────────────────────────
+# ── SiPM / card geometry ──────────────────────────────────────────────────────
 _SIPM_XY_MM      = 1.2
 _SIPM_THICK_MM   = 0.3
 _CARD_THICK_MM   = 1.6
@@ -86,8 +89,6 @@ _WORLD_XY_MM     = 1.5 * _CALOR_XY_MM
 _WORLD_Z_MM      = 1.5 * max(_CAP_LENGTH_MM, _CALOR_THICK_MM)
 
 # ── 4 capillary positions (True Diagonal / Kitty-Corner Setup) ────────────────
-# Indices 0, 1  →  T-type (Main Diagonal: Top-Right to Bottom-Left)
-# Indices 2, 3  →  E-type (Off Diagonal:  Top-Left to Bottom-Right)
 _CAP_POSITIONS_MM = [
     [ _HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 0 — T-type (Top-Right)
     [-_HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 1 — T-type (Bottom-Left)
@@ -104,7 +105,6 @@ CALORIMETER_Z_RES_MM  = 0.1
 ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
 TIMING_TRIGGER_THRESHOLD = 1
 
-# Note: Upstream E-type SiPMs (indices 2 and 3) removed.
 DETECTOR_VOLUME_NAMES = [
     "sipm_front_0", "sipm_front_1", 
     "sipm_back_0",  "sipm_back_1",  "sipm_back_2",  "sipm_back_3",
@@ -122,11 +122,6 @@ BEAM_CONFIG = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _drill_holes(base_vol, name, half_dz_mm, mm):
-    """
-    Subtract 4 cylindrical bores (one per capillary) from base_vol.
-    Bore is 0.1 mm overlong each side to cleanly punch through end-caps.
-    Returns the final BooleanVolume (not yet added to sim).
-    """
     bore_dz = (half_dz_mm + 0.1) * mm
     result   = base_vol
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
@@ -143,31 +138,24 @@ def _drill_holes(base_vol, name, half_dz_mm, mm):
 
 
 def _make_gap(name, mm):
-    """Tyvek gap plate with 4 drilled holes (not added to sim)."""
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _GAP_THICK_MM * mm]
     return _drill_holes(base, name, _GAP_THICK_MM/2, mm)
 
 
 def _make_lyso(name, mm):
-    """LYSO crystal plate with 4 drilled holes (not added to sim)."""
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, _LYSO_THICK_MM * mm]
     return _drill_holes(base, name, _LYSO_THICK_MM/2, mm)
 
 
 def _make_abso(name, mm):
-    """Tungsten absorber plate with 4 drilled holes (not added to sim)."""
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _W_THICK_MM * mm]
     return _drill_holes(base, name, _W_THICK_MM/2, mm)
 
 
 def _build_capillaries(sim, mm):
-    """
-    Build 4 capillaries as world daughters with passive, non-scintillating
-    clear quartz tails outside the calorimeter block to eliminate doorstep light generation.
-    """
     half_cap   = _CAP_LENGTH_MM / 2 * mm
     half_calor = _CALOR_THICK_MM / 2 * mm
 
@@ -175,17 +163,14 @@ def _build_capillaries(sim, mm):
 
         if i in _E_TYPE_INDICES:
             # ── E-TYPE: Confined active core with passive quartz extensions ──
-            
-            # 1. Central Active Core (only inside the calorimeter stack)
             core             = sim.add_volume("Tubs", f"cap_{i}_active_core")
             core.mother      = "world"
             core.rmin        = 0.0
             core.rmax        = _CAP_OUTER_MM * mm     
-            core.dz          = half_calor             # Confined to calorimeter length
+            core.dz          = half_calor
             core.translation = [cx * mm, cy * mm, 0]
             core.material    = "BCF92"
 
-            # 2. Upstream Passive Quartz Tail
             tail_len_z       = (half_cap - half_calor)
             z_pos_front      = -(half_calor + tail_len_z / 2)
             tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
@@ -194,9 +179,8 @@ def _build_capillaries(sim, mm):
             tail_f.rmax        = _CAP_OUTER_MM * mm
             tail_f.dz          = tail_len_z / 2
             tail_f.translation = [cx * mm, cy * mm, z_pos_front]
-            tail_f.material    = "G4_SILICON_DIOXIDE" # Clear, non-scintillating quartz
+            tail_f.material    = "G4_SILICON_DIOXIDE" 
 
-            # 3. Downstream Passive Quartz Tail (The sensor doorstep shield)
             z_pos_back       = (half_calor + tail_len_z / 2)
             tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
             tail_b.mother      = "world"
@@ -204,10 +188,10 @@ def _build_capillaries(sim, mm):
             tail_b.rmax        = _CAP_OUTER_MM * mm
             tail_b.dz          = tail_len_z / 2
             tail_b.translation = [cx * mm, cy * mm, z_pos_back]
-            tail_b.material    = "G4_SILICON_DIOXIDE" # Clear, non-scintillating quartz
+            tail_b.material    = "G4_SILICON_DIOXIDE" 
 
         else:
-            # ── T-TYPE: (Kept exactly as you had it) ────────────────
+            # ── T-TYPE: ────────────────
             rod_base      = vol_module.TubsVolume(name=f"cap_{i}_rod")
             rod_base.rmin = 0.0
             rod_base.rmax = _CAP_OUTER_MM * mm
@@ -239,14 +223,10 @@ def _build_capillaries(sim, mm):
 
 
 def _build_sipms(sim, mm):
-    """
-    6 SiPM tiles (removing upstream E-type) + 2 FR4 readout cards + 2 Tyvek plugs
-    """
     for end_name, sgn in [("front", -1), ("back", +1)]:
         z_sipm = sgn * _SIPM_Z_MM * mm
         z_card = sgn * _CARD_Z_MM * mm
 
-        # FR4 readout card with central beam-clearance hole
         card_box        = vol_module.BoxVolume(name=f"card_{end_name}_box")
         card_box.size   = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
         card_hole       = vol_module.TubsVolume(name=f"card_{end_name}_hole")
@@ -264,14 +244,12 @@ def _build_sipms(sim, mm):
 
         for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
             if end_name == "front" and cap_idx in _E_TYPE_INDICES:
-                # Plug the upstream E-type port with tungsten
                 plug             = sim.add_volume("Box", f"plug_{end_name}_{cap_idx}")
                 plug.mother      = "world"
                 plug.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
                 plug.material    = "Tungsten"
                 plug.translation = [cx * mm, cy * mm, z_sipm]
             else:
-                # Standard active SiPM
                 sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
                 sipm.mother      = "world"
                 sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
@@ -286,12 +264,10 @@ def _build_sipms(sim, mm):
 def build_world(sim, units):
     mm = units.mm
 
-    # ── World ─────────────────────────────────────────────────────────────────
     world          = sim.world
     world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
     world.material = "G4_AIR"
 
-    # ── Calorimeter envelope ──────────────────────────────────────────────────
     calor_base      = vol_module.BoxVolume(name="calorimeter_box")
     calor_base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CALOR_THICK_MM * mm]
     calor_vol       = _drill_holes(calor_base, "calorimeter", _CALOR_THICK_MM/2, mm)
@@ -301,13 +277,9 @@ def build_world(sim, units):
     calor_vol.translation = [0, 0, 0]
     sim.add_volume(calor_vol)
 
-    # ── Capillaries + filaments ───────────────────────────────────────────────
     _build_capillaries(sim, mm)
-
-    # ── SiPMs + readout cards + plugs ─────────────────────────────────────────
     _build_sipms(sim, mm)
 
-    # ── Plate stack ───────────────────────────────────────────────────────────
     z_pos = -_CALOR_THICK_MM / 2
 
     for i in range(_N_LYSO):
@@ -348,7 +320,6 @@ def build_world(sim, units):
 def add_optical_surfaces(sim, units):
     vols = sim.volume_manager.volumes
 
-    # Tyvek reflective wrap on all LYSO outer faces
     for i in range(_N_LYSO):
         lyso_name = f"lyso_{i}"
         gap_name  = f"gap_{i}"
@@ -356,17 +327,14 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
-    # Optical interfaces for E-Type segments
     for cap_idx in _E_TYPE_INDICES:
         core_name = f"cap_{cap_idx}_active_core"
         tail_b_name = f"cap_{cap_idx}_tail_back"
         plug_name = f"plug_front_{cap_idx}"
         
-        # Perfect optical connection between active core and passive quartz tail
         if core_name in vols and tail_b_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
             
-        # Optical surface for front tungsten plug interface
         if core_name in vols and plug_name in vols:
             sim.physics_manager.add_optical_surface(core_name, plug_name, "Tyvek")
 
