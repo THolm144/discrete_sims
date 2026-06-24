@@ -1,45 +1,33 @@
-#!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
-# run_sim.sh — OpenGATE simulation launcher
-# Usage: bash run_sim.sh
-# ─────────────────────────────────────────────────────────────────────────────
-
-WORLD=radi_cal_triple         # world module name
-PARTICLE=e-            # primary particle type (e.g., proton, electron, gamma)
-ENERGY_KEV=20000000    # energy in keV (200000 = 200 MeV)
-N_PARTICLES=100        # particles per run
-THREADS=10              # CPU threads per run
-N_RUNS=20               # number of runs
-BEAM_RADIUS=0.01       # beam radius in cm
-OPTICAL="on"           # "on" for full optics, "off" for fast dose analysis
-PHYSICS_LIST="QGSP_BERT_EMV"  # Physics config
-# ─────────────────────────────────────────────────────────────────────────────
+setsid bash -c '
+WORLD=radi_cal_triple
+PARTICLE=e-
+ENERGY_KEV=20000000
+N_PARTICLES=100
+THREADS=1
+N_RUNS=10
+BEAM_RADIUS=0.01
+OPTICAL="on"
+PHYSICS_LIST="QGSP_BERT_EMV"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 OUT_DIR="runs/${WORLD}/${ENERGY_KEV}keV_${TIMESTAMP}"
 echo "Starting ${N_RUNS} runs → ${OUT_DIR}"
-echo "Optical Physics: ${OPTICAL}"
-
+pids=()
 for i in $(seq 0 $((N_RUNS - 1))); do
-    echo "  Run ${i}..."
     python3 simulator.py \
-        --world       $WORLD \
-        --particle    $PARTICLE \
-        --energy-kev  $ENERGY_KEV \
-        --n           $N_PARTICLES \
-        --threads     $THREADS \
-        --beam-radius $BEAM_RADIUS \
-        --optical     $OPTICAL \
-        --run-id      $i \
-        --output-dir  $OUT_DIR
+        --world $WORLD --particle $PARTICLE \
+        --energy-kev $ENERGY_KEV --n $N_PARTICLES \
+        --threads $THREADS --beam-radius $BEAM_RADIUS \
+        --optical $OPTICAL --run-id $i \
+        --output-dir $OUT_DIR > ${OUT_DIR}_run${i}.log 2>&1 &
+    pids+=($!)
+    echo "  Run ${i} started (PID ${pids[-1]})"
 done
-
-echo "Done. Analysing standard dose and hits..."
+echo "Waiting for all runs..."
+for pid in "${pids[@]}"; do wait $pid; done
+echo "Done. Analysing..."
 python3 analyze.py --batch-dir $OUT_DIR
-
-echo "Calculating Theoretical Energy & Plotting LYSO Histogram..."
 python3 energy_calc.py --batch-dir $OUT_DIR
-
-echo "Rendering 3D visualisation..."
 python3 plot_3d.py --batch-dir $OUT_DIR
-
 echo "Results in: $OUT_DIR"
+' > sim_run.log 2>&1 &
+echo "Master PID: $!"

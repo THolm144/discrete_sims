@@ -112,7 +112,7 @@ DETECTOR_VOLUME_NAMES = [
 
 BEAM_CONFIG = {
     "direction": [0, 0, 1],
-    "target_cm": [0.2, 0.2, 0],
+    "target_cm": [0, 0, 0],
     "offset_cm": _SIPM_Z_MM/10 + 2.0,
 }
 

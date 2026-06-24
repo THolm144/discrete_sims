@@ -92,6 +92,8 @@ def parse_args():
                    help="Override world optical capability. 'world' = respect world manifest.")
     p.add_argument("--dose",         choices=["on", "off", "world"],  default="world")
     p.add_argument("--sipm-hits",    choices=["on", "off", "world"],  default="world")
+    p.add_argument("--cherenkov",    choices=["on", "off"],           default="on",
+                   help="Toggle Cherenkov radiation when optical physics is enabled.")
     return p.parse_args()
 
 
@@ -325,7 +327,16 @@ def configure_physics(sim, args, script_dir: Path, world,
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = True
         if optical_file.exists():
             sim.physics_manager.optical_properties_file = str(optical_file)
-        print("[SIM] Optical physics ENABLED.")
+        
+        # ─── THE FIXED OPENGATE 10 PRE-INIT QUEUE ─────────────────────────────
+        if getattr(args, "cherenkov", "on") == "off":
+            sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov false")
+            print("[SIM] Optical physics ENABLED (Scintillation ONLY, Cherenkov DISABLED).")
+        else:
+            sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov true")
+            print("[SIM] Optical physics ENABLED (Both Scintillation & Cherenkov ACTIVE).")
+        # ───────────────────────────────────────────────────────────────────────
+        
     else:
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = False
         print("[SIM] Optical physics DISABLED.")

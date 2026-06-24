@@ -112,7 +112,7 @@ DETECTOR_VOLUME_NAMES = [
 
 BEAM_CONFIG = {
     "direction": [0, 0, 1],
-    "target_cm": [0.2, 0.2, 0],
+    "target_cm": [0, 0, 0],
     "offset_cm": _SIPM_Z_MM/10 + 2.0,
 }
 
@@ -171,24 +171,28 @@ def _build_capillaries(sim, mm):
             core.translation = [cx * mm, cy * mm, 0]
             core.material    = "BCF92"
 
-            tail_len_z       = (half_cap - half_calor)
-            z_pos_front      = -(half_calor + tail_len_z / 2)
-            tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
-            tail_f.mother      = "world"
-            tail_f.rmin        = 0.0
-            tail_f.rmax        = _CAP_OUTER_MM * mm
-            tail_f.dz          = tail_len_z / 2
-            tail_f.translation = [cx * mm, cy * mm, z_pos_front]
-            tail_f.material    = "G4_SILICON_DIOXIDE" 
+            # Change the tail definitions inside _build_capillaries to match this logic:
+            tail_len_z = half_cap - half_calor  # Total length of ONE extension arm
 
-            z_pos_back       = (half_calor + tail_len_z / 2)
-            tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
-            tail_b.mother      = "world"
-            tail_b.rmin        = 0.0
-            tail_b.rmax        = _CAP_OUTER_MM * mm
-            tail_b.dz          = tail_len_z / 2
+            # 2. Upstream Passive Quartz Tail
+            z_pos_front = -(half_calor + tail_len_z / 2)
+            tail_f = sim.add_volume("Tubs", f"cap_{i}_tail_front")
+            tail_f.mother = "world"
+            tail_f.rmin = 0.0
+            tail_f.rmax = _CAP_OUTER_MM * mm
+            tail_f.dz = tail_len_z / 2  # This should be half of ONE arm's length
+            tail_f.translation = [cx * mm, cy * mm, z_pos_front]
+            tail_f.material = "G4_SILICON_DIOXIDE"
+
+            # 3. Downstream Passive Quartz Tail
+            z_pos_back = (half_calor + tail_len_z / 2)
+            tail_b = sim.add_volume("Tubs", f"cap_{i}_tail_back")
+            tail_b.mother = "world"
+            tail_b.rmin = 0.0
+            tail_b.rmax = _CAP_OUTER_MM * mm
+            tail_b.dz = tail_len_z / 2  # This should be half of ONE arm's length
             tail_b.translation = [cx * mm, cy * mm, z_pos_back]
-            tail_b.material    = "G4_SILICON_DIOXIDE" 
+            tail_b.material = "G4_SILICON_DIOXIDE" 
 
         else:
             # ── T-TYPE: ────────────────

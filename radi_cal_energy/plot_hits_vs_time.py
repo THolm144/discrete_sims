@@ -65,8 +65,8 @@ def generate_histogram(times: np.ndarray, bins: int, color: str, edge_color: str
         
     fig, ax = plt.subplots(figsize=(10, 5))
     
-    # Added log=True to switch the y-axis to a logarithmic scale
-    ax.hist(times, bins=bins, color=color, alpha=0.75, edgecolor=edge_color, linewidth=0.5, log=True)
+    # Add log=True at end to switch the y-axis to a logarithmic scale
+    ax.hist(times, bins=bins, color=color, alpha=0.75, edgecolor=edge_color, linewidth=0.5)
     
     if vline_val is not None:
         ax.axvline(vline_val, color="#d32f2f", linestyle="--", linewidth=2,
