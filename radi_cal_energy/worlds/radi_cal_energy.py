@@ -104,9 +104,10 @@ CALORIMETER_Z_RES_MM  = 0.1
 ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
 TIMING_TRIGGER_THRESHOLD = 1
 
-# Note: Upstream E-type SiPMs (indices 2 and 3) removed.
+# All 8 SiPMs active — upstream E-type re-enabled for ToF depth reconstruction
 DETECTOR_VOLUME_NAMES = [
-    "sipm_front_0", "sipm_front_1", 
+    "sipm_front_0", "sipm_front_1",
+    "sipm_front_2", "sipm_front_3",
     "sipm_back_0",  "sipm_back_1",  "sipm_back_2",  "sipm_back_3",
 ]
 
@@ -263,20 +264,12 @@ def _build_sipms(sim, mm):
         sim.add_volume(card_vol)
 
         for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-            if end_name == "front" and cap_idx in _E_TYPE_INDICES:
-                # Plug the upstream E-type port with tungsten
-                plug             = sim.add_volume("Box", f"plug_{end_name}_{cap_idx}")
-                plug.mother      = "world"
-                plug.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
-                plug.material    = "Tungsten"
-                plug.translation = [cx * mm, cy * mm, z_sipm]
-            else:
-                # Standard active SiPM
-                sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
-                sipm.mother      = "world"
-                sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
-                sipm.material    = "G4_Si"
-                sipm.translation = [cx * mm, cy * mm, z_sipm]
+            # All positions get active SiPMs — no more tungsten plugs
+            sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
+            sipm.mother      = "world"
+            sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
+            sipm.material    = "G4_Si"
+            sipm.translation = [cx * mm, cy * mm, z_sipm]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -357,18 +350,15 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
     # Optical interfaces for E-Type segments
-    for cap_idx in _E_TYPE_INDICES:
-        core_name = f"cap_{cap_idx}_active_core"
+   for cap_idx in _E_TYPE_INDICES:
+        core_name   = f"cap_{cap_idx}_active_core"
         tail_b_name = f"cap_{cap_idx}_tail_back"
-        plug_name = f"plug_front_{cap_idx}"
-        
-        # Perfect optical connection between active core and passive quartz tail
+        tail_f_name = f"cap_{cap_idx}_tail_front"
+
         if core_name in vols and tail_b_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
-            
-        # Optical surface for front tungsten plug interface
-        if core_name in vols and plug_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, plug_name, "Tyvek")
+        if core_name in vols and tail_f_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
