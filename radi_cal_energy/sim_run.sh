@@ -6,9 +6,9 @@
 WORLD=radi_cal_energy
 PARTICLE=e-
 ENERGY_KEV=20000000
-N_PARTICLES=100
-THREADS=10
-N_RUNS=20
+N_PARTICLES=5
+THREADS=1
+N_RUNS=200
 BEAM_RADIUS=0.01
 OPTICAL="on"
 CHERENKOV="off"         # "on" or "off" — only applies when OPTICAL=on
