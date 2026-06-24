@@ -108,20 +108,23 @@ if __name__ == "__main__":
     real_waveforms = []
     
     # 1. Find all the detector hit ROOT files in this run directory
-    hit_files = list(batch_path.glob("detector_hits_*.root"))
+    hit_files = list(batch_path.rglob("detector_hits_*.root"))
     
     if not hit_files:
         print("No hit files found! Did the simulation save 'detector_hits_X.root'?")
     else:
         # 2. Loop through the files to extract photon hit times
+       
         for root_file in hit_files:
             try:
-                # Open the ROOT file and grab the PhaseSpace tree
+                # Open the ROOT file
                 with uproot.open(root_file) as f:
-                    tree = f["PhaseSpace"] # Or whatever your Geant4 tree is named
+                    # Dynamically get the key name (e.g., 'detector_hits_0') 
+                    # stripping out any ';1' cycle numbers
+                    tree_key = f.keys()[0].split(";")[0]
+                    tree = f[tree_key]
                     
                     # Extract GlobalTime of all photon hits in nanoseconds
-                    # (Note: Geant4 outputs in ns by default)
                     photon_times_ns = tree["GlobalTime"].array(library="np")
                     
                     if len(photon_times_ns) > 0:

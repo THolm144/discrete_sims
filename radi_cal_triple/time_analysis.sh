@@ -24,8 +24,19 @@ LATEST_BATCH=${LATEST_BATCH%/}
 
 echo "============================================================"
 echo "  Targeting latest batch: $LATEST_BATCH"
-echo "  Extracting and plotting E-type hits vs time..."
+echo "  Executing batch analysis pipeline..."
 echo "============================================================"
 
-# Execute the time profile plotting script on the found directory
+# 1. Execute the time profile plotting script on the found directory
+echo "-> Running plot_hits_vs_time.py..."
 python3 plot_hits_vs_time.py --batch-dir "$LATEST_BATCH"
+
+echo "------------------------------------------------------------"
+
+# 2. Execute the timing resolution analysis script on the same directory
+echo "-> Running timing_res.py..."
+python3 timing_res.py --batch-dir "$LATEST_BATCH"
+
+echo "============================================================"
+echo "  Pipeline execution finished successfully."
+echo "============================================================"
