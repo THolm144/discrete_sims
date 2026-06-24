@@ -258,17 +258,11 @@ def _build_sipms(sim, mm):
         sim.add_volume(card_vol)
 
         for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-                sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
-                sipm.mother      = "world"
-                sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
-                sipm.material    = "G4_Si"
-                sipm.translation = [cx * mm, cy * mm, z_sipm]
-        else:
-                sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
-                sipm.mother      = "world"
-                sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
-                sipm.material    = "G4_Si"
-                sipm.translation = [cx * mm, cy * mm, z_sipm]
+            sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
+            sipm.mother      = "world"
+            sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
+            sipm.material    = "G4_Si"
+            sipm.translation = [cx * mm, cy * mm, z_sipm]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

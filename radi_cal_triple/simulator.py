@@ -62,6 +62,7 @@ DEFAULT_CAPABILITIES = {
     "sipm_hits":        False,
     "optical_exits":    False,
     "calorimeter_mode": False,
+     "cherenkov":        True,
 }
 
 DEFAULT_BEAM_CONFIG = {
@@ -92,6 +93,8 @@ def parse_args():
                    help="Override world optical capability. 'world' = respect world manifest.")
     p.add_argument("--dose",         choices=["on", "off", "world"],  default="world")
     p.add_argument("--sipm-hits",    choices=["on", "off", "world"],  default="world")
+    p.add_argument("--cherenkov", choices=["on", "off", "world"], default="world",
+               help="Override Cherenkov production. 'world' = respect world manifest.")
     return p.parse_args()
 
 
@@ -323,6 +326,16 @@ def configure_physics(sim, args, script_dir: Path, world,
     if caps["optical"]:
         optical_file = script_dir / "Materials.xml"
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = True
+        # ── Cherenkov toggle ──────────────────────────────────────────────
+        if not caps.get("cherenkov", True):
+            sim.physics_manager.special_physics_constructors.G4OpticalPhysics.configure(
+                enable_cerenkov=False
+            )
+            print("[SIM] Cherenkov production DISABLED.")
+        else:
+            print("[SIM] Cherenkov production ENABLED.")
+
+        print("[SIM] Optical physics ENABLED.")
         if optical_file.exists():
             sim.physics_manager.optical_properties_file = str(optical_file)
         print("[SIM] Optical physics ENABLED.")
