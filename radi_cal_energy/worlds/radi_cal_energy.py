@@ -106,8 +106,7 @@ TIMING_TRIGGER_THRESHOLD = 1
 
 # All 8 SiPMs active — upstream E-type re-enabled for ToF depth reconstruction
 DETECTOR_VOLUME_NAMES = [
-    "sipm_front_0", "sipm_front_1",
-    "sipm_front_2", "sipm_front_3",
+    "sipm_front_0", "sipm_front_1", "sipm_front_2", "sipm_front_3",
     "sipm_back_0",  "sipm_back_1",  "sipm_back_2",  "sipm_back_3",
 ]
 
@@ -240,14 +239,10 @@ def _build_capillaries(sim, mm):
 
 
 def _build_sipms(sim, mm):
-    """
-    6 SiPM tiles (removing upstream E-type) + 2 FR4 readout cards + 2 Tyvek plugs
-    """
     for end_name, sgn in [("front", -1), ("back", +1)]:
         z_sipm = sgn * _SIPM_Z_MM * mm
         z_card = sgn * _CARD_Z_MM * mm
 
-        # FR4 readout card with central beam-clearance hole
         card_box        = vol_module.BoxVolume(name=f"card_{end_name}_box")
         card_box.size   = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
         card_hole       = vol_module.TubsVolume(name=f"card_{end_name}_hole")
@@ -263,8 +258,8 @@ def _build_sipms(sim, mm):
         card_vol.translation = [0, 0, z_card]
         sim.add_volume(card_vol)
 
+        # All 4 capillary positions get active SiPMs on both faces
         for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-            # All positions get active SiPMs — no more tungsten plugs
             sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
             sipm.mother      = "world"
             sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
@@ -350,15 +345,15 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
     # Optical interfaces for E-Type segments
-   for cap_idx in _E_TYPE_INDICES:
-        core_name   = f"cap_{cap_idx}_active_core"
-        tail_b_name = f"cap_{cap_idx}_tail_back"
-        tail_f_name = f"cap_{cap_idx}_tail_front"
+    for cap_idx in _E_TYPE_INDICES:
+            core_name   = f"cap_{cap_idx}_active_core"
+            tail_b_name = f"cap_{cap_idx}_tail_back"
+            tail_f_name = f"cap_{cap_idx}_tail_front"
 
-        if core_name in vols and tail_b_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
-        if core_name in vols and tail_f_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
+            if core_name in vols and tail_b_name in vols:
+                sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
+            if core_name in vols and tail_f_name in vols:
+                sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

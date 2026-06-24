@@ -106,8 +106,10 @@ ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
 TIMING_TRIGGER_THRESHOLD = 1
 
 DETECTOR_VOLUME_NAMES = [
-    "sipm_front_0", "sipm_front_1", 
-    "sipm_back_0",  "sipm_back_1",  "sipm_back_2",  "sipm_back_3",
+    "sipm_front_0", "sipm_front_1",   # T-type upstream
+    "sipm_front_2", "sipm_front_3",   # E-type upstream  ← new
+    "sipm_back_0",  "sipm_back_1",    # T-type downstream
+    "sipm_back_2",  "sipm_back_3",    # E-type downstream
 ]
 
 BEAM_CONFIG = {
@@ -162,37 +164,46 @@ def _build_capillaries(sim, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
 
         if i in _E_TYPE_INDICES:
-            # ── E-TYPE: Confined active core with passive quartz extensions ──
+    # ── E-TYPE: BCF-92 core (filament radius) + quartz cladding ──────
+    
+            # 1. Active BCF-92 core — filament radius, full calorimeter length
             core             = sim.add_volume("Tubs", f"cap_{i}_active_core")
             core.mother      = "world"
             core.rmin        = 0.0
-            core.rmax        = _CAP_OUTER_MM * mm     
+            core.rmax        = _FILAMENT_R_MM * mm
             core.dz          = half_calor
             core.translation = [cx * mm, cy * mm, 0]
             core.material    = "BCF92"
 
-            # Change the tail definitions inside _build_capillaries to match this logic:
-            tail_len_z = half_cap - half_calor  # Total length of ONE extension arm
+            # 2. Quartz cladding annulus — active region
+            clad             = sim.add_volume("Tubs", f"cap_{i}_clad")
+            clad.mother      = "world"
+            clad.rmin        = _FILAMENT_R_MM * mm
+            clad.rmax        = _CAP_OUTER_MM * mm
+            clad.dz          = half_calor
+            clad.translation = [cx * mm, cy * mm, 0]
+            clad.material    = "G4_SILICON_DIOXIDE"
 
-            # 2. Upstream Passive Quartz Tail
+            # 3. Upstream passive quartz tail (full radius — no bore)
+            tail_len_z  = half_cap - half_calor          # half-length of one arm
             z_pos_front = -(half_calor + tail_len_z / 2)
-            tail_f = sim.add_volume("Tubs", f"cap_{i}_tail_front")
-            tail_f.mother = "world"
-            tail_f.rmin = 0.0
-            tail_f.rmax = _CAP_OUTER_MM * mm
-            tail_f.dz = tail_len_z / 2  # This should be half of ONE arm's length
+            tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
+            tail_f.mother      = "world"
+            tail_f.rmin        = 0.0
+            tail_f.rmax        = _CAP_OUTER_MM * mm
+            tail_f.dz          = tail_len_z / 2
             tail_f.translation = [cx * mm, cy * mm, z_pos_front]
-            tail_f.material = "G4_SILICON_DIOXIDE"
+            tail_f.material    = "G4_SILICON_DIOXIDE"
 
-            # 3. Downstream Passive Quartz Tail
-            z_pos_back = (half_calor + tail_len_z / 2)
-            tail_b = sim.add_volume("Tubs", f"cap_{i}_tail_back")
-            tail_b.mother = "world"
-            tail_b.rmin = 0.0
-            tail_b.rmax = _CAP_OUTER_MM * mm
-            tail_b.dz = tail_len_z / 2  # This should be half of ONE arm's length
+            # 4. Downstream passive quartz tail (full radius — no bore)
+            z_pos_back  = (half_calor + tail_len_z / 2)
+            tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
+            tail_b.mother      = "world"
+            tail_b.rmin        = 0.0
+            tail_b.rmax        = _CAP_OUTER_MM * mm
+            tail_b.dz          = tail_len_z / 2
             tail_b.translation = [cx * mm, cy * mm, z_pos_back]
-            tail_b.material = "G4_SILICON_DIOXIDE" 
+            tail_b.material    = "G4_SILICON_DIOXIDE"
 
         else:
             # ── T-TYPE: ────────────────
@@ -247,13 +258,12 @@ def _build_sipms(sim, mm):
         sim.add_volume(card_vol)
 
         for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-            if end_name == "front" and cap_idx in _E_TYPE_INDICES:
-                plug             = sim.add_volume("Box", f"plug_{end_name}_{cap_idx}")
-                plug.mother      = "world"
-                plug.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
-                plug.material    = "Tungsten"
-                plug.translation = [cx * mm, cy * mm, z_sipm]
-            else:
+                sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
+                sipm.mother      = "world"
+                sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
+                sipm.material    = "G4_Si"
+                sipm.translation = [cx * mm, cy * mm, z_sipm]
+        else:
                 sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
                 sipm.mother      = "world"
                 sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
@@ -332,15 +342,28 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
     for cap_idx in _E_TYPE_INDICES:
-        core_name = f"cap_{cap_idx}_active_core"
+        core_name   = f"cap_{cap_idx}_active_core"
+        clad_name   = f"cap_{cap_idx}_clad"
         tail_b_name = f"cap_{cap_idx}_tail_back"
-        plug_name = f"plug_front_{cap_idx}"
-        
-        if core_name in vols and tail_b_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
-            
-        if core_name in vols and plug_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, plug_name, "Tyvek")
+        tail_f_name = f"cap_{cap_idx}_tail_front"
+        plug_name   = f"plug_front_{cap_idx}"
+
+    # BCF-92 core ↔ quartz cladding — dielectric/dielectric, polished
+    if core_name in vols and clad_name in vols:
+        sim.physics_manager.add_optical_surface(core_name, clad_name, "Polished")
+        sim.physics_manager.add_optical_surface(clad_name, core_name, "Polished")
+
+    # Cladding → downstream tail — should be seamless quartz/quartz
+    if clad_name in vols and tail_b_name in vols:
+        sim.physics_manager.add_optical_surface(clad_name,   tail_b_name, "Polished")
+        sim.physics_manager.add_optical_surface(tail_b_name, clad_name,   "Polished")
+
+    # Core → downstream tail (axial face)
+    if core_name in vols and tail_b_name in vols:
+        sim.physics_manager.add_optical_surface(core_name,   tail_b_name, "Polished")
+        sim.physics_manager.add_optical_surface(tail_b_name, core_name,   "Polished")
+
+    
 
 
 # ─────────────────────────────────────────────────────────────────────────────
