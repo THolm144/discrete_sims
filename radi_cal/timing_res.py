@@ -231,11 +231,23 @@ def load_hits(batch_dir: Path):
         for fpath in files:
             try:
                 with uproot.open(fpath) as f:
-                    key  = f.keys()[0].split(";")[0]
+                    file_keys = f.keys()
+                    # FIX: Handle empty ROOT files gracefully
+                    if not file_keys:
+                        print(f"  Warning: {fpath.name} is completely empty (no keys/trees found).")
+                        continue
+
+                    key  = file_keys[0].split(";")[0]
                     tree = f[key]
                     branches = tree.keys()
 
                     ev = tree["EventID"].array(library="np").astype(int)
+                    
+                    # Check if tree actually has entries
+                    if len(ev) == 0:
+                        print(f"  Warning: TTree in {fpath.name} contains zero entries.")
+                        continue
+
                     x  = tree["Position_X"].array(library="np")
                     y  = tree["Position_Y"].array(library="np")
                     z  = tree["Position_Z"].array(library="np")
@@ -256,8 +268,7 @@ def load_hits(batch_dir: Path):
                     all_time_ns.append(t)
                     all_particle.append(pn)
 
-                    if len(ev) > 0:
-                        max_ev = max(max_ev, int(ev.max()))
+                    max_ev = max(max_ev, int(ev.max()))
 
             except Exception as e:
                 print(f"  Warning: could not read {fpath.name}: {e}")
@@ -266,6 +277,15 @@ def load_hits(batch_dir: Path):
 
     if not all_event_id:
         return None
+
+    return (
+        np.concatenate(all_event_id),
+        np.concatenate(all_x),
+        np.concatenate(all_y),
+        np.concatenate(all_z),
+        np.concatenate(all_time_ns),
+        np.concatenate(all_particle),
+    )
 
     return (
         np.concatenate(all_event_id),
