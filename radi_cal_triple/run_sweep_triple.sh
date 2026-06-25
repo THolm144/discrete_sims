@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_sim_fast_sweep.sh — Hyper-Speed OpenGATE Sweep (Max 200 Threads)
+# run_sweep_triple.sh — Hyper-Speed OpenGATE Sweep (Max 200 Threads)
 # Includes complete Direct Timing and ToF Reconstruction pipelines.
 # ─────────────────────────────────────────────────────────────────────────────
 

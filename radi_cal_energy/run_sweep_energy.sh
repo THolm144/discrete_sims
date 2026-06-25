@@ -1,11 +1,11 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_sim_fast_sweep.sh — Hyper-Speed OpenGATE Sweep (Max 200 Threads)
+# run_sweep_energy.sh — Hyper-Speed OpenGATE Sweep (Max 200 Threads)
 # Includes complete Direct Timing and ToF Reconstruction pipelines.
 # ─────────────────────────────────────────────────────────────────────────────
 
 MAX_THREADS=200       
-THREADS=16            # High Geant4 MT threads = low memory overhead
+THREADS=16            # High Geant4 MT thrqeads = low memory overhead
 
 WORLD="radi_cal_energy"
 PARTICLE="e-"

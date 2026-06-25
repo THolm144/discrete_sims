@@ -20,7 +20,7 @@
 
   <material name="LYSO">
     <propertiestable>
-      <property name="SCINTILLATIONYIELD"         value="3200"/>
+      <property name="SCINTILLATIONYIELD"         value="320"/>
       <property name="RESOLUTIONSCALE"            value="1.0"/>
       <property name="SCINTILLATIONTIMECONSTANT1" value="40" unit="ns"/>
       <property name="SCINTILLATIONYIELD1"        value="1.0"/>
