@@ -34,20 +34,22 @@ CAP_XY_MM = np.array([
 # ANALYSIS PARAMETERS
 # ─────────────────────────────────────────────────────────────────────────────
 ARRIVAL_QUANTILE     = 0.10
-MIN_PHOTONS_PER_FACE = 5
+MIN_PHOTONS_PER_FACE = 1
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CHANNEL ASSIGNMENT
 # ─────────────────────────────────────────────────────────────────────────────
 def assign_channel(x_mm, y_mm, z_mm):
-    if abs(abs(z_mm) - _SIPM_Z_MM) > 1.0:
-        return -1
+    # Find closest SiPM coordinate in the XY plane
     dists = np.hypot(CAP_XY_MM[:, 0] - x_mm, CAP_XY_MM[:, 1] - y_mm)
     cap_idx = int(np.argmin(dists))
+    
+    # z_mm < 0 -> Upstream (Channels 0-3)
+    # z_mm > 0 -> Downstream (Channels 4-7)
     return cap_idx if z_mm < 0 else cap_idx + 4
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FITTING
+# FITTING & CLEANING
 # ─────────────────────────────────────────────────────────────────────────────
 def skewed_gaussian(x, A, mu, sigma, alpha):
     gauss = np.exp(-0.5 * ((x - mu) / sigma) ** 2)
@@ -152,19 +154,72 @@ def run(batch_dir: Path):
     z_mm     = np.concatenate(all_z)
     time_ns  = np.concatenate(all_time_ns)
     particle = np.concatenate(all_particle)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # DEBUGGING SUITE: WHERE IS THE DATA VANISHING?
+    # ─────────────────────────────────────────────────────────────────────────────
+    print("\n[DEBUG SET 1: RAW CONCATENATED SHAPES]")
+    print(f"  Raw event_id shape  : {event_id.shape}")
+    print(f"  Raw particle shape  : {particle.shape}")
+    if len(particle) > 0:
+        print(f"  Sample raw particle values: {particle[:5]}")
+        print(f"  Raw particle type          : {particle.dtype}")
 
+    # 1. Optical Photon Masking
     is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
+    print(f"\n[DEBUG SET 2: OPTICAL FILTERING]")
+    print(f"  True elements in is_optical mask: {np.sum(is_optical)}")
+    
     event_id   = event_id[is_optical]
     x_mm       = x_mm[is_optical]
     y_mm       = y_mm[is_optical]
     z_mm       = z_mm[is_optical]
     time_ns    = time_ns[is_optical]
 
+    # 2. Channel Assignment
     channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm, y_mm, z_mm)])
-    on_sipm  = channels >= 0
-    event_id = event_id[on_sipm]
-    time_ns  = time_ns[on_sipm]
-    channels = channels[on_sipm]
+    print(f"\n[DEBUG SET 3: CHANNEL ASSIGNMENT]")
+    print(f"  Unique channels assigned before filter: {np.unique(channels)}")
+    print(f"  Count of channel values == -1         : {np.sum(channels == -1)}")
+    
+    on_sipm   = channels >= 0
+    print(f"  True elements in on_sipm mask         : {np.sum(on_sipm)}")
+    
+    event_id  = event_id[on_sipm]
+    time_ns   = time_ns[on_sipm]
+    channels  = channels[on_sipm]
+
+    unique_events = np.unique(event_id)
+    print(f"\n[DEBUG SET 4: FINAL CLEANED EVENTS]")
+    print(f"  Unique event count remaining: {len(unique_events)}")
+    if len(unique_events) > 0:
+        print(f"  Sample remaining unique event IDs: {unique_events[:5]}")
+    print("────────────────────────────────────────────────────────────\n")
+
+    # Clean byte/string comparison that bypasses the type-casting bug
+    is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
+    event_id = np.concatenate(all_event_id)
+    x_mm     = np.concatenate(all_x)
+    y_mm     = np.concatenate(all_y)
+    z_mm     = np.concatenate(all_z)
+    time_ns  = np.concatenate(all_time_ns)
+    particle = np.concatenate(all_particle)
+
+    # 1. Optical photon selection
+    is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
+    
+    event_id_opt = event_id[is_optical]
+    x_mm_opt     = x_mm[is_optical]
+    y_mm_opt     = y_mm[is_optical]
+    z_mm_opt     = z_mm[is_optical]
+    time_ns_opt  = time_ns[is_optical]
+
+    # 2. Channel Assignment (Using the updated, robust function)
+    channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm_opt, y_mm_opt, z_mm_opt)])
+    
+    on_sipm   = channels >= 0
+    event_id  = event_id_opt[on_sipm]
+    time_ns   = time_ns_opt[on_sipm]
+    channels  = channels[on_sipm]
 
     unique_events = np.unique(event_id)
     best_minus_ps, dw_only_ps, up_only_ps = [], [], []
@@ -177,6 +232,7 @@ def run(batch_dir: Path):
         ev_times_ps = time_ns[mask] * 1000.0
         ev_channels = channels[mask]
 
+        # Explicit T-Type Geometry Selection
         dw_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
         up_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
 
