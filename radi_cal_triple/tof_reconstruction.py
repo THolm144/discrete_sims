@@ -140,13 +140,27 @@ def main():
     for fpath in hit_files:
         try:
             with uproot.open(fpath) as f:
-                tree = f[f.keys()[0]]
+                all_keys = f.keys()
+                tree_key = next(
+                    (k for k in all_keys if "detector_hits" in k.split(";")[0]),
+                    None
+                )
+                if tree_key is None:
+                    print(f"  WARN: no detector_hits tree in {fpath.name}")
+                    continue
+                tree = f[tree_key]
+                if tree.num_entries == 0:
+                    continue
+                if "GlobalTime" not in tree.keys():
+                    print(f"  WARN: GlobalTime branch missing in {fpath.name}")
+                    continue
                 x  = tree["Position_X"].array(library="np")
                 y  = tree["Position_Y"].array(library="np")
                 z  = tree["Position_Z"].array(library="np")
                 t  = tree["GlobalTime"].array(library="np")
+                event_id = tree["EventID"].array(library="np")
         except Exception as exc:
-            print(f"  WARN: could not read {fpath}: {exc}")
+            print(f"  WARN: could not read {fpath.name}: {exc}")
             continue
         n_files_read += 1
 
