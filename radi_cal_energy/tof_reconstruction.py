@@ -181,6 +181,13 @@ def main():
 
         mask_up   = is_e_type  & near_upstream
         mask_down = is_e_type  & near_downstream
+        if np.any(mask_up):
+            t_up = t[mask_up]
+            print(f"  Upstream   GlobalTime: min={t_up.min():.3f}  max={t_up.max():.3f}  mean={t_up.mean():.3f} ns  n={len(t_up)}")
+
+        if np.any(mask_down):
+            t_dn = t[mask_down]
+            print(f"  Downstream GlobalTime: min={t_dn.min():.3f}  max={t_dn.max():.3f}  mean={t_dn.mean():.3f} ns  n={len(t_dn)}")
 
         # ── Kinematic back-projection ─────────────────────────────────────────
         # Upstream face (z = −Z_sensor): photon travelled in −z direction from
