@@ -144,7 +144,7 @@ def main():
                 x  = tree["Position_X"].array(library="np")
                 y  = tree["Position_Y"].array(library="np")
                 z  = tree["Position_Z"].array(library="np")
-                t  = tree["LocalTime"].array(library="np")
+                t  = tree["GlobalTime"].array(library="np")
         except Exception as exc:
             print(f"  WARN: could not read {fpath}: {exc}")
             continue
