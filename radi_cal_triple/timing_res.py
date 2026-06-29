@@ -129,7 +129,10 @@ def run(batch_dir: Path):
         for fpath in files:
             try:
                 with uproot.open(fpath) as f:
+                    if not f.keys():
+                        continue                    # skip empty ROOT files
                     tree = f[f.keys()[0]]
+                    ev   = tree["EventID"].array(library="np").astype(int)
                     ev   = tree["EventID"].array(library="np").astype(int)
                     x    = tree["Position_X"].array(library="np")
                     y    = tree["Position_Y"].array(library="np")
