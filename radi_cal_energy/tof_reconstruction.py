@@ -171,7 +171,7 @@ def main():
         is_e_type = np.isin(channels, list(_E_TYPE_INDICES))
 
         # ── Prompt-photon cut (remove BCF-92 WLS delayed tail ~2.7 ns) ───────
-        is_prompt = t < prompt_cut_ns
+        #is_prompt = t < prompt_cut_ns
 
         # ── Face identification by z-sign ─────────────────────────────────────
         # Upstream SiPMs are at z ≈ −_Z_SENSOR_MM
@@ -179,8 +179,8 @@ def main():
         near_upstream   = np.abs(z + _Z_SENSOR_MM) < _SIPM_Z_TOL_MM
         near_downstream = np.abs(z - _Z_SENSOR_MM) < _SIPM_Z_TOL_MM
 
-        mask_up   = is_e_type & is_prompt & near_upstream
-        mask_down = is_e_type & is_prompt & near_downstream
+        mask_up   = is_e_type  & near_upstream
+        mask_down = is_e_type  & near_downstream
 
         # ── Kinematic back-projection ─────────────────────────────────────────
         # Upstream face (z = −Z_sensor): photon travelled in −z direction from
