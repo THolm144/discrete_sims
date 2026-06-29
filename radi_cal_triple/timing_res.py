@@ -83,11 +83,10 @@ def fit_gaussian_to_peak(data, n_bins=40):
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
     try:
-        # Pass skewed_gaussian instead of gaussian
         popt, pcov = curve_fit(
             skewed_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.8, 0.0], # Added 0.0 initial guess for alpha
+            p0=[A0, mu0, iqr_sigma * 0.8, 0.0],
             bounds=(
                 [0.5, mu0 - iqr_sigma, 2.0, -10.0],
                 [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0, 10.0]
@@ -137,7 +136,6 @@ def run(batch_dir: Path):
                         continue                    # skip empty ROOT files
                     tree = f[f.keys()[0]]
                     ev   = tree["EventID"].array(library="np").astype(int)
-                    ev   = tree["EventID"].array(library="np").astype(int)
                     x    = tree["Position_X"].array(library="np")
                     y    = tree["Position_Y"].array(library="np")
                     z    = tree["Position_Z"].array(library="np")
@@ -161,6 +159,7 @@ def run(batch_dir: Path):
     z_mm     = np.concatenate(all_z)
     time_ns  = np.concatenate(all_time_ns)
     particle = np.concatenate(all_particle)
+    
     # ─────────────────────────────────────────────────────────────────────────────
     # DEBUGGING SUITE: WHERE IS THE DATA VANISHING?
     # ─────────────────────────────────────────────────────────────────────────────
@@ -203,7 +202,6 @@ def run(batch_dir: Path):
     print("────────────────────────────────────────────────────────────\n")
 
     # Clean byte/string comparison that bypasses the type-casting bug
-    is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
     event_id = np.concatenate(all_event_id)
     x_mm     = np.concatenate(all_x)
     y_mm     = np.concatenate(all_y)
@@ -220,7 +218,7 @@ def run(batch_dir: Path):
     z_mm_opt     = z_mm[is_optical]
     time_ns_opt  = time_ns[is_optical]
 
-    # 2. Channel Assignment (Using the updated, robust function)
+    # 2. Channel Assignment
     channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm_opt, y_mm_opt, z_mm_opt)])
     
     on_sipm   = channels >= 0
@@ -301,13 +299,14 @@ def run(batch_dir: Path):
         fontsize=13, fontweight="bold"
     )
 
+    # Modified third dictionary mapping to switch from Delta-t to the official BestMinus Resolution
     distributions = [
         {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
          "title": "Downstream T-Type Direct Time ($t_{DW}$)", "color": "royalblue"},
         {"data": clean_up, "amp": up_amp, "mu": up_mu, "sigma": up_sigma, "sigma_err": up_sigma_err, "alpha": up_alpha,
          "title": "Upstream T-Type Direct Time ($t_{UP}$)",   "color": "crimson"},
-        {"data": clean_dt, "amp": dt_amp, "mu": dt_mu, "sigma": dt_sigma, "sigma_err": dt_sigma_err, "alpha": dt_alpha,
-         "title": "Delta t ($t_{DW} - t_{UP}$)",              "color": "darkorchid"},
+        {"data": clean_bm, "amp": bm_amp, "mu": bm_mu, "sigma": bm_sigma, "sigma_err": bm_sigma_err, "alpha": bm_alpha,
+         "title": "BestMinus Timing Resolution $(t_{DW} - t_{UP})/2$", "color": "darkorchid"},
     ]
 
     for ax, dist in zip(axs, distributions):
@@ -340,8 +339,6 @@ def run(batch_dir: Path):
         x_fit     = np.linspace(lo, hi, 5000)
         amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
         y_fit     = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
-
-        # ... rest of your plotting code (ax.plot, ax.set_title, etc.)
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,

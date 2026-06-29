@@ -6,6 +6,8 @@ from scipy.special import erf
 import numpy as np
 import uproot
 import matplotlib.pyplot as plt
+from collections import defaultdict
+from scipy.ndimage import gaussian_filter1d
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY CONSTANTS
@@ -55,14 +57,6 @@ def skewed_gaussian(x, A, mu, sigma, alpha):
     return A * gauss * skew
 
 
-from scipy.optimize import curve_fit
-import numpy as np
-
-def gaussian(x, A, mu, sigma):
-    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-
-from scipy.ndimage import gaussian_filter1d
-
 def fit_gaussian_to_peak(data, n_bins=40):
     if len(data) < 8:
         return 0.0, float(np.median(data)), float(np.std(data)), np.nan, 0.0
@@ -87,11 +81,10 @@ def fit_gaussian_to_peak(data, n_bins=40):
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
     try:
-        # Pass skewed_gaussian instead of gaussian
         popt, pcov = curve_fit(
             skewed_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.8, 0.0], # Added 0.0 initial guess for alpha
+            p0=[A0, mu0, iqr_sigma * 0.8, 0.0],
             bounds=(
                 [0.5, mu0 - iqr_sigma, 2.0, -10.0],
                 [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0, 10.0]
@@ -119,7 +112,6 @@ def run(batch_dir: Path):
     all_time_ns   = []
     all_particle  = []
 
-    from collections import defaultdict
     grouped_files = defaultdict(list)
     for fpath in hit_files:
         grouped_files[fpath.parent].append(fpath)
@@ -133,7 +125,6 @@ def run(batch_dir: Path):
                     if not f.keys():
                         continue                    # skip empty ROOT files
                     tree = f[f.keys()[0]]
-                    ev   = tree["EventID"].array(library="np").astype(int)
                     ev   = tree["EventID"].array(library="np").astype(int)
                     x    = tree["Position_X"].array(library="np")
                     y    = tree["Position_Y"].array(library="np")
@@ -185,9 +176,7 @@ def run(batch_dir: Path):
         ev_channels = channels[mask]
 
         # ── EXPLICIT T-TYPE ISOLATION ──
-        # upstream T-type are channels 0 and 1
         up_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
-        # downstream T-type are channels 4 and 5
         dw_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
 
         dw_num = len(dw_times)
@@ -237,7 +226,6 @@ def run(batch_dir: Path):
     selected_bm = best_minus_ps
     selected_dw = dw_only_ps
     selected_up = up_only_ps
-    selected_dt = delta_t_ps
 
     # ── Outlier removal ───────────────────────────────────────────────────────
     def clean_around_mode(arr, window_ps=60.0):
@@ -251,14 +239,12 @@ def run(batch_dir: Path):
 
     clean_dw = clean_around_mode(selected_dw, window_ps=150.0)
     clean_up = clean_around_mode(selected_up, window_ps=150.0)
-    clean_dt = clean_around_mode(selected_dt, window_ps=200.0)
     clean_bm = clean_around_mode(selected_bm, window_ps=100.0)
 
     # ── Skewed Gaussian peak fits ───────────────────────────────────────────
     bm_amp, bm_mu, bm_sigma, bm_sigma_err, bm_alpha = fit_gaussian_to_peak(clean_bm)
     dw_amp, dw_mu, dw_sigma, dw_sigma_err, dw_alpha = fit_gaussian_to_peak(clean_dw)
     up_amp, up_mu, up_sigma, up_sigma_err, up_alpha = fit_gaussian_to_peak(clean_up)
-    dt_amp, dt_mu, dt_sigma, dt_sigma_err, dt_alpha = fit_gaussian_to_peak(clean_dt)
 
     # ── Plots ────────────────────────────────────────────────────────────────
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
@@ -269,13 +255,14 @@ def run(batch_dir: Path):
         fontsize=13, fontweight="bold"
     )
 
+    # Updated third entry to track and plot the BestMinus Resolution matching the paper
     distributions = [
         {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
          "title": "Downstream T-Type Direct Time ($t_{DW}$)", "color": "royalblue"},
         {"data": clean_up, "amp": up_amp, "mu": up_mu, "sigma": up_sigma, "sigma_err": up_sigma_err, "alpha": up_alpha,
          "title": "Upstream T-Type Direct Time ($t_{UP}$)",   "color": "crimson"},
-        {"data": clean_dt, "amp": dt_amp, "mu": dt_mu, "sigma": dt_sigma, "sigma_err": dt_sigma_err, "alpha": dt_alpha,
-         "title": "Delta t ($t_{DW} - t_{UP}$)", "color": "darkorchid"},
+        {"data": clean_bm, "amp": bm_amp, "mu": bm_mu, "sigma": bm_sigma, "sigma_err": bm_sigma_err, "alpha": bm_alpha,
+         "title": "BestMinus Timing Resolution $(t_{DW} - t_{UP})/2$", "color": "darkorchid"},
     ]
 
     for ax, dist in zip(axs, distributions):
@@ -309,8 +296,6 @@ def run(batch_dir: Path):
         amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
         y_fit     = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
 
-        # ... rest of your plotting code (ax.plot, ax.set_title, etc.)
-
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
                 label=f"Skewed Gaussian fit:\n$\\mu$ = {dist['mu']:.1f} ps\n$\\sigma$ = {dist['sigma']:.1f}{err_str} ps\n$\\alpha$ = {dist['alpha']:.2f}")
@@ -336,8 +321,6 @@ def run(batch_dir: Path):
         "dw_mu":             dw_mu,
         "up_sigma":          up_sigma,
         "up_mu":             up_mu,
-        "dt_sigma":          dt_sigma,
-        "dt_mu":             dt_mu,
         "n_events_total":    len(best_minus_ps),
         "n_events_selected": len(clean_bm),
         "dw_median_photons": float(np.median(diag_dw_n)),
@@ -372,7 +355,6 @@ if __name__ == "__main__":
         print(f"\n  BestMinus σ_t  =  {s:.2f}{err_str} ps")
         print(f"  Downstream σ   =  {result['dw_sigma']:.2f} ps")
         print(f"  Upstream σ     =  {result['up_sigma']:.2f} ps")
-        print(f"  Delta t σ      =  {result['dt_sigma']:.2f} ps")
         print(f"  DW median hits =  {result['dw_median_photons']:.0f} photons/event")
         print(f"  UP median hits =  {result['up_median_photons']:.0f} photons/event")
 
@@ -385,7 +367,6 @@ if __name__ == "__main__":
             f.write(f"mu_ps           : {result['mu_ps']:.4f}\n")
             f.write(f"dw_sigma_ps     : {result['dw_sigma']:.4f}\n")
             f.write(f"up_sigma_ps     : {result['up_sigma']:.4f}\n")
-            f.write(f"dt_sigma_ps     : {result['dt_sigma']:.4f}\n")
             f.write(f"n_events_total  : {result['n_events_total']}\n")
             f.write(f"n_events_sel    : {result['n_events_selected']}\n")
             f.write(f"dw_median_phot  : {result['dw_median_photons']:.1f}\n")
