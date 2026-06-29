@@ -11,7 +11,8 @@ fi
 
 # Find the most recently modified subdirectory
 # `ls -td` sorts by time (newest first), `head -n 1` grabs the top one
-LATEST_BATCH=$(ls -td "$RUNS_DIR"/*/*/  2>/dev/null | head -n 1)
+LATEST_SWEEP=$(ls -td "$RUNS_DIR"/sweep_*/ 2>/dev/null | head -n 1)
+LATEST_BATCH=$(ls -td "${LATEST_SWEEP}"*keV/ 2>/dev/null | head -n 1)
 
 # Check if a directory was actually found
 if [ -z "$LATEST_BATCH" ]; then
