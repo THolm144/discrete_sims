@@ -159,55 +159,6 @@ def run(batch_dir: Path):
     z_mm     = np.concatenate(all_z)
     time_ns  = np.concatenate(all_time_ns)
     particle = np.concatenate(all_particle)
-    
-    # ─────────────────────────────────────────────────────────────────────────────
-    # DEBUGGING SUITE (COMMENTED OUT TO ACCELERATE RUNTIME)
-    # ─────────────────────────────────────────────────────────────────────────────
-    # print("\n[DEBUG SET 1: RAW CONCATENATED SHAPES]")
-    # print(f"  Raw event_id shape  : {event_id.shape}")
-    # print(f"  Raw particle shape  : {particle.shape}")
-    # if len(particle) > 0:
-    #     print(f"  Sample raw particle values: {particle[:5]}")
-    #     print(f"  Raw particle type          : {particle.dtype}")
-
-    # # 1. Optical Photon Masking
-    # is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
-    # print(f"\n[DEBUG SET 2: OPTICAL FILTERING]")
-    # print(f"  True elements in is_optical mask: {np.sum(is_optical)}")
-    # 
-    # event_id   = event_id[is_optical]
-    # x_mm       = x_mm[is_optical]
-    # y_mm       = y_mm[is_optical]
-    # z_mm       = z_mm[is_optical]
-    # time_ns    = time_ns[is_optical]
-
-    # # 2. Channel Assignment
-    # channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm, y_mm, z_mm)])
-    # print(f"\n[DEBUG SET 3: CHANNEL ASSIGNMENT]")
-    # print(f"  Unique channels assigned before filter: {np.unique(channels)}")
-    # print(f"  Count of channel values == -1         : {np.sum(channels == -1)}")
-    # 
-    # on_sipm   = channels >= 0
-    # print(f"  True elements in on_sipm mask         : {np.sum(on_sipm)}")
-    # 
-    # event_id  = event_id[on_sipm]
-    # time_ns   = time_ns[on_sipm]
-    # channels  = channels[on_sipm]
-
-    # unique_events = np.unique(event_id)
-    # print(f"\n[DEBUG SET 4: FINAL CLEANED EVENTS]")
-    # print(f"  Unique event count remaining: {len(unique_events)}")
-    # if len(unique_events) > 0:
-    #     print(f"  Sample remaining unique event IDs: {unique_events[:5]}")
-    # print("────────────────────────────────────────────────────────────\n")
-
-    # Clean byte/string comparison that bypasses the type-casting bug
-    event_id = np.concatenate(all_event_id)
-    x_mm     = np.concatenate(all_x)
-    y_mm     = np.concatenate(all_y)
-    z_mm     = np.concatenate(all_z)
-    time_ns  = np.concatenate(all_time_ns)
-    particle = np.concatenate(all_particle)
 
     # 1. Optical photon selection
     is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
@@ -226,20 +177,39 @@ def run(batch_dir: Path):
     time_ns   = time_ns_opt[on_sipm]
     channels  = channels[on_sipm]
 
-    unique_events = np.unique(event_id)
-    best_minus_ps, dw_only_ps, up_only_ps = [], [], []
+    # ─────────────────────────────────────────────────────────────────────────────
+    # FAST VECTORIZED TIMING ANALYSIS EXTRACTION
+    # ─────────────────────────────────────────────────────────────────────────────
+    time_ps = time_ns * 1000.0
+    is_up_channel = (channels == 0) | (channels == 1)
+    is_dw_channel = (channels == 4) | (channels == 5)
 
+    # Sort everything by event_id once to guarantee continuous event groups
+    sort_idx = np.argsort(event_id)
+    ev_sorted = event_id[sort_idx]
+    time_sorted = time_ps[sort_idx]
+    up_mask_sorted = is_up_channel[sort_idx]
+    dw_mask_sorted = is_dw_channel[sort_idx]
+
+    # Find boundaries where event ID changes and chunk arrays
+    split_indices = np.where(np.diff(ev_sorted) != 0)[0] + 1
+    ev_ids_split = np.split(ev_sorted, split_indices)
+    times_split = np.split(time_sorted, split_indices)
+    up_mask_split = np.split(up_mask_sorted, split_indices)
+    dw_mask_split = np.split(dw_mask_sorted, split_indices)
+
+    best_minus_ps, dw_only_ps, up_only_ps = [], [], []
     diag_dw_n, diag_up_n         = [], []
     diag_dw_valid, diag_up_valid = [], []
+    final_unique_events = []
 
-    for ev_id in unique_events:
-        mask        = event_id == ev_id
-        ev_times_ps = time_ns[mask] * 1000.0
-        ev_channels = channels[mask]
-
-        # Explicit T-Type Geometry Selection
-        up_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
-        dw_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
+    for ev_id_arr, t_arr, up_m, dw_m in zip(ev_ids_split, times_split, up_mask_split, dw_mask_split):
+        if len(ev_id_arr) == 0:
+            continue
+            
+        ev_id = ev_id_arr[0]
+        up_times = t_arr[up_m]
+        dw_times = t_arr[dw_m]
 
         dw_num = len(dw_times)
         up_num = len(up_times)
@@ -260,6 +230,7 @@ def run(batch_dir: Path):
         best_minus_ps.append((t_dw - t_up) / 2.0)
         dw_only_ps.append(t_dw)
         up_only_ps.append(t_up)
+        final_unique_events.append(ev_id)
 
     best_minus_ps = np.array(best_minus_ps)
     dw_only_ps    = np.array(dw_only_ps)
@@ -270,7 +241,8 @@ def run(batch_dir: Path):
     diag_up_n = np.array(diag_up_n)
     diag_dw_v = np.array(diag_dw_valid)
     diag_up_v = np.array(diag_up_valid)
-    n_ev      = len(unique_events)
+    unique_events = np.array(final_unique_events)
+    n_ev          = len(unique_events)
 
     print(f"\n  ── Asymmetry Diagnostics (Pure T-Type Filament Isolation) ──")
     print(f"  Total events           : {n_ev}")
@@ -313,7 +285,6 @@ def run(batch_dir: Path):
         if len(data) == 0:
             continue
 
-        # 1. Plot ranges (based on fit results)
         plot_center = dist["mu"]
         plot_sigma  = dist["sigma"]
         lo = plot_center - 3.0 * plot_sigma
@@ -324,15 +295,10 @@ def run(batch_dir: Path):
             color=dist["color"], alpha=0.6, edgecolor="black", label="Data"
         )
 
-        # 2. Recalculate the original bin width used during the fit
         q75, q25      = np.percentile(data, [75, 25])
         iqr_sigma     = max((q75 - q25) / 1.349, 1.0)
         fit_bin_width = (6.0 * iqr_sigma) / 40.0
-
-        # 3. Calculate the new bin width used for the plot
         plot_bin_width = (hi - lo) / 100.0
-        
-        # 4. The true scaling factor
         scale_factor = plot_bin_width / fit_bin_width
 
         x_fit     = np.linspace(lo, hi, 5000)
@@ -371,7 +337,6 @@ def run(batch_dir: Path):
         "dw_median_photons": float(np.median(diag_dw_n)),
         "up_median_photons": float(np.median(diag_up_n)),
     }
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
