@@ -27,6 +27,8 @@ _SIPM_THICK_MM   = 0.3
 # z-coordinate of the SiPM face centres (±, symmetric about origin)
 _Z_SENSOR_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2   # ≈ 91.65 mm
 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # OPTICAL KINEMATICS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +37,12 @@ REFRACTIVE_INDEX = 1.60                          # BCF-92 core index
 V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 BOUNCE_FACTOR    = 1.0                           # set < 1 to account for TIR zig-zag
 V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
+
+# GlobalTime window to accept as a prompt photon on each face.
+# Upstream:   photons arrive before beam reaches back face (~0.25–1.0 ns)
+# Downstream: beam transit floor ~0.6 ns; cap at 1.5 ns to reject late WLS
+_GT_LO_NS = 0.25   # reject Cherenkov from beam halo arriving too early
+_GT_HI_NS = 1.5    # reject BCF-92 WLS delayed tail (τ ≈ 2.7 ns)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPILLARY XY POSITIONS  (indices 2, 3 are E-type)
@@ -106,22 +114,17 @@ def main():
         description="ToF longitudinal reconstruction using E-type SiPM arrival times."
     )
     parser.add_argument("--batch-dir", required=True, type=str)
-    parser.add_argument(
-        "--prompt-cut-ns", type=float, default=0.4,
-        help="Max LocalTime (ns) to accept as a prompt photon (default: 0.4 ns)."
-    )
     args = parser.parse_args()
 
-    batch_dir      = Path(args.batch_dir)
-    prompt_cut_ns  = args.prompt_cut_ns
-    lyso_bounds    = get_lyso_layer_bounds()
-    calor_half_mm  = _CALOR_THICK_MM / 2
+    batch_dir     = Path(args.batch_dir)
+    lyso_bounds   = get_lyso_layer_bounds()
+    calor_half_mm = _CALOR_THICK_MM / 2
 
     print(f"\n{'─'*60}")
     print(f"  Time-of-Flight Kinematic Profile Reconstruction")
-    print(f"  Using: E-type SiPM face arrival times")
+    print(f"  Using: E-type SiPM coincidence ΔT (front vs back face)")
     print(f"  v_eff = {V_EFF_MM_NS:.2f} mm/ns  (n={REFRACTIVE_INDEX}, bounce={BOUNCE_FACTOR})")
-    print(f"  Prompt-photon cut: LocalTime < {prompt_cut_ns} ns")
+    print(f"  GlobalTime window: [{_GT_LO_NS}, {_GT_HI_NS}] ns")
     print(f"{'─'*60}")
 
     run_dirs  = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
@@ -131,10 +134,10 @@ def main():
         print("  WARNING: No hit files found.")
         return
 
-    # Accumulate reconstructed emission-z values from both SiPM faces separately
-    # so we can cross-check and overlay them in the final plot.
-    z_emit_upstream   = []   # from sipm_front_2/3  (z < 0 face)
-    z_emit_downstream = []   # from sipm_back_2/3   (z > 0 face)
+    # Per-event earliest GlobalTime on each face.
+    # Key: (run_dir_name, event_id) to avoid collisions across runs.
+    up_first   = {}   # -> min GlobalTime on upstream face
+    down_first = {}   # -> min GlobalTime on downstream face
 
     n_files_read = 0
     for fpath in hit_files:
@@ -166,60 +169,67 @@ def main():
             continue
         n_files_read += 1
 
+        run_tag = fpath.parent.name   # e.g. "run_3" — scopes EventID per run
+
         # ── Channel assignment ────────────────────────────────────────────────
-        channels = np.array([assign_channel(xi, yi) for xi, yi in zip(x, y)])
+        channels  = np.array([assign_channel(xi, yi) for xi, yi in zip(x, y)])
         is_e_type = np.isin(channels, list(_E_TYPE_INDICES))
 
-        # ── Prompt-photon cut (remove BCF-92 WLS delayed tail ~2.7 ns) ───────
-        #is_prompt = t < prompt_cut_ns
+        # ── GlobalTime prompt window ──────────────────────────────────────────
+        is_prompt = (t >= _GT_LO_NS) & (t <= _GT_HI_NS)
 
         # ── Face identification by z-sign ─────────────────────────────────────
-        # Upstream SiPMs are at z ≈ −_Z_SENSOR_MM
-        # Downstream SiPMs are at z ≈ +_Z_SENSOR_MM
         near_upstream   = np.abs(z + _Z_SENSOR_MM) < _SIPM_Z_TOL_MM
         near_downstream = np.abs(z - _Z_SENSOR_MM) < _SIPM_Z_TOL_MM
 
-        mask_up   = is_e_type  & near_upstream
-        mask_down = is_e_type  & near_downstream
-        if np.any(mask_up):
-            t_up = t[mask_up]
-            print(f"  Upstream   GlobalTime: min={t_up.min():.3f}  max={t_up.max():.3f}  mean={t_up.mean():.3f} ns  n={len(t_up)}")
+        mask_up   = is_e_type & is_prompt & near_upstream
+        mask_down = is_e_type & is_prompt & near_downstream
 
-        if np.any(mask_down):
-            t_dn = t[mask_down]
-            print(f"  Downstream GlobalTime: min={t_dn.min():.3f}  max={t_dn.max():.3f}  mean={t_dn.mean():.3f} ns  n={len(t_dn)}")
+        # ── Per-event earliest arrival time on each face ──────────────────────
+        for eid, ti in zip(event_id[mask_up], t[mask_up]):
+            key = (run_tag, int(eid))
+            if key not in up_first or ti < up_first[key]:
+                up_first[key] = float(ti)
 
-        # ── Kinematic back-projection ─────────────────────────────────────────
-        # Upstream face (z = −Z_sensor): photon travelled in −z direction from
-        # emission point, so  z_emit = −Z_sensor + t·v_eff
-        if np.any(mask_up):
-            z_emit_upstream.append(-_Z_SENSOR_MM + t[mask_up] * V_EFF_MM_NS)
-
-        # Downstream face (z = +Z_sensor): photon travelled in +z direction,
-        # so  z_emit = +Z_sensor − t·v_eff
-        if np.any(mask_down):
-            z_emit_downstream.append(_Z_SENSOR_MM - t[mask_down] * V_EFF_MM_NS)
+        for eid, ti in zip(event_id[mask_down], t[mask_down]):
+            key = (run_tag, int(eid))
+            if key not in down_first or ti < down_first[key]:
+                down_first[key] = float(ti)
 
     print(f"  Read {n_files_read} ROOT files from {len(run_dirs)} run directories.")
+    print(f"  Events with upstream   hit: {len(up_first):,}")
+    print(f"  Events with downstream hit: {len(down_first):,}")
 
-    z_emit_up   = np.concatenate(z_emit_upstream)   if z_emit_upstream   else np.array([])
-    z_emit_down = np.concatenate(z_emit_downstream) if z_emit_downstream else np.array([])
+    # ── Coincidence: only events with hits on BOTH faces ─────────────────────
+    common_keys = set(up_first) & set(down_first)
+    print(f"  Coincident events (both faces):  {len(common_keys):,}")
 
-    print(f"  Upstream   E-type SiPM hits (prompt): {len(z_emit_up):,}")
-    print(f"  Downstream E-type SiPM hits (prompt): {len(z_emit_down):,}")
+    if len(common_keys) == 0:
+        print("  ERROR: No coincident events found. Check geometry constants and GlobalTime window.")
+        return
+
+    z_emit_list = []
+    for key in common_keys:
+        t_up   = up_first[key]    # upstream SiPM   = front face (z = −Z_sensor)
+        t_down = down_first[key]  # downstream SiPM = back face  (z = +Z_sensor)
+        # Positive ΔT means downstream photon arrives later → emission point
+        # is closer to the front (negative z / upstream side).
+        # z_emit = v_eff * (t_down − t_up) / 2   (centred at calorimeter midplane)
+        delta_t = t_down - t_up
+        z_emit  = V_EFF_MM_NS * delta_t / 2.0
+        z_emit_list.append(z_emit)
+
+    z_emit_coin = np.array(z_emit_list)
+    print(f"  z_emit range: {z_emit_coin.min():.1f} to {z_emit_coin.max():.1f} mm")
+    print(f"  z_emit mean:  {z_emit_coin.mean():.1f} mm  (calorimeter centre = 0, front = −{calor_half_mm:.1f} mm)")
 
     # ── Physical-space filter ─────────────────────────────────────────────────
     margin_mm  = 15.0
     z_lo, z_hi = -calor_half_mm - margin_mm, calor_half_mm + margin_mm
+    valid_coin  = z_emit_coin[(z_emit_coin >= z_lo) & (z_emit_coin <= z_hi)]
+    print(f"  After physical-bounds filter: {len(valid_coin):,} events retained")
 
-    valid_up   = z_emit_up  [(z_emit_up   >= z_lo) & (z_emit_up   <= z_hi)]
-    valid_down = z_emit_down[(z_emit_down >= z_lo) & (z_emit_down <= z_hi)]
-
-    print(f"  After physical-bounds filter:")
-    print(f"    Upstream   retained: {len(valid_up):,}")
-    print(f"    Downstream retained: {len(valid_down):,}")
-
-    # ── KDE → layer histogram for each face ───────────────────────────────────
+    # ── KDE → layer profile ───────────────────────────────────────────────────
     def kde_profile(valid_z, n_layers=_N_LYSO, bounds=lyso_bounds):
         profile = np.zeros(n_layers)
         if len(valid_z) < 5:
@@ -232,16 +242,10 @@ def main():
                 profile[i] = kde.evaluate(z_mid)[0]
         return profile
 
-    profile_up   = kde_profile(valid_up)
-    profile_down = kde_profile(valid_down)
-
-    # Combine: simple sum of both faces (doubles statistics, consistent direction)
-    profile_combined = profile_up + profile_down
+    profile_coin = kde_profile(valid_coin)
 
     # Mirror so layer 1 = beam-entry face (−z) and layer 29 = back face (+z)
-    profile_up       = profile_up      [::-1]
-    profile_down     = profile_down    [::-1]
-    profile_combined = profile_combined[::-1]
+    profile_coin = profile_coin[::-1]
 
     # ── Scale to truth if available ───────────────────────────────────────────
     truth_curve = load_truth_dose_from_mhd(run_dirs)
@@ -251,47 +255,30 @@ def main():
             return profile * (np.sum(truth) / np.sum(profile))
         return profile
 
-    profile_up_sc   = scale_to_truth(profile_up,       truth_curve)
-    profile_down_sc = scale_to_truth(profile_down,     truth_curve)
-    profile_comb_sc = scale_to_truth(profile_combined, truth_curve)
+    profile_coin_sc = scale_to_truth(profile_coin, truth_curve)
 
     # ── Plot ──────────────────────────────────────────────────────────────────
     layers = np.arange(1, _N_LYSO + 1)
-    fig, axes = plt.subplots(2, 1, figsize=(10, 9), sharex=True)
+    fig, ax = plt.subplots(figsize=(10, 5))
 
-    # ── Top panel: individual faces ───────────────────────────────────────────
-    ax = axes[0]
     if truth_curve is not None:
         ax.bar(layers, truth_curve, color="#00bcd4", alpha=0.45,
                edgecolor="#00838f", linewidth=1.0, width=0.8,
                label="Simulation Truth (DoseActor)")
-    ax.plot(layers, profile_up_sc,   color="#1565c0", linewidth=2.0,
-            marker="^", markersize=5, label="Upstream SiPM (sipm_front_2/3) — ToF")
-    ax.plot(layers, profile_down_sc, color="#b71c1c", linewidth=2.0,
-            marker="v", markersize=5, label="Downstream SiPM (sipm_back_2/3) — ToF")
-    ax.set_ylabel("Energy / Scaled Hits (MeV)")
-    ax.set_title("E-type SiPM ToF Reconstruction — Individual Faces vs Truth")
-    ax.grid(True, linestyle=":", alpha=0.6)
-    ax.legend(loc="upper right", fontsize=9)
 
-    # ── Bottom panel: combined ────────────────────────────────────────────────
-    ax = axes[1]
-    if truth_curve is not None:
-        ax.bar(layers, truth_curve, color="#00bcd4", alpha=0.45,
-               edgecolor="#00838f", linewidth=1.0, width=0.8,
-               label="Simulation Truth (DoseActor)")
-    ax.plot(layers, profile_comb_sc, color="#6a1b9a", linewidth=2.5,
+    ax.plot(layers, profile_coin_sc, color="#6a1b9a", linewidth=2.5,
             marker="o", markersize=5,
-            label="Combined (upstream + downstream, KDE smoothed)")
+            label=f"ΔT Coincidence Reconstruction  (n={len(valid_coin)} events)")
+
     ax.set_xlabel("LYSO Layer Number")
     ax.set_ylabel("Energy / Scaled Hits (MeV)")
-    ax.set_title("E-type SiPM ToF Reconstruction — Combined vs Truth")
+    ax.set_title("E-type SiPM ToF Reconstruction — ΔT Coincidence vs Truth")
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend(loc="upper right", fontsize=9)
 
     fig.suptitle(
         f"ToF Longitudinal Profile  |  v_eff = {V_EFF_MM_NS:.1f} mm/ns"
-        f"  |  prompt cut = {prompt_cut_ns} ns",
+        f"  |  GlobalTime window [{_GT_LO_NS}, {_GT_HI_NS}] ns",
         fontsize=11, y=1.01,
     )
     fig.tight_layout()
@@ -302,15 +289,11 @@ def main():
     print(f"\n  Saved plot → {out_path}")
 
     # ── Sanity diagnostics ────────────────────────────────────────────────────
-    peak_up   = int(np.argmax(profile_up))   + 1
-    peak_down = int(np.argmax(profile_down)) + 1
-    peak_comb = int(np.argmax(profile_combined)) + 1
-    print(f"\n  Peak layer (upstream face):   {peak_up}")
-    print(f"  Peak layer (downstream face): {peak_down}")
-    print(f"  Peak layer (combined):        {peak_comb}")
+    peak_coin = int(np.argmax(profile_coin)) + 1
+    print(f"\n  Peak layer (ΔT coincidence): {peak_coin}")
     if truth_curve is not None:
         peak_truth = int(np.argmax(truth_curve)) + 1
-        print(f"  Peak layer (truth):           {peak_truth}")
+        print(f"  Peak layer (truth):          {peak_truth}")
     print()
 
 
