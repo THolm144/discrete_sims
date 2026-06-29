@@ -283,23 +283,33 @@ def run(batch_dir: Path):
         if len(data) == 0:
             continue
 
-        q75, q25    = np.percentile(data, [75, 25])
-        core_sigma  = (q75 - q25) / 1.35
-        # In the plotting loop, replace the plot range calculation with:
-        plot_center = dist["mu"]   # use fitted mu, not median
+        # 1. Plot ranges (based on fit results)
+        plot_center = dist["mu"]
         plot_sigma  = dist["sigma"]
         lo = plot_center - 3.0 * plot_sigma
         hi = plot_center + 3.0 * plot_sigma
 
         counts, edges, _ = ax.hist(
             data, bins=100, range=(lo, hi),
-            color=dist["color"], alpha=0.6, edgecolor='black', label="Data"
+            color=dist["color"], alpha=0.6, edgecolor="black", label="Data"
         )
 
+        # 2. Recalculate the original bin width used during the fit
+        q75, q25      = np.percentile(data, [75, 25])
+        iqr_sigma     = max((q75 - q25) / 1.349, 1.0)
+        fit_bin_width = (6.0 * iqr_sigma) / 40.0
+
+        # 3. Calculate the new bin width used for the plot
+        plot_bin_width = (hi - lo) / 100.0
+        
+        # 4. The true scaling factor
+        scale_factor = plot_bin_width / fit_bin_width
+
         x_fit     = np.linspace(lo, hi, 5000)
-        # Scale the amplitude from the 40-bin fit to the 100-bin plot
-        amplitude = dist["amp"] * (40.0 / 100.0) if dist["amp"] > 0 else counts.max()
+        amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
         y_fit     = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
+
+        # ... rest of your plotting code (ax.plot, ax.set_title, etc.)
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
