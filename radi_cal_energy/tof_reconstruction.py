@@ -141,6 +141,8 @@ def main():
         try:
             with uproot.open(fpath) as f:
                 all_keys = f.keys()
+                if not all_keys:
+                    continue  # Empty file — no hits this run, skip silently
                 tree_key = next(
                     (k for k in all_keys if "detector_hits" in k.split(";")[0]),
                     None
@@ -154,10 +156,10 @@ def main():
                 if "GlobalTime" not in tree.keys():
                     print(f"  WARN: GlobalTime branch missing in {fpath.name}")
                     continue
-                x  = tree["Position_X"].array(library="np")
-                y  = tree["Position_Y"].array(library="np")
-                z  = tree["Position_Z"].array(library="np")
-                t  = tree["GlobalTime"].array(library="np")
+                x        = tree["Position_X"].array(library="np")
+                y        = tree["Position_Y"].array(library="np")
+                z        = tree["Position_Z"].array(library="np")
+                t        = tree["GlobalTime"].array(library="np")
                 event_id = tree["EventID"].array(library="np")
         except Exception as exc:
             print(f"  WARN: could not read {fpath.name}: {exc}")
