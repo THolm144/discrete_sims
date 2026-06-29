@@ -180,10 +180,10 @@ def run(batch_dir: Path):
         ev_channels = channels[mask]
 
         # ── EXPLICIT T-TYPE ISOLATION ──
-        # Downstream T-type are channels 0 and 1
-        dw_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
-        # Upstream T-type are channels 4 and 5 (cap_idx 0 and 1 shifted by +4)
-        up_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
+        # upstream T-type are channels 0 and 1
+        up_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
+        # downstream T-type are channels 4 and 5
+        dw_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
 
         dw_num = len(dw_times)
         up_num = len(up_times)

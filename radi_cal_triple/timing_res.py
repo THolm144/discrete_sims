@@ -233,8 +233,8 @@ def run(batch_dir: Path):
         ev_channels = channels[mask]
 
         # Explicit T-Type Geometry Selection
-        dw_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
-        up_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
+        up_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
+        dw_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
 
         dw_num = len(dw_times)
         up_num = len(up_times)
