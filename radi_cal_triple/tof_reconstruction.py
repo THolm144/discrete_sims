@@ -33,7 +33,7 @@ _Z_SENSOR_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2   # ≈ 135.15 mm
 C_LIGHT_MM_NS    = 299.792
 REFRACTIVE_INDEX = 1.60                          # BCF-92 core index
 V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR    = 1.0                           # set < 1 to account for TIR zig-zag
+BOUNCE_FACTOR    = 0.92                           # set < 1 to account for TIR zig-zag
 V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
 _GT_LO_NS = 0.25   # reject Cherenkov from beam halo arriving too early
