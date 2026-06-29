@@ -7,7 +7,7 @@ echo "Error: Directory $RUNS_DIR does not exist. Are you in the right folder?"
 exit 1
 fi
 # Find the most recently modified subdirectory
-LATEST_BATCH=$(ls -td "$RUNS_DIR"/*/ 2>/dev/null | head -n 1)
+LATEST_BATCH=$(ls -td "$RUNS_DIR"/*/*/  2>/dev/null | head -n 1)
 # Check if a directory was actually found
 if [ -z "$LATEST_BATCH" ]; then
 echo "Error: No batch directories found inside $RUNS_DIR."
