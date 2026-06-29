@@ -67,40 +67,40 @@ def fit_gaussian_to_peak(data, n_bins=40):
     if len(data) < 8:
         return 0.0, float(np.median(data)), float(np.std(data)), np.nan, 0.0
 
-    q75, q25 = np.percentile(data, [75, 25])
+    q75, q25  = np.percentile(data, [75, 25])
     iqr_sigma = max((q75 - q25) / 1.349, 1.0)
-    center = np.median(data)
+    center    = np.median(data)
     lo = center - 3.0 * iqr_sigma
     hi = center + 3.0 * iqr_sigma
 
     counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
     mids = 0.5 * (edges[:-1] + edges[1:])
 
-    # Smooth before finding peak — critical for noisy low-stats histograms
-    smoothed = gaussian_filter1d(counts.astype(float), sigma=2.0)
-    peak_idx = int(np.argmax(smoothed))
-    mu0 = float(mids[peak_idx])
-    A0  = float(smoothed[peak_idx])
+    smoothed  = gaussian_filter1d(counts.astype(float), sigma=2.0)
+    peak_idx  = int(np.argmax(smoothed))
+    mu0       = float(mids[peak_idx])
+    A0        = float(smoothed[peak_idx])
 
-    # Fit only within ±1 IQR of smoothed peak
-    # Narrow the fit window to focus on the peak core (e.g., 1.5-2 sigma instead of tracking tails)
-    fit_mask = np.abs(mids - mu0) < 1.5 * 10.0 # Force a narrower window if you expect ~10-20ps wide peaks
-    
-    if fit_mask.sum() < 4:
+    # Narrow the window slightly to avoid the broad flat skirts pulling the peak amplitude up
+    fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
+    if fit_mask.sum() < 5:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
     try:
+        # Pass skewed_gaussian instead of gaussian
         popt, pcov = curve_fit(
-            gaussian,
+            skewed_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, 15.0], # Give it a more realistic starting guess for a narrow peak
-            bounds=([0.5, mu0 - 30.0, 2.0],
-                    [A0 * 4.0, mu0 + 30.0, 80.0]),
+            p0=[A0, mu0, iqr_sigma * 0.8, 0.0], # Added 0.0 initial guess for alpha
+            bounds=(
+                [0.5, mu0 - iqr_sigma, 2.0, -10.0],
+                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0, 10.0]
+            ),
             maxfev=10000,
         )
-        A_fit, mu_fit, sig_fit = popt
+        A_fit, mu_fit, sig_fit, alpha_fit = popt
         perr = np.sqrt(np.diag(pcov))
-        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), 0.0
+        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), float(alpha_fit)
     except Exception:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 

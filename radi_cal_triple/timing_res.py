@@ -77,24 +77,26 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    # Narrow the fit window to focus on the peak core (e.g., 1.5-2 sigma instead of tracking tails)
-    fit_mask = np.abs(mids - mu0) < 1.5 * 10.0 # Force a narrower window if you expect ~10-20ps wide peaks
-    
-    if fit_mask.sum() < 4:
+    # Narrow the window slightly to avoid the broad flat skirts pulling the peak amplitude up
+    fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
+    if fit_mask.sum() < 5:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
     try:
+        # Pass skewed_gaussian instead of gaussian
         popt, pcov = curve_fit(
-            gaussian,
+            skewed_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, 15.0], # Give it a more realistic starting guess for a narrow peak
-            bounds=([0.5, mu0 - 30.0, 2.0],
-                    [A0 * 4.0, mu0 + 30.0, 80.0]),
+            p0=[A0, mu0, iqr_sigma * 0.8, 0.0], # Added 0.0 initial guess for alpha
+            bounds=(
+                [0.5, mu0 - iqr_sigma, 2.0, -10.0],
+                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0, 10.0]
+            ),
             maxfev=10000,
         )
-        A_fit, mu_fit, sig_fit = popt
+        A_fit, mu_fit, sig_fit, alpha_fit = popt
         perr = np.sqrt(np.diag(pcov))
-        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), 0.0
+        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), float(alpha_fit)
     except Exception:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
@@ -323,7 +325,7 @@ def run(batch_dir: Path):
             color=dist["color"], alpha=0.6, edgecolor="black", label="Data"
         )
 
-       x_fit     = np.linspace(lo, hi, 5000)
+        x_fit     = np.linspace(lo, hi, 5000)
         # Scale the amplitude from the 40-bin fit to the 100-bin plot
         amplitude = dist["amp"] * (40.0 / 100.0) if dist["amp"] > 0 else counts.max()
         y_fit     = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
