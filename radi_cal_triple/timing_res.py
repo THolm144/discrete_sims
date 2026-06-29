@@ -43,7 +43,7 @@ def skewed_gaussian(x, A, mu, sigma, alpha):
     skew  = 1.0 + erf(alpha * (x - mu) / (sigma * np.sqrt(2)))
     return A * gauss * skew
 
-def fit_gaussian_to_peak(data, n_bins=40):
+def fit_gaussian_to_peak(data, n_bins=50):
     if len(data) < 8:
         return 0.0, float(np.median(data)), float(np.std(data)), np.nan, 0.0
 
@@ -61,23 +61,36 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
-    if fit_mask.sum() < 5:
-        return A0, mu0, iqr_sigma, np.nan, 0.0
+    # NEW MASKING: Focus strictly on the core by requiring bins to have at least 15% of peak amplitude
+    # This naturally chops off the wide, flat shoulders from confusing the fitter
+    fit_mask = (counts > A0 * 0.15) & (np.abs(mids - mu0) < 1.5 * iqr_sigma)
+    
+    # Fallback to IQR if the peak is extremely sparse
+    if fit_mask.sum() < 4:
+        fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
+        if fit_mask.sum() < 4:
+            return A0, mu0, iqr_sigma, np.nan, 0.0
 
     try:
         popt, pcov = curve_fit(
             skewed_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.8, 0.0],
+            p0=[A0, mu0, iqr_sigma * 0.7, 0.0],
             bounds=(
-                [0.5, mu0 - iqr_sigma, 2.0, -10.0],
+                [0.5, mu0 - iqr_sigma, 1.0, -10.0],
                 [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0, 10.0]
             ),
+            method='trf',    # Required to use robust loss functions
+            loss='soft_l1',  # Down-weights outliers (the "chunky shoulders")
             maxfev=10000,
         )
         A_fit, mu_fit, sig_fit, alpha_fit = popt
         perr = np.sqrt(np.diag(pcov))
+        
+        # Catch any lingering infinity errors from poor convergence
+        if np.isinf(perr[2]) or np.isnan(perr[2]):
+            perr[2] = iqr_sigma * 0.1 
+            
         return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), float(alpha_fit)
     except Exception:
         return A0, mu0, iqr_sigma, np.nan, 0.0
