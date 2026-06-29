@@ -1,5 +1,6 @@
 import argparse
 import warnings
+import time
 from pathlib import Path
 from collections import defaultdict
 from scipy.optimize import curve_fit
@@ -21,8 +22,6 @@ _CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM
 _HOLE_INSET_MM = 3.5
 _HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 
-# Indices 0, 1 -> T-type
-# Indices 2, 3 -> E-type
 CAP_XY_MM = np.array([
     [ _HOLE_OFFSET,  _HOLE_OFFSET],   # 0 — T-type (Top-Right)
     [-_HOLE_OFFSET, -_HOLE_OFFSET],   # 1 — T-type (Bottom-Left)
@@ -37,27 +36,12 @@ ARRIVAL_QUANTILE     = 0.10
 MIN_PHOTONS_PER_FACE = 1
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHANNEL ASSIGNMENT
-# ─────────────────────────────────────────────────────────────────────────────
-def assign_channel(x_mm, y_mm, z_mm):
-    # Find closest SiPM coordinate in the XY plane
-    dists = np.hypot(CAP_XY_MM[:, 0] - x_mm, CAP_XY_MM[:, 1] - y_mm)
-    cap_idx = int(np.argmin(dists))
-    
-    # z_mm < 0 -> Upstream (Channels 0-3)
-    # z_mm > 0 -> Downstream (Channels 4-7)
-    return cap_idx if z_mm < 0 else cap_idx + 4
-
-# ─────────────────────────────────────────────────────────────────────────────
 # FITTING & CLEANING
 # ─────────────────────────────────────────────────────────────────────────────
 def skewed_gaussian(x, A, mu, sigma, alpha):
     gauss = np.exp(-0.5 * ((x - mu) / sigma) ** 2)
     skew  = 1.0 + erf(alpha * (x - mu) / (sigma * np.sqrt(2)))
     return A * gauss * skew
-
-def gaussian(x, A, mu, sigma):
-    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 def fit_gaussian_to_peak(data, n_bins=40):
     if len(data) < 8:
@@ -77,7 +61,6 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    # Narrow the window slightly to avoid the broad flat skirts pulling the peak amplitude up
     fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
     if fit_mask.sum() < 5:
         return A0, mu0, iqr_sigma, np.nan, 0.0
@@ -112,6 +95,8 @@ def clean_around_mode(arr, window_ps=60.0):
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 def run(batch_dir: Path):
+    t_start = time.perf_counter()
+    
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"))
     if not hit_files:
         print("  No detector_hits_*.root files found.")
@@ -127,13 +112,15 @@ def run(batch_dir: Path):
         grouped_files[fpath.parent].append(fpath)
 
     global_offset = 0
+    print(f"  [Checkpoint 1/6] Loading branches from {len(hit_files)} ROOT files...")
+    t_io = time.perf_counter()
     for parent_dir, files in grouped_files.items():
         max_ev_in_dir = 0
         for fpath in files:
             try:
                 with uproot.open(fpath) as f:
                     if not f.keys():
-                        continue                    # skip empty ROOT files
+                        continue
                     tree = f[f.keys()[0]]
                     ev   = tree["EventID"].array(library="np").astype(int)
                     x    = tree["Position_X"].array(library="np")
@@ -152,15 +139,20 @@ def run(batch_dir: Path):
             except Exception as e:
                 print(f"  Warning: could not read {fpath.name}: {e}")
         global_offset += max_ev_in_dir + 1
+    print(f"  --> File I/O Completed in {time.perf_counter() - t_io:.2f} seconds.")
 
+    print("  [Checkpoint 2/6] Concatenating raw hit arrays...")
+    t_concat = time.perf_counter()
     event_id = np.concatenate(all_event_id)
     x_mm     = np.concatenate(all_x)
     y_mm     = np.concatenate(all_y)
     z_mm     = np.concatenate(all_z)
     time_ns  = np.concatenate(all_time_ns)
     particle = np.concatenate(all_particle)
+    print(f"  --> Concat done. Array contains {len(event_id):,} rows. ({time.perf_counter() - t_concat:.2f}s)")
 
-    # 1. Optical photon selection
+    print("  [Checkpoint 3/6] Filtering optical photons...")
+    t_filter = time.perf_counter()
     is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
     
     event_id_opt = event_id[is_optical]
@@ -168,36 +160,47 @@ def run(batch_dir: Path):
     y_mm_opt     = y_mm[is_optical]
     z_mm_opt     = z_mm[is_optical]
     time_ns_opt  = time_ns[is_optical]
+    print(f"  --> Isolated {len(event_id_opt):,} optical photons. ({time.perf_counter() - t_filter:.2f}s)")
 
-    # 2. Channel Assignment
-    channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm_opt, y_mm_opt, z_mm_opt)])
+    print("  [Checkpoint 4/6] Assigning channels via vector broadcast matrix...")
+    t_chan = time.perf_counter()
+    if len(x_mm_opt) == 0:
+        print("  ERROR: Zero optical photons found after masking particle branches.")
+        return None
+        
+    dx = x_mm_opt[:, None] - CAP_XY_MM[:, 0]
+    dy = y_mm_opt[:, None] - CAP_XY_MM[:, 1]
+    dists = np.hypot(dx, dy)
+    cap_idx = np.argmin(dists, axis=1)
+    channels = np.where(z_mm_opt < 0, cap_idx, cap_idx + 4)
     
     on_sipm   = channels >= 0
     event_id  = event_id_opt[on_sipm]
     time_ns   = time_ns_opt[on_sipm]
     channels  = channels[on_sipm]
+    print(f"  --> Matrix geometric mapping done. ({time.perf_counter() - t_chan:.2f}s)")
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # FAST VECTORIZED TIMING ANALYSIS EXTRACTION
-    # ─────────────────────────────────────────────────────────────────────────────
+    print("  [Checkpoint 5/6] Sorting and chunking unique event structures...")
+    t_chunk = time.perf_counter()
     time_ps = time_ns * 1000.0
     is_up_channel = (channels == 0) | (channels == 1)
     is_dw_channel = (channels == 4) | (channels == 5)
 
-    # Sort everything by event_id once to guarantee continuous event groups
     sort_idx = np.argsort(event_id)
     ev_sorted = event_id[sort_idx]
     time_sorted = time_ps[sort_idx]
     up_mask_sorted = is_up_channel[sort_idx]
     dw_mask_sorted = is_dw_channel[sort_idx]
 
-    # Find boundaries where event ID changes and chunk arrays
     split_indices = np.where(np.diff(ev_sorted) != 0)[0] + 1
     ev_ids_split = np.split(ev_sorted, split_indices)
     times_split = np.split(time_sorted, split_indices)
     up_mask_split = np.split(up_mask_sorted, split_indices)
     dw_mask_split = np.split(dw_mask_sorted, split_indices)
+    print(f"  --> Data split into {len(ev_ids_split):,} event blocks. ({time.perf_counter() - t_chunk:.2f}s)")
 
+    print("  [Checkpoint 6/6] Calculating quantile arrival times across arrays...")
+    t_quant = time.perf_counter()
     best_minus_ps, dw_only_ps, up_only_ps = [], [], []
     diag_dw_n, diag_up_n         = [], []
     diag_dw_valid, diag_up_valid = [], []
@@ -243,6 +246,7 @@ def run(batch_dir: Path):
     diag_up_v = np.array(diag_up_valid)
     unique_events = np.array(final_unique_events)
     n_ev          = len(unique_events)
+    print(f"  --> Quantile processing done. ({time.perf_counter() - t_quant:.2f}s)")
 
     print(f"\n  ── Asymmetry Diagnostics (Pure T-Type Filament Isolation) ──")
     print(f"  Total events           : {n_ev}")
@@ -303,7 +307,7 @@ def run(batch_dir: Path):
 
         x_fit     = np.linspace(lo, hi, 5000)
         amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
-        y_fit     = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
+        y_fit = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
@@ -321,6 +325,7 @@ def run(batch_dir: Path):
     plt.savefig(plot_path, dpi=200)
     plt.close()
     print(f"\n  Saved plot → {plot_path}")
+    print(f"  [Total Analysis Run Execution Time: {time.perf_counter() - t_start:.2f}s]\n")
 
     return {
         "sigma_t_ps":        bm_sigma,
