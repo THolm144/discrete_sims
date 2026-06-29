@@ -1,28 +1,3 @@
-"""
-worlds/radi_cal_triple.py
-=========================
-RADiCAL Shashlik calorimeter — energy-measurement variant (Triple LYSO thickness).
-
-Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
-        LYSO | W | LYSO | W | … | W | LYSO   (212.29 mm total)
-
-Capillaries (4, no central hole):
-    T-type (indices 0, 1) — diagonal pair:
-        Quartz rod (Ø1.15 mm, ~270.0 mm) with a short bore at shower-max
-        (LYSO layers 8–11) holding a BCF-92 WLS filament (Ø0.90 mm).
-        Quartz rod fills both arms above and below the filament.
-
-    E-type (indices 2, 3) — kitty-corner pair:
-        Solid quartz rod (Ø1.15 mm, ~270.0 mm) with NO bore subtraction.
-        A BCF-92 WLS filament (Ø0.90 mm) runs the active length,
-        spliced to passive quartz tails extending outside the active volume.
-
-SiPMs:  6 silicon tiles (2 front T-type, 4 back) + 2 upstream E-type Tyvek plugs + 2 FR4 readout cards.
-
-Geometry style: boolean subtraction.
-Coordinate origin: centre of the calorimeter stack (= centre of world).
-"""
-
 import numpy as np
 import opengate.geometry.volumes as vol_module
 
@@ -45,30 +20,29 @@ TARGET_VOLUME_NAME = "calorimeter"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _LYSO_XY_MM      = 14.0
-_LYSO_THICK_MM   = 4.5                    # 1.5 mm * 3
-_TYVEK_THICK_MM  = 0.008 * 25.4           # 0.2032 mm
+_LYSO_THICK_MM   = 4.5                    
+_TYVEK_THICK_MM  = 0.008 * 25.4           
 _W_THICK_MM      = 2.5
 _N_LYSO          = 29
 _N_W             = 28
 
-_GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   # 4.9064 mm
-_CALOR_XY_MM     = _LYSO_XY_MM    + 2 * _TYVEK_THICK_MM   # 14.4064 mm
-_CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 212.2856 mm
+_GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   
+_CALOR_XY_MM     = _LYSO_XY_MM    + 2 * _TYVEK_THICK_MM   
+_CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  
 
-_CAP_OUTER_MM    = 1.150 / 2              # 0.575 mm  — quartz rod outer radius
-_CAP_INNER_MM    = 0.950 / 2              # 0.475 mm  — bore / inner radius
+_CAP_OUTER_MM    = 1.150 / 2              
+_CAP_INNER_MM    = 0.950 / 2              
 
-# Dynamically link capillary length to maintain original 28.8572 mm overhang 
 _CAP_LENGTH_MM   = _CALOR_THICK_MM + 57.7144
 
 _HOLE_INSET_MM   = 3.5
-_HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM      # 3.7032 mm
+_HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM      
 
-_FILAMENT_R_MM   = 0.900 / 2             # 0.45 mm   — BCF-92 filament radius
+_FILAMENT_R_MM   = 0.900 / 2             
 
 # ── Shower-max band (T-type bore region) ──────────────────────────────────────
-_SHOWER_FIRST    = 8                      # first LYSO layer index (0-based)
-_SHOWER_LAST     = 11                     # last  LYSO layer index (0-based)
+_SHOWER_FIRST    = 8                      
+_SHOWER_LAST     = 11                     
 _LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
 _FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
 _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
@@ -88,7 +62,6 @@ _CARD_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM + 0.1 + _CARD_THICK_MM/2
 _WORLD_XY_MM     = 1.5 * _CALOR_XY_MM
 _WORLD_Z_MM      = 1.5 * max(_CAP_LENGTH_MM, _CALOR_THICK_MM)
 
-# ── 4 capillary positions (True Diagonal / Kitty-Corner Setup) ────────────────
 _CAP_POSITIONS_MM = [
     [ _HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 0 — T-type (Top-Right)
     [-_HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 1 — T-type (Bottom-Left)
@@ -97,7 +70,6 @@ _CAP_POSITIONS_MM = [
 ]
 _E_TYPE_INDICES  = {2, 3}
 
-# ── Simulator metadata ────────────────────────────────────────────────────────
 PHANTOM_CM       = [_CALOR_XY_MM/10, _CALOR_XY_MM/10, _CALOR_THICK_MM/10]
 EXPECTED_DEDX    = 1.0
 ACTIVATE_CALORIMETER_SETTINGS = True
@@ -106,10 +78,10 @@ ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
 TIMING_TRIGGER_THRESHOLD = 1
 
 DETECTOR_VOLUME_NAMES = [
-    "sipm_front_0", "sipm_front_1",   # T-type upstream
-    "sipm_front_2", "sipm_front_3",   # E-type upstream  ← new
-    "sipm_back_0",  "sipm_back_1",    # T-type downstream
-    "sipm_back_2",  "sipm_back_3",    # E-type downstream
+    "sipm_front_0", "sipm_front_1",   
+    "sipm_front_2", "sipm_front_3",   
+    "sipm_back_0",  "sipm_back_1",    
+    "sipm_back_2",  "sipm_back_3",    
 ]
 
 BEAM_CONFIG = {
@@ -117,7 +89,6 @@ BEAM_CONFIG = {
     "target_cm": [0, 0, 0],
     "offset_cm": _SIPM_Z_MM/10 + 2.0,
 }
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY HELPERS
@@ -164,9 +135,7 @@ def _build_capillaries(sim, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
 
         if i in _E_TYPE_INDICES:
-    # ── E-TYPE: BCF-92 core (filament radius) + quartz cladding ──────
-    
-            # 1. Active BCF-92 core — filament radius, full calorimeter length
+            # 1. Active BCF-92 core — full calorimeter length
             core             = sim.add_volume("Tubs", f"cap_{i}_active_core")
             core.mother      = "world"
             core.rmin        = 0.0
@@ -184,29 +153,29 @@ def _build_capillaries(sim, mm):
             clad.translation = [cx * mm, cy * mm, 0]
             clad.material    = "G4_SILICON_DIOXIDE"
 
-            # 3. Upstream passive quartz tail (full radius — no bore)
-            tail_len_z  = half_cap - half_calor          # half-length of one arm
-            z_pos_front = -(half_calor + tail_len_z / 2)
+            # 3. Upstream and Downstream tails (Correct half-lengths)
+            half_tail_len = (half_cap - half_calor) / 2  
+
+            z_pos_front = -(half_calor + half_tail_len)
             tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
             tail_f.mother      = "world"
             tail_f.rmin        = 0.0
             tail_f.rmax        = _CAP_OUTER_MM * mm
-            tail_f.dz          = tail_len_z / 2
+            tail_f.dz          = half_tail_len
             tail_f.translation = [cx * mm, cy * mm, z_pos_front]
             tail_f.material    = "G4_SILICON_DIOXIDE"
 
-            # 4. Downstream passive quartz tail (full radius — no bore)
-            z_pos_back  = (half_calor + tail_len_z / 2)
+            z_pos_back  = (half_calor + half_tail_len)
             tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
             tail_b.mother      = "world"
             tail_b.rmin        = 0.0
             tail_b.rmax        = _CAP_OUTER_MM * mm
-            tail_b.dz          = tail_len_z / 2
+            tail_b.dz          = half_tail_len
             tail_b.translation = [cx * mm, cy * mm, z_pos_back]
             tail_b.material    = "G4_SILICON_DIOXIDE"
 
         else:
-            # ── T-TYPE: ────────────────
+            # ── T-TYPE ────────────────
             rod_base      = vol_module.TubsVolume(name=f"cap_{i}_rod")
             rod_base.rmin = 0.0
             rod_base.rmax = _CAP_OUTER_MM * mm
@@ -242,21 +211,29 @@ def _build_sipms(sim, mm):
         z_sipm = sgn * _SIPM_Z_MM * mm
         z_card = sgn * _CARD_Z_MM * mm
 
-        card_box        = vol_module.BoxVolume(name=f"card_{end_name}_box")
-        card_box.size   = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
-        card_hole       = vol_module.TubsVolume(name=f"card_{end_name}_hole")
-        card_hole.rmin  = 0.0
-        card_hole.rmax  = _CARD_HOLE_R_MM * mm
-        card_hole.dz    = (_CARD_THICK_MM + 0.1) * mm
-        card_vol        = vol_module.subtract_volumes(
-            card_box, card_hole, new_name=f"card_{end_name}"
-        )
+        # 1. Base card volume
+        card_vol = vol_module.BoxVolume(name=f"card_{end_name}_box")
+        card_vol.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
+        
+        # 2. Drill 4 off-center clearance holes
+        for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
+            card_hole       = vol_module.TubsVolume(name=f"card_{end_name}_hole_{i}")
+            card_hole.rmin  = 0.0
+            card_hole.rmax  = _CARD_HOLE_R_MM * mm
+            card_hole.dz    = (_CARD_THICK_MM + 0.1) * mm
+            card_vol        = vol_module.subtract_volumes(
+                card_vol, card_hole,
+                translation=[cx * mm, cy * mm, 0],
+                new_name=f"card_{end_name}_sub_{i}"
+            )
+            
         card_vol.name        = f"card_{end_name}"
         card_vol.mother      = "world"
-        card_vol.material    = "G4_SILICON_DIOXIDE"
+        card_vol.material    = "G4_SILICON_DIOXIDE" 
         card_vol.translation = [0, 0, z_card]
         sim.add_volume(card_vol)
 
+        # 3. Uniformly deploy all 4 SiPM tiles per end face
         for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
             sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
             sipm.mother      = "world"
@@ -335,33 +312,37 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
+    # Fixed scoping bug: Loop over E-type indices so both sets receive surfaces
     for cap_idx in _E_TYPE_INDICES:
         core_name   = f"cap_{cap_idx}_active_core"
         clad_name   = f"cap_{cap_idx}_clad"
         tail_b_name = f"cap_{cap_idx}_tail_back"
         tail_f_name = f"cap_{cap_idx}_tail_front"
-        plug_name   = f"plug_front_{cap_idx}"
 
-    # BCF-92 core ↔ quartz cladding — dielectric/dielectric, polished
-    if core_name in vols and clad_name in vols:
-        sim.physics_manager.add_optical_surface(core_name, clad_name, "Polished")
-        sim.physics_manager.add_optical_surface(clad_name, core_name, "Polished")
+        # BCF-92 core ↔ quartz cladding
+        if core_name in vols and clad_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, clad_name, "Polished")
+            sim.physics_manager.add_optical_surface(clad_name, core_name, "Polished")
 
-    # Cladding → downstream tail — should be seamless quartz/quartz
-    if clad_name in vols and tail_b_name in vols:
-        sim.physics_manager.add_optical_surface(clad_name,   tail_b_name, "Polished")
-        sim.physics_manager.add_optical_surface(tail_b_name, clad_name,   "Polished")
+        # Cladding ↔ Tails (Front & Back)
+        if clad_name in vols and tail_b_name in vols:
+            sim.physics_manager.add_optical_surface(clad_name, tail_b_name, "Polished")
+            sim.physics_manager.add_optical_surface(tail_b_name, clad_name, "Polished")
+        if clad_name in vols and tail_f_name in vols:
+            sim.physics_manager.add_optical_surface(clad_name, tail_f_name, "Polished")
+            sim.physics_manager.add_optical_surface(tail_f_name, clad_name, "Polished")
 
-    # Core → downstream tail (axial face)
-    if core_name in vols and tail_b_name in vols:
-        sim.physics_manager.add_optical_surface(core_name,   tail_b_name, "Polished")
-        sim.physics_manager.add_optical_surface(tail_b_name, core_name,   "Polished")
-
-    
+        # Core ↔ Tails (Axial surface boundary tracking)
+        if core_name in vols and tail_b_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
+            sim.physics_manager.add_optical_surface(tail_b_name, core_name, "Polished")
+        if core_name in vols and tail_f_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
+            sim.physics_manager.add_optical_surface(tail_f_name, core_name, "Polished")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS HOOKS
+# ANALYSIS HOOKS (Preserved intact)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def analyze(batch_dir, run_dirs, meta, utils):
