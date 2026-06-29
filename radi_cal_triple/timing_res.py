@@ -161,45 +161,45 @@ def run(batch_dir: Path):
     particle = np.concatenate(all_particle)
     
     # ─────────────────────────────────────────────────────────────────────────────
-    # DEBUGGING SUITE: WHERE IS THE DATA VANISHING?
+    # DEBUGGING SUITE (COMMENTED OUT TO ACCELERATE RUNTIME)
     # ─────────────────────────────────────────────────────────────────────────────
-    print("\n[DEBUG SET 1: RAW CONCATENATED SHAPES]")
-    print(f"  Raw event_id shape  : {event_id.shape}")
-    print(f"  Raw particle shape  : {particle.shape}")
-    if len(particle) > 0:
-        print(f"  Sample raw particle values: {particle[:5]}")
-        print(f"  Raw particle type          : {particle.dtype}")
+    # print("\n[DEBUG SET 1: RAW CONCATENATED SHAPES]")
+    # print(f"  Raw event_id shape  : {event_id.shape}")
+    # print(f"  Raw particle shape  : {particle.shape}")
+    # if len(particle) > 0:
+    #     print(f"  Sample raw particle values: {particle[:5]}")
+    #     print(f"  Raw particle type          : {particle.dtype}")
 
-    # 1. Optical Photon Masking
-    is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
-    print(f"\n[DEBUG SET 2: OPTICAL FILTERING]")
-    print(f"  True elements in is_optical mask: {np.sum(is_optical)}")
-    
-    event_id   = event_id[is_optical]
-    x_mm       = x_mm[is_optical]
-    y_mm       = y_mm[is_optical]
-    z_mm       = z_mm[is_optical]
-    time_ns    = time_ns[is_optical]
+    # # 1. Optical Photon Masking
+    # is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
+    # print(f"\n[DEBUG SET 2: OPTICAL FILTERING]")
+    # print(f"  True elements in is_optical mask: {np.sum(is_optical)}")
+    # 
+    # event_id   = event_id[is_optical]
+    # x_mm       = x_mm[is_optical]
+    # y_mm       = y_mm[is_optical]
+    # z_mm       = z_mm[is_optical]
+    # time_ns    = time_ns[is_optical]
 
-    # 2. Channel Assignment
-    channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm, y_mm, z_mm)])
-    print(f"\n[DEBUG SET 3: CHANNEL ASSIGNMENT]")
-    print(f"  Unique channels assigned before filter: {np.unique(channels)}")
-    print(f"  Count of channel values == -1         : {np.sum(channels == -1)}")
-    
-    on_sipm   = channels >= 0
-    print(f"  True elements in on_sipm mask         : {np.sum(on_sipm)}")
-    
-    event_id  = event_id[on_sipm]
-    time_ns   = time_ns[on_sipm]
-    channels  = channels[on_sipm]
+    # # 2. Channel Assignment
+    # channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm, y_mm, z_mm)])
+    # print(f"\n[DEBUG SET 3: CHANNEL ASSIGNMENT]")
+    # print(f"  Unique channels assigned before filter: {np.unique(channels)}")
+    # print(f"  Count of channel values == -1         : {np.sum(channels == -1)}")
+    # 
+    # on_sipm   = channels >= 0
+    # print(f"  True elements in on_sipm mask         : {np.sum(on_sipm)}")
+    # 
+    # event_id  = event_id[on_sipm]
+    # time_ns   = time_ns[on_sipm]
+    # channels  = channels[on_sipm]
 
-    unique_events = np.unique(event_id)
-    print(f"\n[DEBUG SET 4: FINAL CLEANED EVENTS]")
-    print(f"  Unique event count remaining: {len(unique_events)}")
-    if len(unique_events) > 0:
-        print(f"  Sample remaining unique event IDs: {unique_events[:5]}")
-    print("────────────────────────────────────────────────────────────\n")
+    # unique_events = np.unique(event_id)
+    # print(f"\n[DEBUG SET 4: FINAL CLEANED EVENTS]")
+    # print(f"  Unique event count remaining: {len(unique_events)}")
+    # if len(unique_events) > 0:
+    #     print(f"  Sample remaining unique event IDs: {unique_events[:5]}")
+    # print("────────────────────────────────────────────────────────────\n")
 
     # Clean byte/string comparison that bypasses the type-casting bug
     event_id = np.concatenate(all_event_id)
@@ -299,7 +299,6 @@ def run(batch_dir: Path):
         fontsize=13, fontweight="bold"
     )
 
-    # Modified third dictionary mapping to switch from Delta-t to the official BestMinus Resolution
     distributions = [
         {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
          "title": "Downstream T-Type Direct Time ($t_{DW}$)", "color": "royalblue"},
