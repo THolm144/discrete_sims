@@ -1,82 +1,88 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_sim.sh — OpenGATE Simulation Launcher for Iron-Quartz Array
+# run_sim.sh — OpenGATE Simulation Launcher (Optimized for 50-Core Parallelism)
 # ─────────────────────────────────────────────────────────────────────────────
 
-WORLD="quartz_cal"         # Target the NxN Quartz crystal / SiPM scanner array
-PARTICLE="proton"          # Primary beam particle type
-ENERGY_KEV=1000000000      # Beam energy in keV (1000000000 keV = 1 TeV)
-N_PARTICLES=100            # Total primary particles per run
+WORLD="quartz_cal"
+PARTICLE="proton"
+ENERGY_KEV=1000000000
+N_PARTICLES=100
 THREADS=8                 # CPU threads per run execution
-N_RUNS=5                   # Number of independent simulation runs per thickness
-BEAM_RADIUS=0.01           # Beam disc radius in cm
-OPTICAL="on"               # ENABLES full optical photon transportation tracking
-SIPM_HITS="on"             # ENABLES PhaseSpace tracking inside active SiPM volumes
-PHYSICS_LIST="QGSP_BERT_EMV" # Hadronic + standard EM physics base
+N_RUNS=5
+BEAM_RADIUS=0.01
+OPTICAL="on"
+SIPM_HITS="on"
+PHYSICS_LIST="QGSP_BERT_EMV"
 
-# --- Iron Thickness Loop Configurations ---
-IRON_START=1               # Starting thickness in cm
-IRON_END=70                # Ending thickness in cm
-IRON_STEP=1                # Step size in cm
+IRON_START=1
+IRON_END=70
+IRON_STEP=1
+
+# --- Parallelization Config ---
+MAX_CONCURRENT_SIMS=6     # 6 jobs * 8 threads = 48 cores used
+MAX_CONCURRENT_ANALYSIS=50 # Analysis is likely single-threaded, use all 50
 # ─────────────────────────────────────────────────────────────────────────────
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 MASTER_OUT_DIR="runs/${WORLD}/${ENERGY_KEV}keV_${TIMESTAMP}"
+SIM_JOBS_FILE="${MASTER_OUT_DIR}/jobs_sim.txt"
+ANALYSIS_JOBS_FILE="${MASTER_OUT_DIR}/jobs_analysis.txt"
+
+mkdir -p "$MASTER_OUT_DIR"
 
 echo "============================================================"
-echo " Launching Modular OpenGATE Simulation Stack (Parameter Sweep)"
+echo " Launching Parallel OpenGATE Simulation Stack"
 echo "============================================================"
 echo " Target Geometry   : ${WORLD}"
 echo " Iron Sweep        : ${IRON_START}cm to ${IRON_END}cm (Step: ${IRON_STEP}cm)"
 echo " Primaries/Run     : ${N_PARTICLES} (across ${THREADS} threads)"
 echo " Runs / Thickness  : ${N_RUNS}"
 echo " Master Batch Dir  : ${MASTER_OUT_DIR}"
+echo " Concurrent Sims   : ${MAX_CONCURRENT_SIMS} (Using ~48 cores)"
 echo "============================================================"
+echo " Building job queues..."
 
-# Outer loop: Iterate over iron thicknesses
+# 1. Build the Job Lists
 for IRON_CM in $(seq $IRON_START $IRON_STEP $IRON_END); do
-    
-    # Create a specific output directory for this thickness
     OUT_DIR="${MASTER_OUT_DIR}/iron_${IRON_CM}cm"
+    mkdir -p "$OUT_DIR"
     
-    echo ""
-    echo " ------------------------------------------------------------"
-    echo " [+] Starting Sweep Iteration: Iron Shield = ${IRON_CM} cm"
-    echo " ------------------------------------------------------------"
-
-    # Inner loop: Execute sequential runs with distinct random seeds
+    # Queue up simulations
     for i in $(seq 0 $((N_RUNS - 1))); do
-        echo "   -> Executing Run [${i}/${N_RUNS}] for ${IRON_CM}cm shield..."
-        python3 simulator.py \
-            --world       "$WORLD" \
-            --particle    "$PARTICLE" \
-            --energy-kev  $ENERGY_KEV \
-            --iron-cm     $IRON_CM \
-            --n           $N_PARTICLES \
-            --threads     $THREADS \
-            --beam-radius $BEAM_RADIUS \
-            --optical     "$OPTICAL" \
-            --sipm-hits   "$SIPM_HITS" \
-            --run-id      $i \
-            --physics-list "$PHYSICS_LIST" \
-            --output-dir  "$OUT_DIR"
+        echo "python3 simulator.py --world '$WORLD' --particle '$PARTICLE' --energy-kev $ENERGY_KEV --iron-cm $IRON_CM --n $N_PARTICLES --threads $THREADS --beam-radius $BEAM_RADIUS --optical '$OPTICAL' --sipm-hits '$SIPM_HITS' --run-id $i --physics-list '$PHYSICS_LIST' --output-dir '$OUT_DIR' > '$OUT_DIR/sim_log_${i}.txt' 2>&1" >> "$SIM_JOBS_FILE"
     done
 
-    echo "   -> Simulation runs for ${IRON_CM}cm complete. Running analysis..."
-
+    # Queue up analysis (these rely on the batch directory, so they run after sims)
+    ANALYSIS_CMD=""
     if [ -f "analyze.py" ]; then
-        python3 analyze.py --batch-dir "$OUT_DIR"
-    else
-        echo "   [INFO] analyze.py script not found. Skipping per-run analysis."
+        ANALYSIS_CMD="python3 analyze.py --batch-dir '$OUT_DIR'"
     fi
-
     if [ -f "plot_3d.py" ]; then
-        echo "   [INFO] Rendering 3D visualization primitives..."
-        python3 plot_3d.py --batch-dir "$OUT_DIR"
+        if [ -n "$ANALYSIS_CMD" ]; then ANALYSIS_CMD="$ANALYSIS_CMD && "; fi
+        ANALYSIS_CMD="${ANALYSIS_CMD}python3 plot_3d.py --batch-dir '$OUT_DIR'"
     fi
-
+    
+    if [ -n "$ANALYSIS_CMD" ]; then
+        echo "$ANALYSIS_CMD > '$OUT_DIR/analysis_log.txt' 2>&1" >> "$ANALYSIS_JOBS_FILE"
+    fi
 done
 
+# 2. Execute Simulations in Parallel
+echo " [+] Starting ${MAX_CONCURRENT_SIMS}-way parallel simulation phase..."
+# xargs reads the job file and runs MAX_CONCURRENT_SIMS in parallel
+xargs -a "$SIM_JOBS_FILE" -P $MAX_CONCURRENT_SIMS -I {} bash -c "{}"
+
+echo " [+] All simulations complete. Starting analysis phase..."
+
+# 3. Execute Per-Thickness Analysis in Parallel
+if [ -s "$ANALYSIS_JOBS_FILE" ]; then
+    echo " [+] Running per-thickness analysis (${MAX_CONCURRENT_ANALYSIS} concurrent)..."
+    xargs -a "$ANALYSIS_JOBS_FILE" -P $MAX_CONCURRENT_ANALYSIS -I {} bash -c "{}"
+else
+    echo " [INFO] No per-thickness analysis scripts found or queued."
+fi
+
+# 4. Final Cross-Sweep Analysis (must be sequential at the end)
 echo ""
 echo "============================================================"
 echo " Cross-Sweep Analysis"
@@ -86,7 +92,7 @@ if [ -f "thickness_analysis.py" ]; then
     echo " [INFO] Running cross-thickness hit analysis..."
     python3 thickness_analysis.py --master-dir "$MASTER_OUT_DIR"
 else
-    echo " [INFO] thickness_analysis.py not found. Skipping histogram generation."
+    echo " [INFO] thickness_analysis.py not found. Skipping."
 fi
 
 echo "============================================================"
