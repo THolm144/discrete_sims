@@ -16,7 +16,7 @@ PHYSICS_LIST="QGSP_BERT_EMV" # Hadronic + standard EM physics base
 
 # --- Iron Thickness Loop Configurations ---
 IRON_START=1               # Starting thickness in cm
-IRON_END=50                # Ending thickness in cm
+IRON_END=70                # Ending thickness in cm
 IRON_STEP=1                # Step size in cm
 # ─────────────────────────────────────────────────────────────────────────────
 
