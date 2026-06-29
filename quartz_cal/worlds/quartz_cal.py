@@ -95,15 +95,15 @@ def build_world(sim, units, n=DEFAULT_N, x_cm=DEFAULT_X_CM,
     Build the unified Dosimetry_Target containing the iron absorber and
     the NxN quartz/SiPM scanner array.
     """
-    # Update PHANTOM_CM for any runtime n/x_cm values
-    global PHANTOM_CM, ACTIVE_Z_RANGES_MM
+    # Update PHANTOM_CM and _D for any runtime n/x_cm values
+    global PHANTOM_CM, ACTIVE_Z_RANGES_MM, _D
     d = _derive(n, x_cm)
+    _D = d  # Overwrite global _D with the runtime-derived values
+    
     PHANTOM_CM = [d["array_mm"] / 10.0,
                   d["array_mm"] / 10.0,
                   d["total_z_mm"] / 10.0]
     ACTIVE_Z_RANGES_MM = [[0.0, d["total_z_mm"]]]
-
-   
 
     # ── Mother volume ──────────────────────────────────────────────────────
     target_z_center = d["total_z_mm"] / 2.0
@@ -149,8 +149,6 @@ def build_world(sim, units, n=DEFAULT_N, x_cm=DEFAULT_X_CM,
                       d["array_z_mm"] * units.mm]
 
     # MODERN REPEATER LOGIC:
-    # Instead of creating a separate repeater object, we apply grid replication
-    # coordinates straight to the container's translation property.
     pixel.translation = get_grid_repetition(
         [n, n, 1],
         [_PITCH_MM * units.mm, _PITCH_MM * units.mm, 0 * units.mm]

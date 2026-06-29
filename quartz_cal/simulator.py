@@ -48,6 +48,7 @@ def parse_args():
     p.add_argument("--optical",      choices=["on", "off", "world"],  default="world")
     p.add_argument("--dose",         choices=["on", "off", "world"],  default="world")
     p.add_argument("--sipm-hits",    choices=["on", "off", "world"],  default="world")
+    p.add_argument("--iron-cm", type=float, default=5.0, help="Iron shield thickness in cm")
     return p.parse_args()
 
 
@@ -212,7 +213,7 @@ def main():
     sim.output_dir = str(run_dir)
 
     units = gate.g4_units
-    world.build_world(sim, units)
+    world.build_world(sim, units, x_cm=args.iron_cm)
 
     target_vol = getattr(world, "TARGET_VOLUME_NAME", "target")
     actor_registry = wire_actors(sim, world, caps, run_dir, units)
