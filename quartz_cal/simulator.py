@@ -99,29 +99,10 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     target_vol       = getattr(world, "TARGET_VOLUME_NAME",    "target")
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
 
-    # ── NEW: OPTICAL TRACK LOGGING ACTOR ─────────────────────────────────────
-    if caps["optical"]:
-        # Stores step-by-step positions of photons anywhere inside the mother target volume
-        tracks = sim.add_actor("PhaseSpaceActor", "optical_tracks")
-        tracks.attached_to     = target_vol
-        tracks.output_filename = "optical_tracks.root"
-        tracks.steps_to_store  = "all"  # "all" saves every spatial step coordinate
-        tracks.attributes = [
-            "Position", "TrackID", "EventID", "ParticleName", "KineticEnergy"
-        ]
-        registry["track_actor"] = tracks
-        print("[SIM] Attached Step-by-Step Track Logging Actor.")
+    # ❌ REMOVED: Heavy step-by-step optical track logging
+    # ❌ REMOVED: Optical exits tracking
 
-    # ── Optical exits ─────────────────────────────────────────────────────
-    if caps["optical"] and caps.get("optical_exits", False):
-        exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
-        exited.attached_to     = target_vol
-        exited.output_filename = "optical_exited.root"
-        exited.steps_to_store  = "exiting"
-        exited.attributes = ["ParticleName", "KineticEnergy", "TrackCreatorProcess", "Position", "TrackID", "EventID", "GlobalTime"]
-        registry["optical_exited_actor"] = exited
-
-    # ── Per-detector hit actors ───────────────────────────────────────────
+    # ── Per-detector hit actors (Optimized for file size) ─────────────────
     if caps["sipm_hits"] and detector_volumes:
         for idx, vol_name in enumerate(detector_volumes):
             if vol_name not in sim.volume_manager.volumes: continue
@@ -130,10 +111,13 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             hits.authorize_repeated_volumes = True
             hits.output_filename = f"detector_hits_{idx}.root"
             hits.steps_to_store  = "entering"
-            hits.attributes = ["ParticleName", "KineticEnergy", "Position", "TrackCreatorProcess", "TrackID", "EventID"]
+            
+            # Bare minimum attributes kept to ensure accurate counts while saving space
+            hits.attributes = ["EventID"] 
+            
             registry["hit_actors"].append(hits)
 
-    # ── Dose actor ────────────────────────────────────────────────────────
+    # ── Dose actor (Kept as requested) ────────────────────────────────────
     if caps["dose"]:
         phantom_cm = world.PHANTOM_CM
         dose = _wire_standard_dose(sim, target_vol, phantom_cm, units)
