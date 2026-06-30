@@ -6,9 +6,9 @@
 WORLD="quartz_cal"
 PARTICLE="proton"
 ENERGY_KEV=1000000000
-N_PARTICLES=1
-THREADS=1                 # CPU threads per run execution
-N_RUNS=1
+N_PARTICLES=100
+THREADS=8                 # CPU threads per run execution
+N_RUNS=3
 BEAM_RADIUS=0.01
 OPTICAL="on"
 SIPM_HITS="on"
