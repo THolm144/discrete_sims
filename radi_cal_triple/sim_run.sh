@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 WORLD=radi_cal_triple
 PARTICLE=e-
-ENERGY_KEV=50000000
+ENERGY_KEV=150000000
 N_PARTICLES=5
 THREADS=1
 N_RUNS=60
