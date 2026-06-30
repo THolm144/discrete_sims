@@ -4,7 +4,6 @@ import time
 from pathlib import Path
 from collections import defaultdict
 from scipy.optimize import curve_fit
-from scipy.special import erf
 from scipy.ndimage import gaussian_filter1d
 import numpy as np
 import uproot
@@ -38,14 +37,13 @@ MIN_PHOTONS_PER_FACE = 1
 # ─────────────────────────────────────────────────────────────────────────────
 # FITTING & CLEANING
 # ─────────────────────────────────────────────────────────────────────────────
-def skewed_gaussian(x, A, mu, sigma, alpha):
-    gauss = np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-    skew  = 1.0 + erf(alpha * (x - mu) / (sigma * np.sqrt(2)))
-    return A * gauss * skew
+def standard_gaussian(x, A, mu, sigma):
+    """Standard symmetric Gaussian distribution."""
+    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 def fit_gaussian_to_peak(data, n_bins=50):
     if len(data) < 8:
-        return 0.0, float(np.median(data)), float(np.std(data)), np.nan, 0.0
+        return 0.0, float(np.median(data)), float(np.std(data)), np.nan
 
     q75, q25  = np.percentile(data, [75, 25])
     iqr_sigma = max((q75 - q25) / 1.349, 1.0)
@@ -61,39 +59,38 @@ def fit_gaussian_to_peak(data, n_bins=50):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    # NEW MASKING: Focus strictly on the core by requiring bins to have at least 15% of peak amplitude
-    # This naturally chops off the wide, flat shoulders from confusing the fitter
+    # Focus strictly on the core by requiring bins to have at least 15% of peak amplitude
     fit_mask = (counts > A0 * 0.15) & (np.abs(mids - mu0) < 1.5 * iqr_sigma)
     
     # Fallback to IQR if the peak is extremely sparse
     if fit_mask.sum() < 4:
         fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
         if fit_mask.sum() < 4:
-            return A0, mu0, iqr_sigma, np.nan, 0.0
+            return A0, mu0, iqr_sigma, np.nan
 
     try:
         popt, pcov = curve_fit(
-            skewed_gaussian,
+            standard_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.7, 0.0],
+            p0=[A0, mu0, iqr_sigma * 0.7],
             bounds=(
-                [0.5, mu0 - iqr_sigma, 1.0, -10.0],
-                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0, 10.0]
+                [0.5, mu0 - iqr_sigma, 1.0],
+                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
             ),
             method='trf',    # Required to use robust loss functions
             loss='soft_l1',  # Down-weights outliers (the "chunky shoulders")
             maxfev=10000,
         )
-        A_fit, mu_fit, sig_fit, alpha_fit = popt
+        A_fit, mu_fit, sig_fit = popt
         perr = np.sqrt(np.diag(pcov))
         
         # Catch any lingering infinity errors from poor convergence
         if np.isinf(perr[2]) or np.isnan(perr[2]):
             perr[2] = iqr_sigma * 0.1 
             
-        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), float(alpha_fit)
+        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2])
     except Exception:
-        return A0, mu0, iqr_sigma, np.nan, 0.0
+        return A0, mu0, iqr_sigma, np.nan
 
 def clean_around_mode(arr, window_ps=60.0):
     if len(arr) == 0:
@@ -275,25 +272,25 @@ def run(batch_dir: Path):
     clean_dt = clean_around_mode(delta_t_ps,    window_ps=200.0)
     clean_bm = clean_around_mode(best_minus_ps, window_ps=100.0)
 
-    bm_amp, bm_mu, bm_sigma, bm_sigma_err, bm_alpha = fit_gaussian_to_peak(clean_bm)
-    dw_amp, dw_mu, dw_sigma, dw_sigma_err, dw_alpha = fit_gaussian_to_peak(clean_dw)
-    up_amp, up_mu, up_sigma, up_sigma_err, up_alpha = fit_gaussian_to_peak(clean_up)
-    dt_amp, dt_mu, dt_sigma, dt_sigma_err, dt_alpha = fit_gaussian_to_peak(clean_dt)
+    bm_amp, bm_mu, bm_sigma, bm_sigma_err = fit_gaussian_to_peak(clean_bm)
+    dw_amp, dw_mu, dw_sigma, dw_sigma_err = fit_gaussian_to_peak(clean_dw)
+    up_amp, up_mu, up_sigma, up_sigma_err = fit_gaussian_to_peak(clean_up)
+    dt_amp, dt_mu, dt_sigma, dt_sigma_err = fit_gaussian_to_peak(clean_dt)
 
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
     energy_label = batch_dir.name
     fig.suptitle(
         f"Direct LocalTime Distributions for {energy_label} (Pure T-Type Filaments)\n"
-        f"Gaussian peak fit  |  Q={ARRIVAL_QUANTILE:.2f} arrival marker  |  min {MIN_PHOTONS_PER_FACE} photons/face",
+        f"Standard Gaussian core fit  |  Q={ARRIVAL_QUANTILE:.2f} arrival marker  |  min {MIN_PHOTONS_PER_FACE} photons/face",
         fontsize=13, fontweight="bold"
     )
 
     distributions = [
-        {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
+        {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err,
          "title": "Downstream T-Type Direct Time ($t_{DW}$)", "color": "royalblue"},
-        {"data": clean_up, "amp": up_amp, "mu": up_mu, "sigma": up_sigma, "sigma_err": up_sigma_err, "alpha": up_alpha,
+        {"data": clean_up, "amp": up_amp, "mu": up_mu, "sigma": up_sigma, "sigma_err": up_sigma_err,
          "title": "Upstream T-Type Direct Time ($t_{UP}$)",   "color": "crimson"},
-        {"data": clean_bm, "amp": bm_amp, "mu": bm_mu, "sigma": bm_sigma, "sigma_err": bm_sigma_err, "alpha": bm_alpha,
+        {"data": clean_bm, "amp": bm_amp, "mu": bm_mu, "sigma": bm_sigma, "sigma_err": bm_sigma_err,
          "title": "BestMinus Timing Resolution $(t_{DW} - t_{UP})/2$", "color": "darkorchid"},
     ]
 
@@ -320,7 +317,7 @@ def run(batch_dir: Path):
 
         x_fit     = np.linspace(lo, hi, 5000)
         amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
-        y_fit = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
+        y_fit = standard_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"])
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
