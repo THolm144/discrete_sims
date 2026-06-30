@@ -139,25 +139,16 @@ def _build_capillaries(sim, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
 
         if i in _E_TYPE_INDICES:
-            # 1. Active BCF-92 core — full calorimeter length
+            # 1. Active BCF-92 core — full calorimeter length, full rod radius (no cladding)
             core             = sim.add_volume("Tubs", f"cap_{i}_active_core")
             core.mother      = "world"
             core.rmin        = 0.0
-            core.rmax        = _FILAMENT_R_MM * mm
+            core.rmax        = _CAP_OUTER_MM * mm
             core.dz          = half_calor
             core.translation = [cx * mm, cy * mm, 0]
             core.material    = "BCF92"
 
-            # 2. Quartz cladding annulus — active region
-            clad             = sim.add_volume("Tubs", f"cap_{i}_clad")
-            clad.mother      = "world"
-            clad.rmin        = _FILAMENT_R_MM * mm
-            clad.rmax        = _CAP_OUTER_MM * mm
-            clad.dz          = half_calor
-            clad.translation = [cx * mm, cy * mm, 0]
-            clad.material    = "G4_SILICON_DIOXIDE"
-
-            # 3. Upstream and Downstream tails (Correct half-lengths)
+            # 2. Upstream and Downstream tails
             half_tail_len = (half_cap - half_calor) / 2  
 
             z_pos_front = -(half_calor + half_tail_len)
@@ -319,24 +310,9 @@ def add_optical_surfaces(sim, units):
     # Fixed scoping bug: Loop over E-type indices so both sets receive surfaces
     for cap_idx in _E_TYPE_INDICES:
         core_name   = f"cap_{cap_idx}_active_core"
-        clad_name   = f"cap_{cap_idx}_clad"
         tail_b_name = f"cap_{cap_idx}_tail_back"
         tail_f_name = f"cap_{cap_idx}_tail_front"
 
-        # BCF-92 core ↔ quartz cladding
-        if core_name in vols and clad_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, clad_name, "Polished")
-            sim.physics_manager.add_optical_surface(clad_name, core_name, "Polished")
-
-        # Cladding ↔ Tails (Front & Back)
-        if clad_name in vols and tail_b_name in vols:
-            sim.physics_manager.add_optical_surface(clad_name, tail_b_name, "Polished")
-            sim.physics_manager.add_optical_surface(tail_b_name, clad_name, "Polished")
-        if clad_name in vols and tail_f_name in vols:
-            sim.physics_manager.add_optical_surface(clad_name, tail_f_name, "Polished")
-            sim.physics_manager.add_optical_surface(tail_f_name, clad_name, "Polished")
-
-        # Core ↔ Tails (Axial surface boundary tracking)
         if core_name in vols and tail_b_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
             sim.physics_manager.add_optical_surface(tail_b_name, core_name, "Polished")
