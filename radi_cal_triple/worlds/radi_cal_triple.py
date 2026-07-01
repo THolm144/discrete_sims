@@ -47,11 +47,9 @@ _LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
 _FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
 _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
 
-# Calculate the boundaries of the band to find its exact center
 _BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
 _BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
 
-# Hardcode the shrunk length while keeping it centered in the band
 _FILAMENT_LEN_MM = 14.0             
 _FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5 * (_BAND_FRONT_MM + _BAND_BACK_MM)
 
@@ -140,23 +138,23 @@ def _build_capillaries(sim, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
 
         if i in _E_TYPE_INDICES:
-            # FIX: Restored the physical core-cladding structure for E-type lines
-            # 1. Active Quartz Cladding Sleeve (within calorimeter core boundary)
+            # FIX: Eliminated tracking exceptions by changing the layout to a solid parent rod
+            # 1. Outer Active Quartz Cladding Sleeve (Now solid from 0 to rmax)
             sleeve             = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
             sleeve.mother      = "world"
-            sleeve.rmin        = _FILAMENT_R_MM * mm
+            sleeve.rmin        = 0.0
             sleeve.rmax        = _CAP_OUTER_MM * mm
             sleeve.dz          = half_calor
             sleeve.translation = [cx * mm, cy * mm, 0]
             sleeve.material    = "G4_SILICON_DIOXIDE"
 
-            # 2. Continuous active core filament nested cleanly inside the sleeve
+            # 2. Continuous active core filament (Nested directly as a daughter of the sleeve)
             core             = sim.add_volume("Tubs", f"cap_{i}_active_core")
-            core.mother      = "world"
+            core.mother      = f"cap_{i}_active_sleeve"
             core.rmin        = 0.0
             core.rmax        = _FILAMENT_R_MM * mm
             core.dz          = half_calor
-            core.translation = [cx * mm, cy * mm, 0]
+            core.translation = [0, 0, 0]  # Local positioning centered inside parent
             core.material    = "BCF92"
 
             # 3. Upstream and Downstream tails
@@ -217,11 +215,9 @@ def _build_sipms(sim, mm):
         z_sipm = sgn * _SIPM_Z_MM * mm
         z_card = sgn * _CARD_Z_MM * mm
 
-        # 1. Base card volume
         card_vol = vol_module.BoxVolume(name=f"card_{end_name}_box")
         card_vol.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
         
-        # 2. Drill 4 off-center clearance holes
         for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
             card_hole       = vol_module.TubsVolume(name=f"card_{end_name}_hole_{i}")
             card_hole.rmin  = 0.0
@@ -239,7 +235,6 @@ def _build_sipms(sim, mm):
         card_vol.translation = [0, 0, z_card]
         sim.add_volume(card_vol)
 
-        # 3. Uniformly deploy all 4 SiPM tiles per end face
         for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
             sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
             sipm.mother      = "world"
@@ -314,11 +309,10 @@ def add_optical_surfaces(sim, units):
     for i in range(_N_LYSO):
         lyso_name = f"lyso_{i}"
         gap_name  = f"gap_{i}"
-        if lyso_name in vols and gap_name in vols:
+        if lyso_name in vALOR_NAME and gap_name in vols:
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
-    # FIX: Added missing Core-to-Sleeve tracking for complete internal reflection boundaries
     for cap_idx in _E_TYPE_INDICES:
         core_name   = f"cap_{cap_idx}_active_core"
         sleeve_name = f"cap_{cap_idx}_active_sleeve"
@@ -335,7 +329,6 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
             sim.physics_manager.add_optical_surface(tail_f_name, core_name, "Polished")
 
-    # FIX: Added missing boundary logic tracking the T-Type filament-to-quartz-rod transition
     for cap_idx in _T_TYPE_INDICES:
         rod_name  = f"cap_{cap_idx}"
         plug_name = f"cap_{cap_idx}_filament"
@@ -354,17 +347,17 @@ def analyze(batch_dir, run_dirs, meta, utils):
     hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
     exits_files = [d / "optical_exited.root" for d in run_dirs]
 
-    # FIX: Guard empty batch configurations against crashing
     hits       = utils.analyse_hits(hits_files) if hits_files else {}
     exits      = utils.analyse_exits(exits_files) if exits_files else {}
     timing_res = (utils.extract_timing_resolution(
                       hits_files, threshold_photon=TIMING_TRIGGER_THRESHOLD)
                   if hits_files else 0.0)
 
+    # FIX: Generalized globs with wildcards so that changes to the world string don't drop files
     long_arr, trans_arr = utils.load_calorimeter_mhd(
         run_dirs,
-        long_glob="run_Dose_edep.mhd",
-        trans_glob="transverse_shower_max_edep.mhd",
+        long_glob="*Dose_edep.mhd",
+        trans_glob="*shower_max_edep.mhd",
     )
     _aggregate_batch(batch_dir, run_dirs, meta, utils)
 
@@ -399,8 +392,28 @@ def analyze(batch_dir, run_dirs, meta, utils):
         plt.close(fig)
         plots_saved.append(out.name)
 
-    up_hits = sum(hits.get(k, 0) for k in hits if "sipm_front" in k)
-    dn_hits = sum(hits.get(k, 0) for k in hits if "sipm_back"  in k)
+    # FIX: Parsed hit counters using a dynamic mapping conversion rule
+    up_hits = 0
+    dn_hits = 0
+    for k, val in hits.items():
+        vol_name = None
+        if str(k).isdigit() and int(k) < len(DETECTOR_VOLUME_NAMES):
+            vol_name = DETECTOR_VOLUME_NAMES[int(k)]
+        elif "detector_hits_" in str(k):
+            try:
+                idx = int(str(k).split("_")[-1].split(".")[0])
+                if idx < len(DETECTOR_VOLUME_NAMES):
+                    vol_name = DETECTOR_VOLUME_NAMES[idx]
+            except ValueError:
+                vol_name = str(k)
+        else:
+            vol_name = str(k)
+
+        if vol_name and "sipm_front" in vol_name:
+            up_hits += val
+        elif vol_name and "sipm_back" in vol_name:
+            dn_hits += val
+
     extra_lines += [
         f"  Upstream SiPM hits:   {up_hits:,}",
         f"  Downstream SiPM hits: {dn_hits:,}",
