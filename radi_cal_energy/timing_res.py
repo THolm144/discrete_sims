@@ -295,7 +295,7 @@ def run(batch_dir: Path):
 
         x_fit     = np.linspace(lo, hi, 5000)
         amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
-        y_fit     = standard_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
+        y_fit     = standard_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"])
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
