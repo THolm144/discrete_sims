@@ -49,12 +49,10 @@ def assign_channel(x_mm, y_mm, z_mm):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SKEWED GAUSSIAN FITTER
+#  GAUSSIAN FITTER
 # ─────────────────────────────────────────────────────────────────────────────
-def skewed_gaussian(x, A, mu, sigma, alpha):
-    gauss = np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-    skew  = 1.0 + erf(alpha * (x - mu) / (sigma * np.sqrt(2)))
-    return A * gauss * skew
+def standard_gaussian(x, A, mu, sigma):
+    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
 def fit_gaussian_to_peak(data, n_bins=40):
@@ -82,18 +80,20 @@ def fit_gaussian_to_peak(data, n_bins=40):
 
     try:
         popt, pcov = curve_fit(
-            skewed_gaussian,
+            standard_gaussian,  # Use the new function
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.8, 0.0],
+            p0=[A0, mu0, iqr_sigma * 0.8],  # Removed alpha initial guess
             bounds=(
-                [0.5, mu0 - iqr_sigma, 2.0, -10.0],
-                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0, 10.0]
+                [0.5, mu0 - iqr_sigma, 2.0],        # Lower bounds (removed alpha)
+                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]  # Upper bounds (removed alpha)
             ),
             maxfev=10000,
         )
-        A_fit, mu_fit, sig_fit, alpha_fit = popt
+        A_fit, mu_fit, sig_fit = popt
         perr = np.sqrt(np.diag(pcov))
-        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), float(alpha_fit)
+        
+        # Return 0.0 for alpha and its error to keep compatibility with the rest of your script
+        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), 0.0
     except Exception:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
@@ -294,7 +294,7 @@ def run(batch_dir: Path):
 
         x_fit     = np.linspace(lo, hi, 5000)
         amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
-        y_fit     = skewed_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
+        y_fit     = standard_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"], dist["alpha"])
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
