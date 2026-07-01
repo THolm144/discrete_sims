@@ -73,6 +73,7 @@ _CAP_POSITIONS_MM = [
     [ _HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 3 — E-type (Bottom-Right)
 ]
 _E_TYPE_INDICES  = {2, 3}
+_T_TYPE_INDICES  = {0, 1}
 
 PHANTOM_CM       = [_CALOR_XY_MM/10, _CALOR_XY_MM/10, _CALOR_THICK_MM/10]
 EXPECTED_DEDX    = 1.0
@@ -139,16 +140,26 @@ def _build_capillaries(sim, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
 
         if i in _E_TYPE_INDICES:
-            # 1. Active BCF-92 core — full calorimeter length, full rod radius (no cladding)
+            # FIX: Restored the physical core-cladding structure for E-type lines
+            # 1. Active Quartz Cladding Sleeve (within calorimeter core boundary)
+            sleeve             = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
+            sleeve.mother      = "world"
+            sleeve.rmin        = _FILAMENT_R_MM * mm
+            sleeve.rmax        = _CAP_OUTER_MM * mm
+            sleeve.dz          = half_calor
+            sleeve.translation = [cx * mm, cy * mm, 0]
+            sleeve.material    = "G4_SILICON_DIOXIDE"
+
+            # 2. Continuous active core filament nested cleanly inside the sleeve
             core             = sim.add_volume("Tubs", f"cap_{i}_active_core")
             core.mother      = "world"
             core.rmin        = 0.0
-            core.rmax        = _CAP_OUTER_MM * mm
+            core.rmax        = _FILAMENT_R_MM * mm
             core.dz          = half_calor
             core.translation = [cx * mm, cy * mm, 0]
             core.material    = "BCF92"
 
-            # 2. Upstream and Downstream tails
+            # 3. Upstream and Downstream tails
             half_tail_len = (half_cap - half_calor) / 2  
 
             z_pos_front = -(half_calor + half_tail_len)
@@ -170,7 +181,7 @@ def _build_capillaries(sim, mm):
             tail_b.material    = "G4_SILICON_DIOXIDE"
 
         else:
-            # ── T-TYPE ────────────────
+            # ── T-TYPE ──
             rod_base      = vol_module.TubsVolume(name=f"cap_{i}_rod")
             rod_base.rmin = 0.0
             rod_base.rmax = _CAP_OUTER_MM * mm
@@ -307,12 +318,16 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
-    # Fixed scoping bug: Loop over E-type indices so both sets receive surfaces
+    # FIX: Added missing Core-to-Sleeve tracking for complete internal reflection boundaries
     for cap_idx in _E_TYPE_INDICES:
         core_name   = f"cap_{cap_idx}_active_core"
+        sleeve_name = f"cap_{cap_idx}_active_sleeve"
         tail_b_name = f"cap_{cap_idx}_tail_back"
         tail_f_name = f"cap_{cap_idx}_tail_front"
 
+        if core_name in vols and sleeve_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, sleeve_name, "Polished")
+            sim.physics_manager.add_optical_surface(sleeve_name, core_name, "Polished")
         if core_name in vols and tail_b_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
             sim.physics_manager.add_optical_surface(tail_b_name, core_name, "Polished")
@@ -320,9 +335,17 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
             sim.physics_manager.add_optical_surface(tail_f_name, core_name, "Polished")
 
+    # FIX: Added missing boundary logic tracking the T-Type filament-to-quartz-rod transition
+    for cap_idx in _T_TYPE_INDICES:
+        rod_name  = f"cap_{cap_idx}"
+        plug_name = f"cap_{cap_idx}_filament"
+        if rod_name in vols and plug_name in vols:
+            sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
+            sim.physics_manager.add_optical_surface(rod_name, plug_name, "Polished")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS HOOKS (Preserved intact)
+# ANALYSIS HOOKS
 # ─────────────────────────────────────────────────────────────────────────────
 
 def analyze(batch_dir, run_dirs, meta, utils):
@@ -331,8 +354,9 @@ def analyze(batch_dir, run_dirs, meta, utils):
     hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
     exits_files = [d / "optical_exited.root" for d in run_dirs]
 
-    hits       = utils.analyse_hits(hits_files)
-    exits      = utils.analyse_exits(exits_files)
+    # FIX: Guard empty batch configurations against crashing
+    hits       = utils.analyse_hits(hits_files) if hits_files else {}
+    exits      = utils.analyse_exits(exits_files) if exits_files else {}
     timing_res = (utils.extract_timing_resolution(
                       hits_files, threshold_photon=TIMING_TRIGGER_THRESHOLD)
                   if hits_files else 0.0)

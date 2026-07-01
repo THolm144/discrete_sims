@@ -1,22 +1,45 @@
-import argparse
-from pathlib import Path
-import warnings
+"""
+worlds/radi_cal_energy.py
+=========================
+RADiCAL Shashlik calorimeter — energy-measurement variant.
+
+Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
+        LYSO | W | LYSO | W | … | W | LYSO   (125.29 mm total)
+
+Capillaries (4, no central hole):
+    T-type (indices 0, 1) — diagonal pair:
+        Quartz rod (Ø1.15 mm, 183 mm) with a short bore at shower-max
+        (LYSO layers 8–11) holding a BCF-92 WLS filament (Ø0.90 mm, ~15 mm).
+        Quartz rod fills both arms above and below the filament.
+
+    E-type (indices 2, 3) — kitty-corner pair:
+        Quartz sleeve (Ø1.15 mm outer) with a continuous BCF-92 WLS 
+        filament (Ø0.90 mm inner) running the full length.
+
+SiPMs:  8 active silicon tiles (4 front, 4 back) + 2 FR4 readout cards.
+"""
+
 import numpy as np
-import uproot
-import matplotlib.pyplot as plt
-from scipy.stats import gaussian_kde
-from scipy.optimize import curve_fit
-from scipy.ndimage import gaussian_filter1d
-
-try:
-    import analysis_utils as utils
-except ImportError:
-    print("WARNING: Could not import 'utils'. Ensure this script is run from the OpenGATE sim directory.")
-    utils = None
+import opengate.geometry.volumes as vol_module
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY CONSTANTS (Synchronized with worlds/radi_cal_energy.py)
+# SIMULATOR CONTRACT
 # ─────────────────────────────────────────────────────────────────────────────
+
+CAPABILITIES = {
+    "optical":          True,
+    "dose":              True,
+    "sipm_hits":        True,
+    "optical_exits":    True,
+    "calorimeter_mode": True,
+}
+
+TARGET_VOLUME_NAME = "calorimeter"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GEOMETRY CONSTANTS
+# ─────────────────────────────────────────────────────────────────────────────
+
 _LYSO_XY_MM      = 14.0
 _LYSO_THICK_MM   = 1.5
 _TYVEK_THICK_MM  = 0.008 * 25.4           # 0.2032 mm
@@ -28,280 +51,410 @@ _GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   # 1.9064 mm
 _CALOR_XY_MM     = _LYSO_XY_MM    + 2 * _TYVEK_THICK_MM   # 14.4064 mm
 _CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 125.2856 mm
 
-# Average distance between consecutive LYSO layer centers
-_LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM            # 4.4064 mm  
-
+_CAP_OUTER_MM    = 1.150 / 2              # 0.575 mm  — quartz rod outer radius
+_CAP_INNER_MM    = 0.950 / 2              # 0.475 mm  — inner bore radius
 _CAP_LENGTH_MM   = 183.0
+_HOLE_INSET_MM   = 3.5
+_HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM      # 3.7032 mm
+
+_FILAMENT_R_MM   = 0.900 / 2              # 0.45 mm   — BCF-92 filament radius
+
+# ── Shower-max band (T-type bore region) ──────────────────────────────────────
+_SHOWER_FIRST    = 8                      # first LYSO layer index (0-based)
+_SHOWER_LAST     = 11                     # last  LYSO layer index (0-based)
+_LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
+_FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
+_LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
+_BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
+_BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
+_FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             # ~15.13 mm
+_FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5*(_BAND_FRONT_MM + _BAND_BACK_MM)
+
+# ── SiPM / card geometry ─────────────────────────────────────────────────────
+_SIPM_XY_MM      = 1.2
 _SIPM_THICK_MM   = 0.3
-# z-coordinate of the SiPM face centers (±, symmetric about origin)
-_Z_SENSOR_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2   # 91.65 mm
+_CARD_THICK_MM   = 1.6
+_CARD_HOLE_R_MM  = 2.0
+_SIPM_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM/2
+_CARD_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM + 0.1 + _CARD_THICK_MM/2
 
-# ─────────────────────────────────────────────────────────────────────────────
-# OPTICAL KINEMATICS
-# ─────────────────────────────────────────────────────────────────────────────
-C_LIGHT_MM_NS    = 299.792
-REFRACTIVE_INDEX = 1.60                          # BCF-92 core index
-V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR    = 0.92                          # Accounts for TIR zig-zag pathing
-V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
+_WORLD_XY_MM     = 1.5 * _CALOR_XY_MM
+_WORLD_Z_MM      = 1.5 * max(_CAP_LENGTH_MM, _CALOR_THICK_MM)
 
-# GlobalTime acceptance window for prompt tracking photons
-_GT_LO_NS = 0.25   
-_GT_HI_NS = 1.5    
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CAPILLARY XY POSITIONS (True Diagonal / Kitty-Corner Setup)
-# ─────────────────────────────────────────────────────────────────────────────
-_HOLE_OFFSET_MM  = 3.7032
-CAP_XY_MM = np.array([
+_CAP_POSITIONS_MM = [
     [ _HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 0 — T-type (Top-Right)
     [-_HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 1 — T-type (Bottom-Left)
     [-_HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 2 — E-type (Top-Left)
     [ _HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 3 — E-type (Bottom-Right)
-])
-_T_TYPE_INDICES  = {0, 1}
+]
 _E_TYPE_INDICES  = {2, 3}
-_SIPM_Z_TOL_MM   = 2.0
+_T_TYPE_INDICES  = {0, 1}
 
-# TIMING RESOLUTION EXTRACTION PARAMETERS
-ARRIVAL_QUANTILE     = 0.10
-MIN_PHOTONS_PER_FACE = 1
+# ── Simulator metadata ────────────────────────────────────────────────────────
+PHANTOM_CM       = [_CALOR_XY_MM/10, _CALOR_XY_MM/10, _CALOR_THICK_MM/10]
+EXPECTED_DEDX    = 1.0
+ACTIVATE_CALORIMETER_SETTINGS = True
+CALORIMETER_Z_RES_MM  = 0.1
+ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
+TIMING_TRIGGER_THRESHOLD = 1
+
+# FIX: Removed duplicate strings. Matches exactly the 8 physical SiPM volumes instantiated.
+DETECTOR_VOLUME_NAMES = [
+    "sipm_front_0", "sipm_front_1", "sipm_front_2", "sipm_front_3",
+    "sipm_back_0",  "sipm_back_1",  "sipm_back_2",  "sipm_back_3",
+]
+
+BEAM_CONFIG = {
+    "direction": [0, 0, 1],
+    "target_cm": [0, 0, 0],
+    "offset_cm": _SIPM_Z_MM/10 + 2.0,
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HELPERS (Geometry & Simulation Truth)
+# GEOMETRY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
-def get_lyso_layer_bounds():
-    bounds = []
-    current_z = -_CALOR_THICK_MM / 2
-    for idx in range(_N_LYSO):
-        z_start = current_z + _TYVEK_THICK_MM
-        z_end   = z_start + _LYSO_THICK_MM
-        bounds.append((z_start, z_end))
-        current_z += _GAP_THICK_MM + (_W_THICK_MM if idx < _N_W else 0)
-    return bounds
 
-def assign_channel(x_mm, y_mm):
-    dists = np.hypot(CAP_XY_MM[:, 0, None] - x_mm, CAP_XY_MM[:, 1, None] - y_mm)
-    return np.argmin(dists, axis=0)
-
-def load_truth_dose_from_mhd(run_dirs: list):
-    if not utils: return None
-    try:
-        long_arr, _ = utils.load_calorimeter_mhd(
-            run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd"
+def _drill_holes(base_vol, name, half_dz_mm, mm):
+    bore_dz = (half_dz_mm + 0.1) * mm
+    result   = base_vol
+    for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
+        bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
+        bore.rmin = 0.0
+        bore.rmax = _CAP_OUTER_MM * mm
+        bore.dz   = bore_dz
+        result    = vol_module.subtract_volumes(
+            result, bore,
+            translation=[cx * mm, cy * mm, 0],
+            new_name=f"{name}_sub{i}",
         )
-        if long_arr is None: return None
-        dz_mm, avg = 0.1, long_arr / max(len(run_dirs), 1)
-        layer_edeps = []
-        for (z_start, z_end) in get_lyso_layer_bounds():
-            z_offset_start = z_start - (-_CALOR_THICK_MM / 2)
-            z_offset_end   = z_end   - (-_CALOR_THICK_MM / 2)
-            i0 = max(0, min(int(round(z_offset_start / dz_mm)), len(avg)))
-            i1 = max(0, min(int(round(z_offset_end   / dz_mm)), len(avg)))
-            layer_edeps.append(float(np.sum(avg[i0:i1])))
-        return np.array(layer_edeps)
-    except Exception:
-        return None
+    return result
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS (Robust Timing Peak Fitting)
-# ─────────────────────────────────────────────────────────────────────────────
-def standard_gaussian(x, A, mu, sigma):
-    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+def _make_gap(name, mm):
+    base      = vol_module.BoxVolume(name=f"{name}_box")
+    base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _GAP_THICK_MM * mm]
+    return _drill_holes(base, name, _GAP_THICK_MM/2, mm)
 
-def fit_gaussian_to_peak(data, n_bins=50):
-    if len(data) < 8: return 0.0, float(np.median(data)), float(np.std(data))
-    q75, q25  = np.percentile(data, [75, 25])
-    iqr_sigma = max((q75 - q25) / 1.349, 1.0)
-    center    = np.median(data)
-    lo, hi    = center - 3.0 * iqr_sigma, center + 3.0 * iqr_sigma
+def _make_lyso(name, mm):
+    base      = vol_module.BoxVolume(name=f"{name}_box")
+    base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, _LYSO_THICK_MM * mm]
+    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm)
 
-    counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
-    mids = 0.5 * (edges[:-1] + edges[1:])
-    smoothed  = gaussian_filter1d(counts.astype(float), sigma=2.0)
-    peak_idx  = int(np.argmax(smoothed))
-    mu0, A0   = float(mids[peak_idx]), float(smoothed[peak_idx])
+def _make_abso(name, mm):
+    base      = vol_module.BoxVolume(name=f"{name}_box")
+    base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _W_THICK_MM * mm]
+    return _drill_holes(base, name, _W_THICK_MM/2, mm)
 
-    fit_mask = (counts > A0 * 0.15) & (np.abs(mids - mu0) < 1.5 * iqr_sigma)
-    if fit_mask.sum() < 4:
-        fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
-        if fit_mask.sum() < 4: return A0, mu0, iqr_sigma
+def _build_capillaries(sim, mm):
+    half_cap   = _CAP_LENGTH_MM / 2 * mm
+    half_calor = _CALOR_THICK_MM / 2 * mm
 
-    try:
-        popt, _ = curve_fit(
-            standard_gaussian, mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.7],
-            bounds=([0.5, mu0 - iqr_sigma, 1.0], [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]),
-            method='trf', loss='soft_l1', maxfev=10000
-        )
-        return float(popt[0]), float(popt[1]), float(popt[2])
-    except Exception:
-        return A0, mu0, iqr_sigma
+    for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
+        if i in _E_TYPE_INDICES:
+            # FIX: Restored the proper physical cladding layer layout for E-Types.
+            # Active Quartz Cladding Sleeve (spanning calorimeter thickness)
+            sleeve = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
+            sleeve.mother      = "world"
+            sleeve.rmin        = _FILAMENT_R_MM * mm
+            sleeve.rmax        = _CAP_OUTER_MM * mm     
+            sleeve.dz          = half_calor             
+            sleeve.translation = [cx * mm, cy * mm, 0]
+            sleeve.material    = "G4_SILICON_DIOXIDE"
 
-def clean_around_mode(arr, window_ps=60.0):
-    if len(arr) == 0: return arr
-    counts, edges = np.histogram(arr, bins=40)
-    peak_bin      = np.argmax(gaussian_filter1d(counts.astype(float), sigma=2.0))
-    mode_center   = 0.5 * (edges[peak_bin] + edges[peak_bin + 1])
-    return arr[np.abs(arr - mode_center) < window_ps]
+            # Continuous active core filament inside the sleeve
+            core = sim.add_volume("Tubs", f"cap_{i}_active_core")
+            core.mother        = "world"
+            core.rmin          = 0.0
+            core.rmax          = _FILAMENT_R_MM * mm
+            core.dz            = half_calor
+            core.translation   = [cx * mm, cy * mm, 0]
+            core.material      = "BCF92"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# EXECUTION PIPELINE
-# ─────────────────────────────────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--batch-dir", required=True, type=str)
-    args = parser.parse_args()
+            # Upstream/Downstream Passive Quartz Extensions
+            tail_len_z       = (half_cap - half_calor)
+            z_pos_front      = -(half_calor + tail_len_z / 2)
+            tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
+            tail_f.mother      = "world"
+            tail_f.rmin        = 0.0
+            tail_f.rmax        = _CAP_OUTER_MM * mm
+            tail_f.dz          = tail_len_z / 2
+            tail_f.translation = [cx * mm, cy * mm, z_pos_front]
+            tail_f.material    = "G4_SILICON_DIOXIDE"
 
-    batch_dir   = Path(args.batch_dir)
-    lyso_bounds = get_lyso_layer_bounds()
-    calor_half_mm = _CALOR_THICK_MM / 2
+            z_pos_back       = (half_calor + tail_len_z / 2)
+            tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
+            tail_b.mother      = "world"
+            tail_b.rmin        = 0.0
+            tail_b.rmax        = _CAP_OUTER_MM * mm
+            tail_b.dz          = tail_len_z / 2
+            tail_b.translation = [cx * mm, cy * mm, z_pos_back]
+            tail_b.material    = "G4_SILICON_DIOXIDE"
 
-    print(f"\n{'─'*60}")
-    print(f"  RADiCAL Energy: Longitudinal Profile & ToF Error Mapping")
-    print(f"{'─'*60}")
-
-    run_dirs  = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
-    hit_files = [p for d in run_dirs for p in sorted(d.glob("detector_hits_*.root"))]
-
-    if not hit_files:
-        print("  WARNING: No hit files found matching the batch structure.")
-        return
-
-    # Data tracking allocations
-    up_first, down_first = {}, {}
-    t_type_best_minus_ps = []
-
-    for fpath in hit_files:
-        run_tag = fpath.parent.name
-        try:
-            with uproot.open(fpath) as f:
-                tree_key = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
-                if not tree_key: continue
-                tree = f[tree_key]
-                if tree.num_entries == 0: continue
-                
-                x  = tree["Position_X"].array(library="np")
-                y  = tree["Position_Y"].array(library="np")
-                z  = tree["Position_Z"].array(library="np")
-                gt = tree["GlobalTime"].array(library="np")
-                lt = tree["LocalTime"].array(library="np")
-                ev = tree["EventID"].array(library="np")
-                pn = tree["ParticleName"].array(library="np")
-        except Exception as exc:
-            print(f"  WARN: could not parse file {fpath.name}: {exc}")
-            continue
-
-        channels = assign_channel(x, y)
-        near_up  = np.abs(z + _Z_SENSOR_MM) < _SIPM_Z_TOL_MM
-        near_dw  = np.abs(z - _Z_SENSOR_MM) < _SIPM_Z_TOL_MM
-
-        # ── 1. E-Type Shower Max Location Reconstruction (GlobalTime) ──
-        is_e_type = np.isin(channels, list(_E_TYPE_INDICES))
-        is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
-        
-        mask_e_up = is_e_type & is_prompt & near_up
-        mask_e_dw = is_e_type & is_prompt & near_dw
-
-        for eid, ti in zip(ev[mask_e_up], gt[mask_e_up]):
-            key = (run_tag, int(eid))
-            if key not in up_first or ti < up_first[key]:
-                up_first[key] = float(ti)
-
-        for eid, ti in zip(ev[mask_e_dw], gt[mask_e_dw]):
-            key = (run_tag, int(eid))
-            if key not in down_first or ti < down_first[key]:
-                down_first[key] = float(ti)
-
-        # ── 2. T-Type Intrinsic Sensor Resolution Extraction (LocalTime) ──
-        is_t_type  = np.isin(channels, list(_T_TYPE_INDICES))
-        is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
-        
-        mask_t_up = is_t_type & is_optical & near_up
-        mask_t_dw = is_t_type & is_optical & near_dw
-        
-        ev_t_up, lt_t_up = ev[mask_t_up], lt[mask_t_up] * 1000.0  # Convert to ps
-        ev_t_dw, lt_t_dw = ev[mask_t_dw], lt[mask_t_dw] * 1000.0
-
-        # Structural event dictionary separation
-        up_times_by_ev = {}
-        for e, t in zip(ev_t_up, lt_t_up):
-            up_times_by_ev.setdefault(e, []).append(t)
-            
-        dw_times_by_ev = {}
-        for e, t in zip(ev_t_dw, lt_t_dw):
-            dw_times_by_ev.setdefault(e, []).append(t)
-
-        common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
-        for e in common_t_evs:
-            if len(up_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE:
-                t_up_q = np.quantile(up_times_by_ev[e], ARRIVAL_QUANTILE)
-                t_dw_q = np.quantile(dw_times_by_ev[e], ARRIVAL_QUANTILE)
-                t_type_best_minus_ps.append((t_dw_q - t_up_q) / 2.0)
-
-    # ── Intrinsic Resolution Derivations ──
-    print(f"  Coincident T-Type events processed : {len(t_type_best_minus_ps):,}")
-    clean_bm = clean_around_mode(np.array(t_type_best_minus_ps), window_ps=100.0)
-    _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
-    
-    # Kinematic mapping from time variance to layer index steps
-    sigma_z_mm = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
-    sigma_layer = sigma_z_mm / _LAYER_PITCH_MM
-
-    print(f"  Extracted Core T-Type σ_t         : {sigma_t_ps:.1f} ps")
-    print(f"  Derived Spatial Tracking Uncertainty : {sigma_z_mm:.2f} mm")
-    print(f"  Resulting Layer Profile Error Bars   : ±{sigma_layer:.2f} layers")
-
-    # ── E-Type Array Space Tracking ──
-    common_keys = set(up_first) & set(down_first)
-    if not common_keys:
-        print("  ERROR: Zero coincident events detected across the E-type lines.")
-        return
-
-    z_emit_list = [V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0 for k in common_keys]
-    z_emit_coin = np.array(z_emit_list)
-    valid_coin  = z_emit_coin[(z_emit_coin >= -calor_half_mm - 15.0) & (z_emit_coin <= calor_half_mm + 15.0)]
-
-    def generate_kde_distribution(valid_z, bounds=lyso_bounds):
-        profile = np.zeros(_N_LYSO)
-        if len(valid_z) < 5:
-            for i, (z_min, z_max) in enumerate(bounds):
-                profile[i] = np.sum((valid_z >= z_min) & (valid_z <= z_max))
         else:
-            kde = gaussian_kde(valid_z, bw_method=0.15)
-            for i, (z_min, z_max) in enumerate(bounds):
-                profile[i] = kde.evaluate((z_min + z_max) / 2.0)[0]
-        return profile
+            # ── T-TYPE ──
+            rod_base      = vol_module.TubsVolume(name=f"cap_{i}_rod")
+            rod_base.rmin = 0.0
+            rod_base.rmax = _CAP_OUTER_MM * mm
+            rod_base.dz   = half_cap
 
-    profile_coin = generate_kde_distribution(valid_coin)[::-1]
-    truth_curve = load_truth_dose_from_mhd(run_dirs)
-    
-    if truth_curve is not None and np.sum(profile_coin) > 0:
-        profile_coin *= (np.sum(truth_curve) / np.sum(profile_coin))
+            bore          = vol_module.TubsVolume(name=f"cap_{i}_bore")
+            bore.rmin     = 0.0
+            bore.rmax     = (_CAP_INNER_MM + 0.05) * mm
+            bore.dz       = (_FILAMENT_LEN_MM / 2 + 0.01) * mm
 
-    # ── Plot Generation ──
-    layers = np.arange(1, _N_LYSO + 1)
-    fig, ax = plt.subplots(figsize=(10, 5))
+            quartz_vol    = vol_module.subtract_volumes(
+                rod_base, bore,
+                translation=[0, 0, _FILAMENT_Z_MM * mm],
+                new_name=f"cap_{i}",
+            )
+            quartz_vol.name        = f"cap_{i}"
+            quartz_vol.mother      = "world"
+            quartz_vol.material    = "G4_SILICON_DIOXIDE"
+            quartz_vol.translation = [cx * mm, cy * mm, 0]
+            sim.add_volume(quartz_vol)
 
-    if truth_curve is not None:
-        ax.bar(layers, truth_curve, color="#00bcd4", alpha=0.45,
-               edgecolor="#00838f", linewidth=1.0, width=0.8, label="Simulation Truth (DoseActor)")
+            filament             = sim.add_volume("Tubs", f"cap_{i}_filament")
+            filament.mother      = "world"
+            filament.rmin        = 0.0
+            filament.rmax        = _FILAMENT_R_MM * mm
+            filament.dz          = (_FILAMENT_LEN_MM / 2) * mm
+            filament.translation = [cx * mm, cy * mm, _FILAMENT_Z_MM * mm]
+            filament.material    = "BCF92"
 
-    ax.errorbar(layers, profile_coin, xerr=sigma_layer, color="#6a1b9a", 
-                linewidth=2.5, marker="o", markersize=5, capsize=3, capthick=1.5,
-                label=f"ΔT ToF Reconstruction (σ_t = {sigma_t_ps:.1f} ps → ±{sigma_layer:.2f} layers)")
+def _build_sipms(sim, mm):
+    for end_name, sgn in [("front", -1), ("back", +1)]:
+        z_sipm = sgn * _SIPM_Z_MM * mm
+        z_card = sgn * _CARD_Z_MM * mm
 
-    ax.set_xlabel("LYSO Layer Number")
-    ax.set_ylabel("Energy / Scaled Hits (MeV)")
-    ax.set_title("RADiCAL Energy: E-type Long. Profile with Intrinsic T-Type Error Boundaries")
-    ax.grid(True, linestyle=":", alpha=0.6)
-    ax.legend(loc="upper right", fontsize=9)
+        card_box       = vol_module.BoxVolume(name=f"card_{end_name}_box")
+        card_box.size  = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
+        card_hole      = vol_module.TubsVolume(name=f"card_{end_name}_hole")
+        card_hole.rmin = 0.0
+        card_hole.rmax = _CARD_HOLE_R_MM * mm
+        card_hole.dz   = (_CARD_THICK_MM + 0.1) * mm
+        card_vol        = vol_module.subtract_volumes(
+            card_box, card_hole, new_name=f"card_{end_name}"
+        )
+        card_vol.name        = f"card_{end_name}"
+        card_vol.mother      = "world"
+        card_vol.material    = "G4_SILICON_DIOXIDE"
+        card_vol.translation = [0, 0, z_card]
+        sim.add_volume(card_vol)
 
-    fig.tight_layout()
-    out_path = batch_dir / "tof_reconstruction_with_errors.png"
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    print(f"\n  Plot successfully saved → {out_path}\n")
+        for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
+            sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
+            sipm.mother      = "world"
+            sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
+            sipm.material    = "G4_Si"
+            sipm.translation = [cx * mm, cy * mm, z_sipm]
 
-if __name__ == "__main__":
-    main()
+# ─────────────────────────────────────────────────────────────────────────────
+# WORLD CONSTRUCTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_world(sim, units):
+    mm = units.mm
+
+    world          = sim.world
+    world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
+    world.material = "G4_AIR"
+
+    calor_base      = vol_module.BoxVolume(name="calorimeter_box")
+    calor_base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CALOR_THICK_MM * mm]
+    calor_vol       = _drill_holes(calor_base, "calorimeter", _CALOR_THICK_MM/2, mm)
+    calor_vol.name        = TARGET_VOLUME_NAME
+    calor_vol.mother      = "world"
+    calor_vol.material    = "G4_AIR"
+    calor_vol.translation = [0, 0, 0]
+    sim.add_volume(calor_vol)
+
+    _build_capillaries(sim, mm)
+    _build_sipms(sim, mm)
+
+    z_pos = -_CALOR_THICK_MM / 2
+
+    for i in range(_N_LYSO):
+        z_pos   += _GAP_THICK_MM / 2
+        gap_vol  = _make_gap(f"gap_{i}", mm)
+        gap_vol.name        = f"gap_{i}"
+        gap_vol.mother      = TARGET_VOLUME_NAME
+        gap_vol.material    = "Tyvek"
+        gap_vol.translation = [0, 0, z_pos * mm]
+        sim.add_volume(gap_vol)
+
+        lyso_vol             = _make_lyso(f"lyso_{i}", mm)
+        lyso_vol.name        = f"lyso_{i}"
+        lyso_vol.mother      = f"gap_{i}"
+        lyso_vol.material    = "LYSO"
+        lyso_vol.translation = [0, 0, 0]
+        sim.add_volume(lyso_vol)
+
+        z_pos += _GAP_THICK_MM / 2
+
+        if i < _N_W:
+            z_pos   += _W_THICK_MM / 2
+            abso_vol = _make_abso(f"abso_{i}", mm)
+            abso_vol.name        = f"abso_{i}"
+            abso_vol.mother      = TARGET_VOLUME_NAME
+            abso_vol.material    = "Tungsten"
+            abso_vol.translation = [0, 0, z_pos * mm]
+            sim.add_volume(abso_vol)
+            z_pos += _W_THICK_MM / 2
+
+    return sim
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTICAL SURFACES
+# ─────────────────────────────────────────────────────────────────────────────
+
+def add_optical_surfaces(sim, units):
+    vols = sim.volume_manager.volumes
+
+    # Tyvek reflective wrap on all LYSO outer faces
+    for i in range(_N_LYSO):
+        lyso_name = f"lyso_{i}"
+        gap_name  = f"gap_{i}"
+        if lyso_name in vols and gap_name in vols:
+            sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
+            sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
+
+    # FIX: Corrected duplicate logic block and resolved the compilation crash indentation bug.
+    # Optical interfaces for E-Type boundary interfaces
+    for cap_idx in _E_TYPE_INDICES:
+        core_name   = f"cap_{cap_idx}_active_core"
+        sleeve_name = f"cap_{cap_idx}_active_sleeve"
+        tail_b_name = f"cap_{cap_idx}_tail_back"
+        tail_f_name = f"cap_{cap_idx}_tail_front"
+
+        if core_name in vols and sleeve_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, sleeve_name, "Polished")
+        if core_name in vols and tail_b_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
+        if core_name in vols and tail_f_name in vols:
+            sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
+
+    # FIX: Added missing T-type boundaries for proper light guide trapping configurations
+    for cap_idx in _T_TYPE_INDICES:
+        rod_name  = f"cap_{cap_idx}"
+        plug_name = f"cap_{cap_idx}_filament"
+        if rod_name in vols and plug_name in vols:
+            sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANALYSIS HOOKS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def analyze(batch_dir, run_dirs, meta, utils):
+    import matplotlib.pyplot as plt
+
+    hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
+    exits_files = [d / "optical_exited.root" for d in run_dirs]
+
+    hits       = utils.analyse_hits(hits_files) if hits_files else {}
+    exits      = utils.analyse_exits(exits_files) if exits_files else {}
+    timing_res = (utils.extract_timing_resolution(
+                  hits_files, threshold_photon=TIMING_TRIGGER_THRESHOLD)
+                  if hits_files else 0.0)
+
+    long_arr, trans_arr = utils.load_calorimeter_mhd(
+        run_dirs,
+        long_glob="run_Dose_edep.mhd",
+        trans_glob="transverse_shower_max_edep.mhd",
+    )
+    _aggregate_batch(batch_dir, run_dirs, meta, utils)
+
+    plots_saved = []
+
+    if long_arr is not None:
+        dz_mm = meta.get("dose_spacing_mm", 0.1)
+        avg   = long_arr / max(len(run_dirs), 1)
+
+        layer_edeps = []
+        current_z   = 0.0   
+
+        for idx in range(_N_LYSO):
+            z_start = current_z + _TYVEK_THICK_MM
+            z_end   = z_start   + _LYSO_THICK_MM
+            i0 = max(0, min(int(round(z_start / dz_mm)), len(avg)))
+            i1 = max(0, min(int(round(z_end   / dz_mm)), len(avg)))
+            layer_edeps.append(float(np.sum(avg[i0:i1])))
+            current_z += _GAP_THICK_MM + (_W_THICK_MM if idx < _N_W else 0)
+
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        ax.bar(range(1, _N_LYSO + 1), layer_edeps,
+               color="#00bcd4", alpha=0.7, edgecolor="#00838f",
+               linewidth=1.2, width=0.8)
+        ax.set_xlabel("LYSO Layer Number")
+        ax.set_ylabel("Energy Deposition (MeV)")
+        ax.set_title("RADiCAL Energy — Longitudinal Shower Profile")
+        fig.tight_layout()
+        out = batch_dir / "radical_energy_longitudinal.png"
+        fig.savefig(out, dpi=200)
+        plt.close(fig)
+        plots_saved.append(out.name)
+
+    up_hits = sum(hits.get(k, 0) for k in hits if "sipm_front" in k)
+    dn_hits = sum(hits.get(k, 0) for k in hits if "sipm_back"  in k)
+    extra_lines = [
+        f"  Upstream SiPM hits:   {up_hits:,}",
+        f"  Downstream SiPM hits: {dn_hits:,}",
+    ]
+
+    return {
+        "hits":          hits,
+        "exits":         exits,
+        "timing_res_ps": timing_res,
+        "extra_lines":   extra_lines,
+        "plots_saved":   plots_saved,
+    }
+
+def _aggregate_batch(batch_dir, run_dirs, meta, utils):
+    dz_mm         = meta.get("dose_spacing_mm", 0.1)
+    active_ranges = meta.get("active_z_ranges", None)
+    long_acc, n   = None, 0
+
+    for run_dir in run_dirs:
+        dose_txt = batch_dir / f"run_{run_dir.name.split('_')[-1]}_Dose.txt"
+        if dose_txt.exists():
+            try:
+                _, energy = np.loadtxt(dose_txt, unpack=True, usecols=(0, 1))
+                long_acc  = (energy.astype(float) if long_acc is None
+                             else long_acc + energy)
+                n += 1
+            except Exception:
+                pass
+
+    if n > 0 and long_acc is not None:
+        avg = long_acc / n
+        out = batch_dir / "analyzed_longitudinal.txt"
+        if active_ranges:
+            energies = [
+                np.sum(avg[int(round(zs/dz_mm)):int(round(ze/dz_mm))])
+                for zs, ze in active_ranges
+            ]
+            np.savetxt(str(out),
+                       np.c_[np.arange(len(energies))+1, energies],
+                       fmt="%d %.6e")
+        else:
+            np.savetxt(str(out),
+                       np.c_[np.arange(len(avg)), avg],
+                       fmt="%d %.6e")
+
+def get_geometry_primitives() -> list[dict]:
+    prims = [{
+        "type":   "box",
+        "center": [0.0, 0.0, 0.0],
+        "half":   [_CALOR_XY_MM/20, _CALOR_XY_MM/20, _CALOR_THICK_MM/20],
+        "color":  "#00ffcc",
+        "alpha":  0.15,
+    }]
+    for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
+        color = "#ff9900" if i in _E_TYPE_INDICES else "#00cfff"
+        prims.append({
+            "type":   "tube",
+            "center": [cx/10, cy/10, 0.0],
+            "rmax":   _CAP_OUTER_MM/10,
+            "height": _CAP_LENGTH_MM/10,
+            "color":  color,   
+            "alpha":  0.35,
+        })
+    return prims

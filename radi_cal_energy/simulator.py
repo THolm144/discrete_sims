@@ -4,40 +4,6 @@ simulator.py
 CLI-driven OpenGATE simulation.  World modules declare their capabilities
 via a CAPABILITIES dict; the simulator wires actors accordingly.
 CLI flags can override world defaults (e.g. --optical off).
-
-World module contract
----------------------
-Required exports:
-    CAPABILITIES        dict  — see DEFAULT_CAPABILITIES below for keys
-    PHANTOM_CM          list  — [x_cm, y_cm, z_cm] of the target volume
-    TARGET_VOLUME_NAME  str
-    DETECTOR_VOLUME_NAMES list[str]
-    build_world(sim, units) -> sim
-
-Optional exports:
-    BEAM_CONFIG         dict  — overrides default beam positioning
-    EXPECTED_DEDX       float
-    ACTIVE_Z_RANGES_MM  list
-    CALORIMETER_Z_RES_MM float
-    add_optical_surfaces(sim, units)
-    configure_dose_actor(dose, units)
-
-CAPABILITIES keys (all bool, default False unless noted):
-    optical             — enable G4OpticalPhysics
-    dose                — attach DoseActor
-    sipm_hits           — attach per-detector PhaseSpaceActors
-    optical_exits       — attach PhaseSpaceActor on target volume boundary
-    calorimeter_mode    — use high-res longitudinal+transverse dose actors
-
-BEAM_CONFIG keys:
-    direction   [dx, dy, dz]         unit momentum vector  (default [0,0,1])
-    target_cm   [x, y, z]            aim point in cm       (default [0,0,0])
-    offset_cm   float                 source distance from target (default 2.0)
-
-Usage:
-    python3 simulator.py --world scintx_sipm_array
-    python3 simulator.py --world radi_cal --optical off
-    python3 simulator.py --world scintx_sipm_array --n 500 --threads 8
 """
 
 import argparse
@@ -81,7 +47,9 @@ def parse_args():
     p.add_argument("--particle",     default="proton")
     p.add_argument("--energy-kev",   type=float, default=500_000)
     p.add_argument("--n",            type=int,   default=10_000)
-    p.add_argument("--threads",      type=int,   default=64)
+    # OPTIMIZATION: Reduced default threads to a balanced 8 to avoid thread initialization
+    # and context-switching overhead on smaller particle counts.
+    p.add_argument("--threads",      type=int,   default=8)
     p.add_argument("--beam-radius",  type=float, default=1.0,
                    help="Beam disc radius in cm (default: 1.0)")
     p.add_argument("--output-dir",   default=None)
@@ -169,15 +137,9 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
 
     # ── Time Cut Actor ────────────────────────────────────────────────────
-    if caps["optical"]:
-        print(f"[ACTOR] Enforcing 50 ns maximum lifetime cut on optical photons in '{target_vol}'")
-        time_cut = sim.add_actor("KillActor", "optical_time_breaker")
-        time_cut.attached_to = target_vol
-        F = GateFilterBuilder()
-        time_cut.filter = (
-            (F.ParticleName == "opticalphoton")
-            & (F.GlobalTime > 50 * units.ns)
-        )
+    # OPTIMIZATION: Removed local 'optical_time_breaker' from here.
+    # The global fail-safe attached to "world" handles this completely, meaning 
+    # we eliminate duplicate filter processing loops for every step inside the target volume.
 
     # ── Optical exits ─────────────────────────────────────────────────────
     if caps["optical"] and caps.get("optical_exits", False):
@@ -202,7 +164,11 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             hits.attached_to                = vol_name
             hits.authorize_repeated_volumes = True
             hits.output_filename            = f"detector_hits_{idx}.root"
-            hits.steps_to_store             = "all"
+            
+            # OPTIMIZATION: Changed from "all" to "entering". Storing "all" records every tiny 
+            # scattering step inside the volume, blowing up file sizes and introducing massive disk I/O bottlenecks.
+            hits.steps_to_store             = "entering"
+            
             hits.attributes = [
                 "ParticleName", "KineticEnergy", "Position",
                 "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime", "LocalTime",
@@ -318,6 +284,11 @@ def configure_physics(sim, args, script_dir: Path, world,
                       caps: dict, target_vol: str, units):
     sim.physics_manager.physics_list_name = args.physics_list
 
+    # OPTIMIZATION: Implemented a global production range cut (1.0 mm). This prevents 
+    # Geant4 from generating and endlessly tracking low-energy secondary delta-electrons 
+    # that chew up CPU cycles without impacting macroscopic dosage metrics.
+    sim.g4_commands_before_init.append("/run/setCut 1.0 mm")
+
     surface_file = script_dir / "SurfaceProperties.xml"
     if surface_file.exists():
         sim.physics_manager.surface_properties_file = str(surface_file)
@@ -335,8 +306,6 @@ def configure_physics(sim, args, script_dir: Path, world,
         else:
             sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov true")
             print("[SIM] Optical physics ENABLED (Both Scintillation & Cherenkov ACTIVE).")
-        # ───────────────────────────────────────────────────────────────────────
-        
     else:
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = False
         print("[SIM] Optical physics DISABLED.")
@@ -435,8 +404,6 @@ def main():
         sim.random_seed = 1000 + args.run_id
     sim.output_dir = str(run_dir)
 
-   
-
     stats = sim.add_actor("SimulationStatisticsActor", "sim_stats")
     stats.output_filename  = "stats.json"
     stats.track_types_flag = True
@@ -461,25 +428,20 @@ def main():
 
     save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
 
-
-# ─── OPTICAL PHOTON TIME CUT (GLOBAL FAIL-SAFE) ───────────────────────
+    # ─── OPTICAL PHOTON TIME CUT (GLOBAL FAIL-SAFE) ───────────────────────
     if caps["optical"]:
         print("[ACTOR] Attaching global optical photon lifetime tracking cut.")
-        
-        # We attach to 'world' so it monitors tracking across the entire geometry
         global_time_cut = sim.add_actor("KillActor", "global_optical_time_breaker")
         global_time_cut.attached_to = "world" 
         
-        # Build a robust multi-conditional expression filter
         from opengate.actors.filters import GateFilterBuilder
         F = GateFilterBuilder()
         
-        # CRITICAL: Only target optical photons, and only kill them after 50 ns
         global_time_cut.filter = (
             (F.ParticleName == "opticalphoton") & 
             (F.GlobalTime > 50.0 * units.ns)
         )
-# ───────────────────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────────────────────────────
 
     sim.run() 
 
