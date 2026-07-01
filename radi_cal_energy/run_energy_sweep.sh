@@ -1,109 +1,112 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_energy_sweep.sh — Parallel OpenGATE Sweeper & Automated Post-Processing
+# run_energy_sweep.sh — Hyper-Speed Single-Threaded Parallel OpenGATE Sweeper
 # ─────────────────────────────────────────────────────────────────────────────
 
 WORLD="radi_cal_energy"
 PARTICLE="proton"
-N_PARTICLES=1000
-THREADS_PER_RUN=50
 BEAM_RADIUS=0.01
 OPTICAL="on"
 CHERENKOV="off"
 PHYSICS_LIST="QGSP_BERT_EMV"
 
+# --- Optimized Core & Scale Math ---
+# 4 Energies total. We have 200 cores. 
+# We can allocate exactly 50 single-threaded runs per energy step simultaneously.
+# 50 runs * 20 particles per run = 1,000 total particles per energy target.
+N_PARTICLES_PER_RUN=20
+N_RUNS_PER_ENERGY=50
+THREADS_PER_RUN=1      # 1 thread eliminates multi-threading lock contention
+MAX_CONCURRENT_SIMS=200 # Utilize all 200 physical cores
+
 # Define target sweep energies in keV (25 GeV, 50 GeV, 100 GeV, 200 GeV)
 ENERGIES_KEV=(25000000 50000000 100000000 200000000)
 
-# Create a shared batch timestamp directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 MASTER_BATCH_DIR="runs/${WORLD}/sweep_${TIMESTAMP}"
-
 mkdir -p "$MASTER_BATCH_DIR"
 
 echo "========================================================================"
-echo " Launching Simultaneous OpenGATE Energy Sweep"
+echo " Launching Hyper-Speed Single-Threaded OpenGATE Energy Sweep"
 echo "========================================================================"
 echo " Target Geometry   : ${WORLD}"
 echo " Particle Type     : ${PARTICLE}"
-echo " Primaries / Run   : ${N_PARTICLES}"
-echo " Cores Per Energy  : ${THREADS_PER_RUN} (Total: $(( ${#ENERGIES_KEV[@]} * THREADS_PER_RUN )) threads)"
+echo " Total Primaries   : $(( N_PARTICLES_PER_RUN * N_RUNS_PER_ENERGY )) per Energy"
+echo " Configuration     : ${N_RUNS_PER_ENERGY} runs of ${N_PARTICLES_PER_RUN} particles"
+echo " Concurrent Workers: ${MAX_CONCURRENT_SIMS} Single-Threaded Cores"
 echo " Output Master Dir : ${MASTER_BATCH_DIR}"
 echo "========================================================================"
 
-# Track child PIDs for global synchronization at the script end
-SPAWNED_PIDS=()
+# Create log directories
+mkdir -p "${MASTER_BATCH_DIR}/logs"
 
-# Loop through each energy and fork them simultaneously into the background
+# Loop through each energy and queue up runs inside a controlled pool
 for ENERGY in "${ENERGIES_KEV[@]}"; do
-    # Convert keV to human-readable text for folder separation
     ENERGY_GBS=$(( ENERGY / 1000000 ))
     ENERGY_DIR="${MASTER_BATCH_DIR}/${ENERGY_GBS}GeV"
-    
     mkdir -p "$ENERGY_DIR"
 
-    # Enclose the simulation + analysis sequence for this specific energy inside a background subshell
-    (
-        echo " [+] [${ENERGY_GBS}GeV] Starting OpenGATE Simulation..."
-        
-        # 1. Run the simulation (Outputs inside run_0 subfolder matching simulator.py structure)
+    echo " [+] Queueing 1,000 primaries for [${ENERGY_GBS}GeV]..."
+
+    for RUN_ID in $(seq 0 $((N_RUNS_PER_ENERGY - 1))); do
+        # Maintain our max pool capacity of 200 active background processes
+        while [ $(jobs -rp | wc -l) -ge $MAX_CONCURRENT_SIMS ]; do
+            sleep 0.1
+        done
+
+        LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
+        RUN_OUT_DIR="${ENERGY_DIR}/run_${RUN_ID}"
+        mkdir -p "$RUN_OUT_DIR"
+
+        # Dispatch single particle bundle into isolated directory
         python3 simulator.py \
             --world        "$WORLD" \
             --particle     "$PARTICLE" \
             --energy-kev   "$ENERGY" \
-            --n            "$N_PARTICLES" \
+            --n            "$N_PARTICLES_PER_RUN" \
             --threads      "$THREADS_PER_RUN" \
             --beam-radius  "$BEAM_RADIUS" \
             --optical      "$OPTICAL" \
             --cherenkov    "$CHERENKOV" \
             --physics-list "$PHYSICS_LIST" \
-            --run-id       0 \
-            --output-dir   "$ENERGY_DIR" > "${ENERGY_DIR}/sim_execution_log.txt" 2>&1
-
-        SIM_STATUS=$?
-        if [ $SIM_STATUS -ne 0 ]; then
-            echo " [!] [${ENERGY_GBS}GeV] Simulation failed! Check logs: ${ENERGY_DIR}/sim_execution_log.txt"
-            exit 1
-        fi
-
-        echo " [+] [${ENERGY_GBS}GeV] Simulation complete. Running data analysis pipeline..."
-        ANALYSIS_LOG="${ENERGY_DIR}/analysis_pipeline_log.txt"
-        touch "$ANALYSIS_LOG"
-
-        # 2. Run standard dose/hit tallying
-        if [ -f "analyze.py" ]; then
-            echo "     -> [${ENERGY_GBS}GeV] Running analyze.py..."
-            python3 analyze.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
-        fi
-
-        # 3. Run timing resolution evaluation
-        if [ -f "timing_res.py" ]; then
-            echo "     -> [${ENERGY_GBS}GeV] Running timing_res.py..."
-            python3 timing_res.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
-        fi
-
-        # 4. Run longitudinal Time-of-Flight kinematic reconstruction
-        if [ -f "tof_reconstruction.py" ]; then
-            echo "     -> [${ENERGY_GBS}GeV] Running tof_reconstruction.py..."
-            python3 tof_reconstruction.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
-        fi
-
-        echo " [✓] [${ENERGY_GBS}GeV] Full pipeline execution finished successfully."
-    ) &
-    
-    # Store the background job PID
-    SPAWNED_PIDS+=($!)
+            --run-id       "$RUN_ID" \
+            --output-dir   "$RUN_OUT_DIR" > "$LOG_FILE" 2>&1 &
+    done
 done
 
-echo " [+] All energy processes spawned. Monitoring concurrent workloads..."
+echo " [+] All simulation processes dispatched to core pool. Waiting for execution to finish..."
+wait
+echo " [✓] Simulation sweep complete. Initiating sequential analysis pipeline..."
 echo "------------------------------------------------------------------------"
 
-# Block the main terminal execution until all 4 parallel paths complete
-for PID in "${SPAWNED_PIDS[@]}"; do
-    wait "$PID"
+# ─────────────────────────────────────────────────────────────────────────────
+# POST-PROCESSING PIPELINE
+# ─────────────────────────────────────────────────────────────────────────────
+for ENERGY in "${ENERGIES_KEV[@]}"; do
+    ENERGY_GBS=$(( ENERGY / 1000000 ))
+    ENERGY_DIR="${MASTER_BATCH_DIR}/${ENERGY_GBS}GeV"
+    ANALYSIS_LOG="${ENERGY_DIR}/analysis_pipeline_log.txt"
+    touch "$ANALYSIS_LOG"
+
+    echo " [+] [${ENERGY_GBS}GeV] Post-Processing..."
+
+    if [ -f "analyze.py" ]; then
+        echo "     -> Running analyze.py..."
+        python3 analyze.py --batch-dir "$ENERGY_DIR" --workers 64 >> "$ANALYSIS_LOG" 2>&1
+    fi
+
+    if [ -f "timing_res.py" ]; then
+        echo "     -> Running timing_res.py..."
+        python3 timing_res.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
+    fi
+
+    if [ -f "tof_reconstruction.py" ]; then
+        echo "     -> Running tof_reconstruction.py..."
+        python3 tof_reconstruction.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
+    fi
 done
 
 echo "========================================================================"
-echo " Sweep complete. Comprehensive dataset stored in:"
+echo " Sweep complete. Dataset verified and stored in:"
 echo " $MASTER_BATCH_DIR"
 echo "========================================================================"

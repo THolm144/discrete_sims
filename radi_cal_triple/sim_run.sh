@@ -40,7 +40,7 @@ for i in $(seq 0 $((N_RUNS - 1))); do
         --cherenkov    $CHERENKOV \
         --physics-list "$PHYSICS_LIST" \
         --run-id       $i \
-        --output-dir   $OUT_DIR &
+        --output-dir   "${OUT_DIR}/run_${i}" &
     
     # Capture the PID of the simulation we just backgrounded
     PIDS+=($!)
