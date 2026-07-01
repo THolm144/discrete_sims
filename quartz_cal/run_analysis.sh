@@ -3,7 +3,7 @@
 # ──────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────
-PYTHON_SCRIPT="analyze_hits.py"  # Path to your python script
+PYTHON_SCRIPT="thickness_analysis.py"  # Path to your python script
 RUNS_DIR="./runs"                # Change to "/runs" if it's at the system root
 
 # ──────────────────────────────────────────────────────────────────────
