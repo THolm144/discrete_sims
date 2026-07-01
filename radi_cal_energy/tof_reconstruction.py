@@ -11,6 +11,13 @@ except ImportError:
     print("WARNING: Could not import 'utils'. Ensure this script is run from the OpenGATE sim directory.")
     utils = None
 
+import warnings
+
+from scipy.stats import gaussian_kde
+from scipy.optimize import curve_fit
+from scipy.ndimage import gaussian_filter1d
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY CONSTANTS  (must match radi_cal_energy.py exactly)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,66 +66,16 @@ _E_TYPE_INDICES  = {2, 3}
 # Tolerance for SiPM z-position matching (must be > _SIPM_THICK_MM/2 = 0.15 mm)
 _SIPM_Z_TOL_MM   = 2.0
 
-import argparse
-from pathlib import Path
-import warnings
-import numpy as np
-import uproot
-import matplotlib.pyplot as plt
-from scipy.stats import gaussian_kde
-from scipy.optimize import curve_fit
-from scipy.ndimage import gaussian_filter1d
 
-try:
-    import analysis_utils as utils
-except ImportError:
-    print("WARNING: Could not import 'utils'. Ensure this script is run from the OpenGATE sim directory.")
-    utils = None
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY CONSTANTS
-# ─────────────────────────────────────────────────────────────────────────────
-_LYSO_THICK_MM   = 4.5
-_TYVEK_THICK_MM  = 0.2032
-_W_THICK_MM      = 2.5
-_N_LYSO          = 29
-_N_W             = 28
-_GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM
-_CALOR_THICK_MM  = 212.2856
 
-# Average distance between consecutive LYSO layer centers
-_LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM  
 
-_SIPM_THICK_MM   = 0.3
-_CAP_LENGTH_MM   = _CALOR_THICK_MM + 57.7144 
-_Z_SENSOR_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2
 
-# OPTICAL KINEMATICS
-C_LIGHT_MM_NS    = 299.792
-REFRACTIVE_INDEX = 1.60
-V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR    = 0.92
-V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
-
-_GT_LO_NS = 0.1
-_GT_HI_NS = 2.0
-
-# CAPILLARY XY POSITIONS
-_HOLE_OFFSET_MM  = 3.7032
-CAP_XY_MM = np.array([
-    [ _HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 0 — T-type
-    [-_HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 1 — T-type
-    [-_HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 2 — E-type
-    [ _HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 3 — E-type
-])
-_E_TYPE_INDICES  = {2, 3}
 _T_TYPE_INDICES  = {0, 1}
-_SIPM_Z_TOL_MM   = 2.0
-
 # TIMING CALCULATION PARAMETERS
 ARRIVAL_QUANTILE     = 0.10
 MIN_PHOTONS_PER_FACE = 1
-
+_LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM  
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS (Geometry & Truth)
 # ─────────────────────────────────────────────────────────────────────────────
