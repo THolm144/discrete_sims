@@ -238,13 +238,14 @@ def main():
         up_times_by_ev = {}
         for e, t in zip(ev_t_up, lt_t_up):
             up_times_by_ev.setdefault(e, []).append(t)
-        #Debug
-        print(f"    [{run_tag}] T-type optical hits: up={mask_t_up.sum()}, dw={mask_t_dw.sum()}, "
-      f"unique_up_ev={len(up_times_by_ev)}, unique_dw_ev={len(dw_times_by_ev)}")
+      
+        
         dw_times_by_ev = {}
         for e, t in zip(ev_t_dw, lt_t_dw):
             dw_times_by_ev.setdefault(e, []).append(t)
         #debug
+        print(f"    [{run_tag}] T-type optical hits: up={mask_t_up.sum()}, dw={mask_t_dw.sum()}, "
+      f"unique_up_ev={len(up_times_by_ev)}, unique_dw_ev={len(dw_times_by_ev)}")
         common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
         for e in common_t_evs:
             if len(up_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE:
