@@ -52,6 +52,7 @@ def assign_channel(x_mm, y_mm, z_mm):
 #  GAUSSIAN FITTER
 # ─────────────────────────────────────────────────────────────────────────────
 def standard_gaussian(x, A, mu, sigma):
+    """Standard symmetric Gaussian distribution."""
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
