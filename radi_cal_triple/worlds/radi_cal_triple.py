@@ -309,7 +309,8 @@ def add_optical_surfaces(sim, units):
     for i in range(_N_LYSO):
         lyso_name = f"lyso_{i}"
         gap_name  = f"gap_{i}"
-        if lyso_name in vALOR_NAME and gap_name in vols:
+        #  Corrected line
+        if lyso_name in vols and gap_name in vols:
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
             
