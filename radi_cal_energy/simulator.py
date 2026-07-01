@@ -23,11 +23,17 @@ import opengate as gate
 # ─────────────────────────────────────────────────────────────────────────────
 
 DEFAULT_CAPABILITIES = {
-    "optical":          False,
-    "dose":             True,
-    "sipm_hits":        False,
-    "optical_exits":    False,
-    "calorimeter_mode": False,
+    "optical":                False,
+    "dose":                   True,
+    "sipm_hits":               False,
+    "optical_exits":          False,
+    "calorimeter_mode":       False,
+    # NEW — opt-in only. A world must explicitly set this True in its own
+    # CAPABILITIES dict, or the run must pass --hits-optical-only on, for
+    # detector_hits actors to filter out non-opticalphoton hits at the
+    # source. Defaults to False so quartz_8x8 / ScintX / any world that
+    # doesn't opt in keeps recording every particle type, unchanged.
+    "sipm_hits_optical_only": False,
 }
 
 DEFAULT_BEAM_CONFIG = {
@@ -62,6 +68,14 @@ def parse_args():
     p.add_argument("--sipm-hits",    choices=["on", "off", "world"],  default="world")
     p.add_argument("--cherenkov",    choices=["on", "off"],           default="on",
                    help="Toggle Cherenkov radiation when optical physics is enabled.")
+    # NEW — opt-in filter to shrink detector_hits_*.root files by dropping
+    # non-opticalphoton hits at the actor level, before anything is written
+    # to disk. 'world' = respect the world manifest's sipm_hits_optical_only
+    # flag (defaults False if unset), so existing worlds are unaffected
+    # unless they opt in or you pass --hits-optical-only on explicitly.
+    p.add_argument("--hits-optical-only", choices=["on", "off", "world"], default="world",
+                   help="Filter detector_hits actors to opticalphoton hits only. "
+                        "'world' = respect world manifest (default off).")
     return p.parse_args()
 
 
@@ -82,15 +96,17 @@ def resolve_capabilities(world, args) -> dict:
     caps = {**DEFAULT_CAPABILITIES, **getattr(world, "CAPABILITIES", {})}
 
     override_map = {
-        "optical":   args.optical,
-        "dose":      args.dose,
-        "sipm_hits": getattr(args, "sipm_hits", "world"),
+        "optical":                args.optical,
+        "dose":                   args.dose,
+        "sipm_hits":              getattr(args, "sipm_hits", "world"),
+        "sipm_hits_optical_only": getattr(args, "hits_optical_only", "world"),
     }
     for key, val in override_map.items():
         if val == "on":
             caps[key] = True
         elif val == "off":
             caps[key] = False
+        # val == "world" -> leave whatever the world manifest (or default) set
 
     return caps
 
@@ -156,6 +172,17 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     # ── Per-channel screen hit actors ─────────────────────────────────────
     if caps["sipm_hits"] and detector_volumes:
         print(f"[ACTOR] Registered volumes: {list(sim.volume_manager.volumes.keys())[:20]} ...")
+
+        # NEW — build the optical-photon-only filter once, reused across
+        # every detector_hits actor, if this run has opted in.
+        optical_only = caps.get("sipm_hits_optical_only", False)
+        hit_filter = None
+        if optical_only:
+            F = GateFilterBuilder()
+            hit_filter = (F.ParticleName == "opticalphoton")
+            print("[ACTOR] detector_hits actors filtering to opticalphoton hits only "
+                  "(sipm_hits_optical_only=True).")
+
         for idx, vol_name in enumerate(detector_volumes):
             if vol_name not in sim.volume_manager.volumes:
                 print(f"  WARNING: screen volume '{vol_name}' not found — skipping.")
@@ -164,14 +191,23 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             hits.attached_to                = vol_name
             hits.authorize_repeated_volumes = True
             hits.output_filename            = f"detector_hits_{idx}.root"
-            
-            # OPTIMIZATION: Changed from "all" to "entering". Storing "all" records every tiny 
+
+            # OPTIMIZATION: Changed from "all" to "entering". Storing "all" records every tiny
             # scattering step inside the volume, blowing up file sizes and introducing massive disk I/O bottlenecks.
-            hits.steps_to_store             = "entering"
-            
+            hits.steps_to_store              = "entering"
+
+            if hit_filter is not None:
+                hits.filter = hit_filter
+
+            # TRIMMED — dropped KineticEnergy, TrackCreatorProcess, TrackID.
+            # None of the current analysis scripts (timing_res.py, the ToF
+            # reconstruction script) read these fields from detector_hits
+            # files; they only use ParticleName, Position, EventID,
+            # GlobalTime, LocalTime. Verify no world-specific analyze()
+            # hook depends on the dropped fields before relying on this
+            # for worlds other than radi_cal_energy / radi_cal_triple.
             hits.attributes = [
-                "ParticleName", "KineticEnergy", "Position",
-                "TrackCreatorProcess", "TrackID", "EventID", "GlobalTime", "LocalTime",
+                "ParticleName", "Position", "EventID", "GlobalTime", "LocalTime",
             ]
             registry["hit_actors"].append(hits)
 
@@ -284,8 +320,8 @@ def configure_physics(sim, args, script_dir: Path, world,
                       caps: dict, target_vol: str, units):
     sim.physics_manager.physics_list_name = args.physics_list
 
-    # OPTIMIZATION: Implemented a global production range cut (1.0 mm). This prevents 
-    # Geant4 from generating and endlessly tracking low-energy secondary delta-electrons 
+    # OPTIMIZATION: Implemented a global production range cut (1.0 mm). This prevents
+    # Geant4 from generating and endlessly tracking low-energy secondary delta-electrons
     # that chew up CPU cycles without impacting macroscopic dosage metrics.
     sim.g4_commands_before_init.append("/run/setCut 1.0 mm")
 
@@ -298,7 +334,7 @@ def configure_physics(sim, args, script_dir: Path, world,
         sim.physics_manager.special_physics_constructors.G4OpticalPhysics = True
         if optical_file.exists():
             sim.physics_manager.optical_properties_file = str(optical_file)
-        
+
         # ─── THE FIXED OPENGATE 10 PRE-INIT QUEUE ─────────────────────────────
         if getattr(args, "cherenkov", "on") == "off":
             sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov false")
@@ -432,18 +468,18 @@ def main():
     if caps["optical"]:
         print("[ACTOR] Attaching global optical photon lifetime tracking cut.")
         global_time_cut = sim.add_actor("KillActor", "global_optical_time_breaker")
-        global_time_cut.attached_to = "world" 
-        
+        global_time_cut.attached_to = "world"
+
         from opengate.actors.filters import GateFilterBuilder
         F = GateFilterBuilder()
-        
+
         global_time_cut.filter = (
-            (F.ParticleName == "opticalphoton") & 
+            (F.ParticleName == "opticalphoton") &
             (F.GlobalTime > 50.0 * units.ns)
         )
     # ───────────────────────────────────────────────────────────────────────
 
-    sim.run() 
+    sim.run()
 
 
 if __name__ == "__main__":
