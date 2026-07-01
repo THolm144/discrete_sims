@@ -6,9 +6,9 @@
 WORLD="quartz_cal"
 PARTICLE="proton"
 ENERGY_KEV=1000000000
-N_PARTICLES=100
-THREADS=8                 # CPU threads per run execution
-N_RUNS=3
+N_PARTICLES=20
+THREADS=1                 # CPU threads per run execution
+N_RUNS=25
 BEAM_RADIUS=0.01
 OPTICAL="on"
 SIPM_HITS="on"
@@ -19,7 +19,7 @@ IRON_END=70
 IRON_STEP=1
 
 # --- Parallelization Config ---
-MAX_CONCURRENT_SIMS=6     # 6 jobs * 8 threads = 48 cores used
+MAX_CONCURRENT_SIMS=48    
 MAX_CONCURRENT_ANALYSIS=50 # Analysis is likely single-threaded, use all 50
 # ─────────────────────────────────────────────────────────────────────────────
 
