@@ -1,12 +1,12 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_sim.sh — OpenGATE simulation launcher (parallel, 15 cores)
+# run_sim.sh — OpenGATE simulation launcher 
 # Usage: bash run_sim.sh
 # ─────────────────────────────────────────────────────────────────────────────
 WORLD=radi_cal_triple
 PARTICLE=e-
 ENERGY_KEV=150000000
-N_PARTICLES=1
+N_PARTICLES=5
 THREADS=1
 N_RUNS=200
 PARALLEL=200
@@ -93,7 +93,7 @@ wait
 echo "All runs complete and ROOT files flushed to disk."
 
 echo "Analysing standard dose and hits..."
-python3 analyze.py --batch-dir $OUT_DIR --workers $PARALLEL
+python3 analyze.py --batch-dir $OUT_DIR --workers 64
 
 echo "Calculating Theoretical Energy & Plotting LYSO Histogram..."
 python3 energy_calc.py --batch-dir $OUT_DIR
