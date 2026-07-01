@@ -120,7 +120,8 @@ def _drill_holes(base_vol, name, half_dz_mm, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
         bore.rmin = 0.0
-        bore.rmax = _CAP_OUTER_MM * mm
+        # Add a 10-micron tolerance tracking safety margin
+        bore.rmax = (_CAP_OUTER_MM + 0.010) * mm  # 👈 Over-drill slightly!
         bore.dz   = bore_dz
         result    = vol_module.subtract_volumes(
             result, bore,
