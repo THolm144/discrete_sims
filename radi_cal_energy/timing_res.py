@@ -85,9 +85,9 @@ def fit_gaussian_to_peak(data, n_bins=40):
             mids[fit_mask], counts[fit_mask],
             p0=[A0, mu0, iqr_sigma * 0.8],  # Removed alpha initial guess
             bounds=(
-                [0.5, mu0 - iqr_sigma, 2.0],        # Lower bounds (removed alpha)
-                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]  # Upper bounds (removed alpha)
-            ),
+    [0.5, mu0 - iqr_sigma, iqr_sigma * 0.05],   # instead of hardcoded 2.0
+    [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
+),
             maxfev=10000,
         )
         A_fit, mu_fit, sig_fit = popt

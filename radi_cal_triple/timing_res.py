@@ -74,9 +74,9 @@ def fit_gaussian_to_peak(data, n_bins=50):
             mids[fit_mask], counts[fit_mask],
             p0=[A0, mu0, iqr_sigma * 0.7],
             bounds=(
-                [0.5, mu0 - iqr_sigma, 1.0],
-                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
-            ),
+    [0.5, mu0 - iqr_sigma, iqr_sigma * 0.05],   # instead of hardcoded 2.0
+    [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
+),
             method='trf',    # Required to use robust loss functions
             loss='soft_l1',  # Down-weights outliers (the "chunky shoulders")
             maxfev=10000,
