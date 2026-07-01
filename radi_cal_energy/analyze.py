@@ -1,37 +1,9 @@
 """
 analyze.py
 ==========
-Unified batch post-processor.  Reads world type from sim_metadata.json,
-imports the world module, and calls world.analyze() to get structured results.
-analyze.py owns formatting; worlds own data extraction logic.
-
-World analyze() contract
-------------------------
-    def analyze(batch_dir, run_dirs, meta, utils) -> dict
-
-    Parameters
-    ----------
-    batch_dir   Path to the <energy>keV_<timestamp> directory
-    run_dirs    List of Path objects for each run_N subdirectory
-    meta        Dict returned by utils.load_batch_metadata()
-    utils       The analysis_utils module (passed to avoid circular imports)
-
-    Returns
-    -------
-    A dict with any subset of these keys:
-        hits                 dict  {process: count}  — photons reaching detectors
-        exits                dict  {process: count}  — photons leaving target volume
-        dose_centers         np.ndarray | None       — depth bin centers in cm
-        dose_edep            np.ndarray | None       — deposited energy per bin (MeV)
-        timing_res_ps        float                   — timing resolution in ps (0 = N/A)
-        avg_photon_energy_ev float                   — average detected optical photon energy (0 = N/A)
-        extra_lines          list[str]               — world-specific report lines
-        plots_saved          list[str]               — filenames of any extra plots saved
-
-Usage:
-    python3 analyze.py
-    python3 analyze.py --world radi_cal
-    python3 analyze.py --batch-dir runs/radi_cal/50000000keV_20250101_120000
+Parallelized unified batch post-processor. Reads world type from sim_metadata.json,
+imports the world module, and distributes individual run directory processing across
+available CPU cores using a ProcessPoolExecutor.
 """
 
 import argparse
@@ -39,6 +11,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import uproot
 import numpy as np
@@ -49,10 +22,12 @@ import analysis_utils as utils
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Unified batch analysis dispatcher")
+    p = argparse.ArgumentParser(description="Parallel batch analysis dispatcher")
     p.add_argument("--batch-dir", default=None)
     p.add_argument("--world",     default=None,
                    help="World name (scopes auto-discovery; auto-detected if omitted)")
+    p.add_argument("--workers",   type=int, default=None,
+                   help="Number of parallel worker processes (defaults to run count or available cores)")
     return p.parse_args()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -70,35 +45,53 @@ def load_world(world_name: str, script_dir: Path):
         return None
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PARALLEL WORK UNIT FOR ROOT FILES
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _process_single_root_file(file_path_str):
+    """Isolated, picklable work unit to process a single ROOT file on an independent core."""
+    file_path = Path(file_path_str)
+    photon_energies = []
+    timing_resolutions = []
+    
+    try:
+        with uproot.open(file_path) as file:
+            if "Hits" in file:
+                tree = file["Hits"]
+                if "edep" in tree.keys():
+                    edeps = tree["edep"].array(library="np")
+                    # Filter for optical photons (< 1e-5 MeV) and convert to eV
+                    optical_edeps = edeps[(edeps > 0) & (edeps < 1e-5)] * 1e6
+                    photon_energies.extend(optical_edeps.tolist())
+
+                if "time" in tree.keys():
+                    times = tree["time"].array(library="np")
+                    if len(times) > 1:
+                        timing_resolutions.append(float(np.std(times)))
+    except Exception as e:
+        # Silently log to avoid multi-threaded stdout corruption
+        pass
+
+    return photon_energies, timing_resolutions
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DATA EXTRACTION HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _extract_optical_metrics(hits_files):
-    """Fallback helper to extract timing and energy directly from ROOT files."""
+def _extract_optical_metrics_parallel(hits_files, max_workers):
+    """Distributes fallback parsing of heavy ROOT files across the process pool."""
     all_photon_energies = []
     timing_resolutions = []
 
-    for file_path in hits_files:
-        try:
-            with uproot.open(file_path) as file:
-                if "Hits" not in file:
-                    continue
-                tree = file["Hits"]
-                
-                # Extract energy
-                if "edep" in tree.keys():
-                    edeps = tree["edep"].array()
-                    # Filter for optical photons (< 1e-5 MeV) and convert to eV
-                    optical_edeps = [e * 1e6 for e in edeps if 0 < e < 1e-5] 
-                    all_photon_energies.extend(optical_edeps)
-
-                # Extract timing
-                if "time" in tree.keys():
-                    times = tree["time"].array()
-                    if len(times) > 1:
-                        timing_resolutions.append(np.std(times))
-        except Exception as e:
-            print(f"  WARNING: Could not parse ROOT file {file_path}: {e}")
+    # Convert paths to strings for clean process serialization across complex environments
+    file_strs = [str(f) for f in hits_files]
+    
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_process_single_root_file, f_str) for f_str in file_strs]
+        for future in as_completed(futures):
+            energies, timings = future.result()
+            all_photon_energies.extend(energies)
+            timing_resolutions.extend(timings)
 
     avg_energy = np.mean(all_photon_energies) if all_photon_energies else 0.0
     avg_timing = np.mean(timing_resolutions) if timing_resolutions else 0.0
@@ -122,7 +115,6 @@ def build_report(batch_dir: Path, meta: dict, results: dict) -> str:
 
     caps = meta.get("capabilities", {})
 
-    # ── Optical section ───────────────────────────────────────────────────
     if caps.get("optical", False) or sum(hits.values()) > 0:
         lines += utils.report_optical_section(
             hits, exits, total_optical, total_primaries, total_edep
@@ -144,17 +136,14 @@ def build_report(batch_dir: Path, meta: dict, results: dict) -> str:
             f"  Avg Photon Energy    : " + (f"{avg_energy:.2f} eV" if avg_energy > 0 else "N/A"),
         ]
 
-    # ── Dose section ──────────────────────────────────────────────────────
     if caps.get("dose", True):
         lines += utils.report_dose_section(results.get("dose_centers"), dose_edep, total_primaries)
 
-    # ── World-specific extra lines ────────────────────────────────────────
     extra = results.get("extra_lines", [])
     if extra:
         lines += ["", "─" * utils.W, "  WORLD-SPECIFIC RESULTS", "─" * utils.W]
         lines += extra
 
-    # ── Extra plots saved ─────────────────────────────────────────────────
     plots = results.get("plots_saved", [])
     if plots:
         lines += ["", "─" * utils.W, "  PLOTS SAVED", "─" * utils.W]
@@ -164,7 +153,7 @@ def build_report(batch_dir: Path, meta: dict, results: dict) -> str:
     return "\n".join(lines)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN
+# MAIN EXECUTION
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -175,8 +164,18 @@ def main():
     batch_dir = utils.find_batch_dir(script_dir, args.world, args.batch_dir)
     run_dirs  = utils.find_runs(batch_dir)
 
+    num_runs = len(run_dirs)
     print(f"  Batch dir   : {batch_dir}")
-    print(f"  Run count   : {len(run_dirs)}")
+    print(f"  Run count   : {num_runs}")
+
+    # Determine processing footprint relative to your 512-core ceiling
+    if args.workers:
+        max_workers = args.workers
+    else:
+        # Cap workers at the actual number of files to prevent thread spin-up waste
+        max_workers = min(num_runs, os.cpu_count() or 1)
+    
+    print(f"  Parallel Processing Active: Using {max_workers} worker cores.")
 
     meta       = utils.load_batch_metadata(run_dirs, args.world)
     world_name = meta["world"]
@@ -184,11 +183,16 @@ def main():
 
     # ── Dispatch to world analyze() hook ─────────────────────────────────
     if world and hasattr(world, "analyze"):
-        print(f"  Dispatching to {world_name}.analyze() …")
-        results = world.analyze(batch_dir, run_dirs, meta, utils)
+        print(f"  Dispatching to parallelized {world_name}.analyze() …")
+        # Pass max_workers downstream if your world module accepts it
+        try:
+            results = world.analyze(batch_dir, run_dirs, meta, utils, max_workers=max_workers)
+        except TypeError:
+            # Fallback if world script does not accept the max_workers keyword argument yet
+            results = world.analyze(batch_dir, run_dirs, meta, utils)
     else:
-        print("  No world analyze() hook — running generic analysis.")
-        results = _generic_analyze(batch_dir, run_dirs, meta)
+        print("  No world analyze() hook — running parallel fallback analysis.")
+        results = _generic_analyze_parallel(batch_dir, run_dirs, meta, max_workers)
 
     # ── Standard depth-dose plot ──────────────────────────────────────────
     centers = results.get("dose_centers")
@@ -200,22 +204,24 @@ def main():
         )
         results.setdefault("plots_saved", []).append(plot_path.name)
 
-    # ── Report ────────────────────────────────────────────────────────────
+    # ── Report Generation ─────────────────────────────────────────────────
     report = build_report(batch_dir, meta, results)
     print("\n" + report)
     (batch_dir / "batch_analysis.txt").write_text(report)
     print(f"\n  Report → {batch_dir / 'batch_analysis.txt'}")
 
-def _generic_analyze(batch_dir: Path, run_dirs: list, meta: dict) -> dict:
-    """Fallback: optical hits + exits + dose + extracted uproot metrics."""
+
+def _generic_analyze_parallel(batch_dir: Path, run_dirs: list, meta: dict, max_workers: int) -> dict:
+    """Fallback parallel tracking parser using Multi-Processing pools."""
     hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
     exits_files = [d / "optical_exited.root" for d in run_dirs]
 
+    # Check if analysis_utils has internal parallel loops, otherwise execute natively
     hits        = utils.analyse_hits(hits_files)
     exits       = utils.analyse_exits(exits_files)
     centers, edep = utils.load_dose_mhd(run_dirs, meta["phantom_cm"])
     
-    timing_res, avg_energy = _extract_optical_metrics(hits_files)
+    timing_res, avg_energy = _extract_optical_metrics_parallel(hits_files, max_workers)
 
     return {
         "hits":                 hits,

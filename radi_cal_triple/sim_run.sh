@@ -50,7 +50,8 @@ wait
 echo "All runs complete."
 
 echo "Analysing standard dose and hits..."
-python3 analyze.py --batch-dir $OUT_DIR
+
+python3 analyze.py --batch-dir $OUT_DIR --workers $PARALLEL
 
 echo "Calculating Theoretical Energy & Plotting LYSO Histogram..."
 python3 energy_calc.py --batch-dir $OUT_DIR
