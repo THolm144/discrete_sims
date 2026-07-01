@@ -177,10 +177,15 @@ def main():
         print("  WARNING: No hit files found.")
         return
 
-    # Data structures for E-type spatial reconstruction
+   # Data structures for E-type spatial reconstruction
     up_first, down_first = {}, {}
-    
+
     # Data structures for T-type timing resolution
+    # NOTE: these must persist across the whole file loop, since each
+    # detector_hits_*.root file only contains hits from ONE SiPM face
+    # (upstream OR downstream) — coincidences only emerge once all files
+    # in the batch have been folded in.
+    up_times_by_ev, dw_times_by_ev = {}, {}
     t_type_best_minus_ps = []
 
     for fpath in hit_files:
@@ -191,7 +196,7 @@ def main():
                 if not tree_key: continue
                 tree = f[tree_key]
                 if tree.num_entries == 0: continue
-                
+
                 x  = tree["Position_X"].array(library="np")
                 y  = tree["Position_Y"].array(library="np")
                 z  = tree["Position_Z"].array(library="np")
@@ -210,7 +215,7 @@ def main():
         # ── 1. E-Type Spatial Reconstruction (GlobalTime) ──
         is_e_type = np.isin(channels, list(_E_TYPE_INDICES))
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
-        
+
         mask_e_up = is_e_type & is_prompt & near_up
         mask_e_dw = is_e_type & is_prompt & near_dw
 
@@ -227,31 +232,30 @@ def main():
         # ── 2. T-Type Timing Resolution (LocalTime & Optical Photons) ──
         is_t_type  = np.isin(channels, list(_T_TYPE_INDICES))
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
-        
+
         mask_t_up = is_t_type & is_optical & near_up
         mask_t_dw = is_t_type & is_optical & near_dw
-        
+
         ev_t_up, lt_t_up = ev[mask_t_up], lt[mask_t_up] * 1000.0  # convert to ps
         ev_t_dw, lt_t_dw = ev[mask_t_dw], lt[mask_t_dw] * 1000.0
 
-        # Group T-type local times by event
-        up_times_by_ev = {}
+        # Accumulate into the persistent dicts, keyed by (run_tag, event_id)
+        # so events from different runs never collide.
         for e, t in zip(ev_t_up, lt_t_up):
-            up_times_by_ev.setdefault(e, []).append(t)
-      
-        
-        dw_times_by_ev = {}
+            key = (run_tag, int(e))
+            up_times_by_ev.setdefault(key, []).append(t)
+
         for e, t in zip(ev_t_dw, lt_t_dw):
-            dw_times_by_ev.setdefault(e, []).append(t)
-        #debug
-        print(f"    [{run_tag}] T-type optical hits: up={mask_t_up.sum()}, dw={mask_t_dw.sum()}, "
-      f"unique_up_ev={len(up_times_by_ev)}, unique_dw_ev={len(dw_times_by_ev)}")
-        common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
-        for e in common_t_evs:
-            if len(up_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE:
-                t_up_q = np.quantile(up_times_by_ev[e], ARRIVAL_QUANTILE)
-                t_dw_q = np.quantile(dw_times_by_ev[e], ARRIVAL_QUANTILE)
-                t_type_best_minus_ps.append((t_dw_q - t_up_q) / 2.0)
+            key = (run_tag, int(e))
+            dw_times_by_ev.setdefault(key, []).append(t)
+
+    # ── Coincidence matching happens AFTER all files are folded in ──
+    common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
+    for e in common_t_evs:
+        if len(up_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE:
+            t_up_q = np.quantile(up_times_by_ev[e], ARRIVAL_QUANTILE)
+            t_dw_q = np.quantile(dw_times_by_ev[e], ARRIVAL_QUANTILE)
+            t_type_best_minus_ps.append((t_dw_q - t_up_q) / 2.0)
 
     # ── Calculate T-Type Timing Resolution ──
     print(f"  T-Type coincident events for timing: {len(t_type_best_minus_ps):,}")
