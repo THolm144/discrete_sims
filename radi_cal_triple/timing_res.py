@@ -17,7 +17,7 @@ _CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM
 _HOLE_INSET_MM = 3.5
 _HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 
-TIME = "GlobalTime"  # Using GlobalTime to match plot_hits_vs_time.py
+TIME = "LocalTime"  
 SIPM_JITTER_PS = 20.0
 
 # Correct alignment mapping matching worlds/radi_cal_energy.py:
