@@ -227,9 +227,12 @@ def run(batch_dir: Path):
         up_times = t_arr[up_m]
         dw_times = t_arr[dw_m]
 
+        # ── CORRECTED: Apply Intrinsic SiPM Jitter independently per photon ──
         if SIPM_JITTER_PS > 0:
-            jitter = np.random.normal(0.0, SIPM_JITTER_PS, size=len(ev_times_ps))
-            ev_times_ps = ev_times_ps + jitter
+            if len(up_times) > 0:
+                up_times = up_times + np.random.normal(0.0, SIPM_JITTER_PS, size=len(up_times))
+            if len(dw_times) > 0:
+                dw_times = dw_times + np.random.normal(0.0, SIPM_JITTER_PS, size=len(dw_times))
             
         dw_num = len(dw_times)
         up_num = len(up_times)

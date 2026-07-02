@@ -174,19 +174,21 @@ def run(batch_dir: Path):
     diag_dw_n, diag_up_n       = [], []
     diag_dw_valid, diag_up_valid = [], []
 
-    for ev_id in unique_events:
-        mask = event_id == ev_id
-        ev_times_ps = time_ns[mask] * 1000.0
-        ev_channels = channels[mask]
+    for ev_id_arr, t_arr, up_m, dw_m in zip(ev_ids_split, times_split, up_mask_split, dw_mask_split):
+        if len(ev_id_arr) == 0:
+            continue
+            
+        ev_id = ev_id_arr[0]
+        up_times = t_arr[up_m]
+        dw_times = t_arr[dw_m]
 
+        # ── CORRECTED: Apply Intrinsic SiPM Jitter independently per photon ──
         if SIPM_JITTER_PS > 0:
-            jitter = np.random.normal(0.0, SIPM_JITTER_PS, size=len(ev_times_ps))
-            ev_times_ps = ev_times_ps + jitter
-
-        # ── EXPLICIT T-TYPE ISOLATION ──
-        up_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
-        dw_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
-
+            if len(up_times) > 0:
+                up_times = up_times + np.random.normal(0.0, SIPM_JITTER_PS, size=len(up_times))
+            if len(dw_times) > 0:
+                dw_times = dw_times + np.random.normal(0.0, SIPM_JITTER_PS, size=len(dw_times))
+            
         dw_num = len(dw_times)
         up_num = len(up_times)
         diag_dw_n.append(dw_num)
