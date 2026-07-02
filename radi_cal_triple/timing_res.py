@@ -60,7 +60,7 @@ def fit_gaussian_to_peak(data, n_bins=50):
     A0        = float(smoothed[peak_idx])
 
     # Focus strictly on the core by requiring bins to have at least 15% of peak amplitude
-    fit_mask = (counts > A0 * 0.15) & (np.abs(mids - mu0) < 1.5 * iqr_sigma)
+    fit_mask = (counts > A0 * 0.15) & (np.abs(mids - mu0) < 3.0 * iqr_sigma)
     
     # Fallback to IQR if the peak is extremely sparse
     if fit_mask.sum() < 4:
@@ -270,7 +270,7 @@ def run(batch_dir: Path):
     clean_dw = clean_around_mode(dw_only_ps,    window_ps=150.0)
     clean_up = clean_around_mode(up_only_ps,    window_ps=150.0)
     clean_dt = clean_around_mode(delta_t_ps,    window_ps=200.0)
-    clean_bm = clean_around_mode(best_minus_ps, window_ps=100.0)
+    clean_bm = clean_around_mode(best_minus_ps, window_ps=300.0)
 
     bm_amp, bm_mu, bm_sigma, bm_sigma_err = fit_gaussian_to_peak(clean_bm)
     dw_amp, dw_mu, dw_sigma, dw_sigma_err = fit_gaussian_to_peak(clean_dw)

@@ -75,7 +75,7 @@ def fit_gaussian_to_peak(data, n_bins=40):
     A0        = float(smoothed[peak_idx])
 
     # Narrow the window slightly to avoid the broad flat skirts pulling the peak amplitude up
-    fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
+    fit_mask = np.abs(mids - mu0) < 3.0 * iqr_sigma
     if fit_mask.sum() < 5:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
@@ -240,7 +240,7 @@ def run(batch_dir: Path):
 
     clean_dw = clean_around_mode(selected_dw, window_ps=150.0)
     clean_up = clean_around_mode(selected_up, window_ps=150.0)
-    clean_bm = clean_around_mode(selected_bm, window_ps=100.0)
+    clean_bm = clean_around_mode(selected_bm, window_ps=300.0)
 
     # ── Skewed Gaussian peak fits ───────────────────────────────────────────
     bm_amp, bm_mu, bm_sigma, bm_sigma_err, bm_alpha = fit_gaussian_to_peak(clean_bm)

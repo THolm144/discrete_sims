@@ -37,6 +37,7 @@ CAPABILITIES = {
 }
 
 TARGET_VOL_NAME = "calorimeter"
+TARGET_VOLUME_NAME = TARGET_VOL_NAME
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY CONSTANTS
@@ -118,6 +119,7 @@ BEAM_CONFIG = {
     "target_cm": [0, 0, 0],
     "offset_cm": _SIPM_Z_MM/10 + 2.0,
 }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY HELPERS
@@ -475,4 +477,7 @@ def get_geometry_primitives() -> list[dict]:
             "color":  color,   
             "alpha":  0.35,
         })
+    
+    
+
     return prims
