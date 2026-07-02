@@ -68,6 +68,7 @@ for ENERGY in "${ENERGIES_KEV[@]}"; do
             --beam-radius  "$BEAM_RADIUS" \
             --optical      "$OPTICAL" \
             --cherenkov    "$CHERENKOV" \
+            --hits-optical-only on \
             --physics-list "$PHYSICS_LIST" \
             --run-id       "$RUN_ID" \
             --output-dir   "$RUN_OUT_DIR" > "$LOG_FILE" 2>&1 &
