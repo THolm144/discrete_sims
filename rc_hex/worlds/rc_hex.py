@@ -1,22 +1,24 @@
 """
-worlds/radi_cal_energy.py
+worlds/rc_hex.py
 =========================
-RADiCAL Shashlik calorimeter — energy-measurement variant.
+RADiCAL Shashlik calorimeter — hexagonal energy-measurement variant.
 
 Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
         LYSO | W | LYSO | W | … | W | LYSO   (125.29 mm total)
 
-Capillaries (4, no central hole):
-    T-type (indices 0, 1) — diagonal pair:
-        Quartz rod (Ø1.15 mm, 183 mm) with a short bore at shower-max
-        (LYSO layers 8–11) holding a BCF-92 WLS filament (Ø0.90 mm, ~15 mm).
-        Quartz rod fills both arms above and below the filament.
-
-    E-type (indices 2, 3) — kitty-corner pair:
+Capillaries (6, alternating):
+    Regular Hexagon (7mm side). Capillaries placed on the apothem of each face, 
+    at a radial distance of 3.5mm from the center.
+    
+    E-type (indices 0, 2, 4) — Top face is index 0:
         Quartz sleeve (Ø1.15 mm outer) with a continuous BCF-92 WLS 
         filament (Ø0.90 mm inner) running the full length.
 
-SiPMs:  8 active silicon tiles (4 front, 4 back) + 2 FR4 readout cards.
+    T-type (indices 1, 3, 5):
+        Quartz rod (Ø1.15 mm, 183 mm) with a short bore at shower-max
+        (LYSO layers 8–11) holding a BCF-92 WLS filament (Ø0.90 mm, ~15 mm).
+
+SiPMs:  12 active silicon tiles (6 front, 6 back) + 2 hexagonal FR4 readout cards.
 """
 
 import numpy as np
@@ -28,7 +30,7 @@ import opengate.geometry.volumes as vol_module
 
 CAPABILITIES = {
     "optical":          True,
-    "dose":              True,
+    "dose":             True,
     "sipm_hits":        True,
     "optical_exits":    True,
     "calorimeter_mode": True,
@@ -40,7 +42,7 @@ TARGET_VOLUME_NAME = "calorimeter"
 # GEOMETRY CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-_LYSO_XY_MM      = 14.0
+_HEX_SIDE_MM     = 7.0
 _LYSO_THICK_MM   = 1.5
 _TYVEK_THICK_MM  = 0.008 * 25.4           # 0.2032 mm
 _W_THICK_MM      = 2.5
@@ -48,26 +50,41 @@ _N_LYSO          = 29
 _N_W             = 28
 
 _GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   # 1.9064 mm
-_CALOR_XY_MM     = _LYSO_XY_MM    + 2 * _TYVEK_THICK_MM   # 14.4064 mm
 _CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 125.2856 mm
+
+# Hexagon Math
+# For a regular hexagon, circumradius (center to vertex) == side length
+_APOTHEM_MM      = _HEX_SIDE_MM * np.sqrt(3) / 2  # ~6.062 mm
+_CAP_R_MM        = 3.5                            # Safe radial distance from center (prevents center overlap)
 
 _CAP_OUTER_MM    = 1.150 / 2              # 0.575 mm  — quartz rod outer radius
 _CAP_INNER_MM    = 0.950 / 2              # 0.475 mm  — inner bore radius
 _CAP_LENGTH_MM   = 183.0
-_HOLE_INSET_MM   = 3.5
-_HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM      # 3.7032 mm
 
 _FILAMENT_R_MM   = 0.900 / 2              # 0.45 mm   — BCF-92 filament radius
 
+# ── Capillary Positions (6 faces) ─────────────────────────────────────────────
+# Flat-top orientation: Faces are centered at 90, 150, 210, 270, 330, and 30 degrees.
+# Top face is at 90 degrees (pi/2).
+_CAP_POSITIONS_MM = []
+for i in range(6):
+    angle = np.pi / 2 + i * (np.pi / 3)
+    cx = _CAP_R_MM * np.cos(angle)
+    cy = _CAP_R_MM * np.sin(angle)
+    _CAP_POSITIONS_MM.append([cx, cy])
+
+_E_TYPE_INDICES  = {0, 2, 4} # 0 is Top
+_T_TYPE_INDICES  = {1, 3, 5}
+
 # ── Shower-max band (T-type bore region) ──────────────────────────────────────
-_SHOWER_FIRST    = 8                      # first LYSO layer index (0-based)
-_SHOWER_LAST     = 11                     # last  LYSO layer index (0-based)
+_SHOWER_FIRST    = 8                      
+_SHOWER_LAST     = 11                     
 _LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
 _FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
 _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
 _BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
 _BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
-_FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             # ~15.13 mm
+_FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             
 _FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5*(_BAND_FRONT_MM + _BAND_BACK_MM)
 
 # ── SiPM / card geometry ─────────────────────────────────────────────────────
@@ -78,30 +95,22 @@ _CARD_HOLE_R_MM  = 2.0
 _SIPM_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM/2
 _CARD_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM + 0.1 + _CARD_THICK_MM/2
 
-_WORLD_XY_MM     = 1.5 * _CALOR_XY_MM
+# Approximate bounding box for world
+_WORLD_XY_MM     = 3.0 * _HEX_SIDE_MM
 _WORLD_Z_MM      = 1.5 * max(_CAP_LENGTH_MM, _CALOR_THICK_MM)
 
-_CAP_POSITIONS_MM = [
-    [ _HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 0 — T-type (Top-Right)
-    [-_HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 1 — T-type (Bottom-Left)
-    [-_HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 2 — E-type (Top-Left)
-    [ _HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 3 — E-type (Bottom-Right)
-]
-_E_TYPE_INDICES  = {2, 3}
-_T_TYPE_INDICES  = {0, 1}
-
 # ── Simulator metadata ────────────────────────────────────────────────────────
-PHANTOM_CM       = [_CALOR_XY_MM/10, _CALOR_XY_MM/10, _CALOR_THICK_MM/10]
+PHANTOM_CM       = [_HEX_SIDE_MM/10, _HEX_SIDE_MM/10, _CALOR_THICK_MM/10]
 EXPECTED_DEDX    = 1.0
 ACTIVATE_CALORIMETER_SETTINGS = True
 CALORIMETER_Z_RES_MM  = 0.1
 ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
 TIMING_TRIGGER_THRESHOLD = 1
 
-# FIX: Removed duplicate strings. Matches exactly the 8 physical SiPM volumes instantiated.
 DETECTOR_VOLUME_NAMES = [
-    "sipm_front_0", "sipm_front_1", "sipm_front_2", "sipm_front_3",
-    "sipm_back_0",  "sipm_back_1",  "sipm_back_2",  "sipm_back_3",
+    f"sipm_front_{i}" for i in range(6)
+] + [
+    f"sipm_back_{i}" for i in range(6)
 ]
 
 BEAM_CONFIG = {
@@ -120,8 +129,7 @@ def _drill_holes(base_vol, name, half_dz_mm, mm):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
         bore.rmin = 0.0
-        # Add a 10-micron tolerance tracking safety margin
-        bore.rmax = (_CAP_OUTER_MM + 0.010) * mm  # 👈 Over-drill slightly!
+        bore.rmax = (_CAP_OUTER_MM + 0.010) * mm 
         bore.dz   = bore_dz
         result    = vol_module.subtract_volumes(
             result, bore,
@@ -131,18 +139,21 @@ def _drill_holes(base_vol, name, half_dz_mm, mm):
     return result
 
 def _make_gap(name, mm):
-    base      = vol_module.BoxVolume(name=f"{name}_box")
-    base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _GAP_THICK_MM * mm]
+    base = vol_module.HexagonVolume(name=f"{name}_hex")
+    base.rmax = _HEX_SIDE_MM * mm
+    base.dz   = (_GAP_THICK_MM / 2) * mm
     return _drill_holes(base, name, _GAP_THICK_MM/2, mm)
 
 def _make_lyso(name, mm):
-    base      = vol_module.BoxVolume(name=f"{name}_box")
-    base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, _LYSO_THICK_MM * mm]
+    base = vol_module.HexagonVolume(name=f"{name}_hex")
+    base.rmax = _HEX_SIDE_MM * mm
+    base.dz   = (_LYSO_THICK_MM / 2) * mm
     return _drill_holes(base, name, _LYSO_THICK_MM/2, mm)
 
 def _make_abso(name, mm):
-    base      = vol_module.BoxVolume(name=f"{name}_box")
-    base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _W_THICK_MM * mm]
+    base = vol_module.HexagonVolume(name=f"{name}_hex")
+    base.rmax = _HEX_SIDE_MM * mm
+    base.dz   = (_W_THICK_MM / 2) * mm
     return _drill_holes(base, name, _W_THICK_MM/2, mm)
 
 def _build_capillaries(sim, mm):
@@ -151,8 +162,7 @@ def _build_capillaries(sim, mm):
 
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if i in _E_TYPE_INDICES:
-            # FIX: Restored the proper physical cladding layer layout for E-Types.
-            # Active Quartz Cladding Sleeve (spanning calorimeter thickness)
+            # Active Quartz Cladding Sleeve
             sleeve = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
             sleeve.mother      = "world"
             sleeve.rmin        = _FILAMENT_R_MM * mm
@@ -161,7 +171,7 @@ def _build_capillaries(sim, mm):
             sleeve.translation = [cx * mm, cy * mm, 0]
             sleeve.material    = "G4_SILICON_DIOXIDE"
 
-            # Continuous active core filament inside the sleeve
+            # Continuous active core filament
             core = sim.add_volume("Tubs", f"cap_{i}_active_core")
             core.mother        = "world"
             core.rmin          = 0.0
@@ -191,7 +201,7 @@ def _build_capillaries(sim, mm):
             tail_b.material    = "G4_SILICON_DIOXIDE"
 
         else:
-            # ── T-TYPE ──
+            # T-TYPE 
             rod_base      = vol_module.TubsVolume(name=f"cap_{i}_rod")
             rod_base.rmin = 0.0
             rod_base.rmax = _CAP_OUTER_MM * mm
@@ -226,14 +236,18 @@ def _build_sipms(sim, mm):
         z_sipm = sgn * _SIPM_Z_MM * mm
         z_card = sgn * _CARD_Z_MM * mm
 
-        card_box       = vol_module.BoxVolume(name=f"card_{end_name}_box")
-        card_box.size  = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
+        # Readout cards are now hexagonal as well
+        card_base      = vol_module.HexagonVolume(name=f"card_{end_name}_base")
+        card_base.rmax = _HEX_SIDE_MM * mm
+        card_base.dz   = (_CARD_THICK_MM / 2) * mm
+        
         card_hole      = vol_module.TubsVolume(name=f"card_{end_name}_hole")
         card_hole.rmin = 0.0
         card_hole.rmax = _CARD_HOLE_R_MM * mm
         card_hole.dz   = (_CARD_THICK_MM + 0.1) * mm
+        
         card_vol        = vol_module.subtract_volumes(
-            card_box, card_hole, new_name=f"card_{end_name}"
+            card_base, card_hole, new_name=f"card_{end_name}"
         )
         card_vol.name        = f"card_{end_name}"
         card_vol.mother      = "world"
@@ -259,8 +273,10 @@ def build_world(sim, units):
     world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
     world.material = "G4_AIR"
 
-    calor_base      = vol_module.BoxVolume(name="calorimeter_box")
-    calor_base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CALOR_THICK_MM * mm]
+    calor_base      = vol_module.HexagonVolume(name="calorimeter_base")
+    calor_base.rmax = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
+    calor_base.dz   = (_CALOR_THICK_MM / 2) * mm
+    
     calor_vol       = _drill_holes(calor_base, "calorimeter", _CALOR_THICK_MM/2, mm)
     calor_vol.name        = TARGET_VOLUME_NAME
     calor_vol.mother      = "world"
@@ -310,7 +326,6 @@ def build_world(sim, units):
 def add_optical_surfaces(sim, units):
     vols = sim.volume_manager.volumes
 
-    # Tyvek reflective wrap on all LYSO outer faces
     for i in range(_N_LYSO):
         lyso_name = f"lyso_{i}"
         gap_name  = f"gap_{i}"
@@ -318,8 +333,6 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
 
-    # FIX: Corrected duplicate logic block and resolved the compilation crash indentation bug.
-    # Optical interfaces for E-Type boundary interfaces
     for cap_idx in _E_TYPE_INDICES:
         core_name   = f"cap_{cap_idx}_active_core"
         sleeve_name = f"cap_{cap_idx}_active_sleeve"
@@ -333,7 +346,6 @@ def add_optical_surfaces(sim, units):
         if core_name in vols and tail_f_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
 
-    # FIX: Added missing T-type boundaries for proper light guide trapping configurations
     for cap_idx in _T_TYPE_INDICES:
         rod_name  = f"cap_{cap_idx}"
         plug_name = f"cap_{cap_idx}_filament"
@@ -386,7 +398,7 @@ def analyze(batch_dir, run_dirs, meta, utils):
                linewidth=1.2, width=0.8)
         ax.set_xlabel("LYSO Layer Number")
         ax.set_ylabel("Energy Deposition (MeV)")
-        ax.set_title("RADiCAL Energy — Longitudinal Shower Profile")
+        ax.set_title("RADiCAL Energy — Hexagonal Longitudinal Shower Profile")
         fig.tight_layout()
         out = batch_dir / "radical_energy_longitudinal.png"
         fig.savefig(out, dpi=200)
@@ -442,9 +454,10 @@ def _aggregate_batch(batch_dir, run_dirs, meta, utils):
 
 def get_geometry_primitives() -> list[dict]:
     prims = [{
-        "type":   "box",
+        "type":   "hexagon",
         "center": [0.0, 0.0, 0.0],
-        "half":   [_CALOR_XY_MM/20, _CALOR_XY_MM/20, _CALOR_THICK_MM/20],
+        "side":   _HEX_SIDE_MM/10,
+        "height": _CALOR_THICK_MM/10,
         "color":  "#00ffcc",
         "alpha":  0.15,
     }]
