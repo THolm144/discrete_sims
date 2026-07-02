@@ -36,8 +36,7 @@ CAPABILITIES = {
     "calorimeter_mode": True,
 }
 
-TARGET_VOL_NAME = "calorimeter"
-TARGET_VOLUME_NAME = TARGET_VOL_NAME
+TARGET_VOLUME_NAME = "calorimeter"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY CONSTANTS
@@ -54,9 +53,8 @@ _GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   # 1.9064 mm
 _CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 125.2856 mm
 
 # Hexagon Math
-# For a regular hexagon, circumradius (center to vertex) == side length
 _APOTHEM_MM      = _HEX_SIDE_MM * np.sqrt(3) / 2  # ~6.062 mm
-_CAP_R_MM        = 3.5                            # Safe radial distance from center (prevents center overlap)
+_CAP_R_MM        = 3.5                            # Safe radial distance from center
 
 _CAP_OUTER_MM    = 1.150 / 2              # 0.575 mm  — quartz rod outer radius
 _CAP_INNER_MM    = 0.950 / 2              # 0.475 mm  — inner bore radius
@@ -65,8 +63,6 @@ _CAP_LENGTH_MM   = 183.0
 _FILAMENT_R_MM   = 0.900 / 2              # 0.45 mm   — BCF-92 filament radius
 
 # ── Capillary Positions (6 faces) ─────────────────────────────────────────────
-# Flat-top orientation: Faces are centered at 90, 150, 210, 270, 330, and 30 degrees.
-# Top face is at 90 degrees (pi/2).
 _CAP_POSITIONS_MM = []
 for i in range(6):
     angle = np.pi / 2 + i * (np.pi / 3)
@@ -96,7 +92,6 @@ _CARD_HOLE_R_MM  = 2.0
 _SIPM_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM/2
 _CARD_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM + 0.1 + _CARD_THICK_MM/2
 
-# Approximate bounding box for world
 _WORLD_XY_MM     = 3.0 * _HEX_SIDE_MM
 _WORLD_Z_MM      = 1.5 * max(_CAP_LENGTH_MM, _CALOR_THICK_MM)
 
@@ -125,13 +120,14 @@ BEAM_CONFIG = {
 # GEOMETRY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _drill_holes(base_vol, name, half_dz_mm, mm):
+def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
     bore_dz = (half_dz_mm + 0.1) * mm
-    result   = base_vol
+    result  = base_vol
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
         bore.rmin = 0.0
-        bore.rmax = (_CAP_OUTER_MM + 0.010) * mm 
+        # Stagger the drill clearance so nested daughter volumes don't share identical boundaries
+        bore.rmax = (_CAP_OUTER_MM + clearance) * mm  
         bore.dz   = bore_dz
         result    = vol_module.subtract_volumes(
             result, bore,
@@ -142,21 +138,21 @@ def _drill_holes(base_vol, name, half_dz_mm, mm):
 
 def _make_gap(name, mm):
     base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.rmax = _HEX_SIDE_MM * mm
-    base.dz   = (_GAP_THICK_MM / 2) * mm
-    return _drill_holes(base, name, _GAP_THICK_MM/2, mm)
+    base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
+    base.height = _GAP_THICK_MM * mm  
+    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.012)
 
 def _make_lyso(name, mm):
     base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.rmax = _HEX_SIDE_MM * mm
-    base.dz   = (_LYSO_THICK_MM / 2) * mm
-    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm)
+    base.radius = _HEX_SIDE_MM * mm  
+    base.height = _LYSO_THICK_MM * mm
+    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.014)
 
 def _make_abso(name, mm):
     base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.rmax = _HEX_SIDE_MM * mm
-    base.dz   = (_W_THICK_MM / 2) * mm
-    return _drill_holes(base, name, _W_THICK_MM/2, mm)
+    base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
+    base.height = _W_THICK_MM * mm
+    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.012)
 
 def _build_capillaries(sim, mm):
     half_cap   = _CAP_LENGTH_MM / 2 * mm
@@ -164,9 +160,9 @@ def _build_capillaries(sim, mm):
 
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if i in _E_TYPE_INDICES:
-            # Active Quartz Cladding Sleeve
+            # Active Quartz Cladding Sleeve (Mothered to world to prevent overlap with drilled calorimeter)
             sleeve = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
-            sleeve.mother      = TARGET_VOL_NAME
+            sleeve.mother      = "world"
             sleeve.rmin        = _FILAMENT_R_MM * mm
             sleeve.rmax        = _CAP_OUTER_MM * mm     
             sleeve.dz          = half_calor             
@@ -175,7 +171,7 @@ def _build_capillaries(sim, mm):
 
             # Continuous active core filament
             core = sim.add_volume("Tubs", f"cap_{i}_active_core")
-            core.mother        = TARGET_VOL_NAME
+            core.mother        = "world"
             core.rmin          = 0.0
             core.rmax          = _FILAMENT_R_MM * mm
             core.dz            = half_calor
@@ -203,7 +199,7 @@ def _build_capillaries(sim, mm):
             tail_b.material    = "G4_SILICON_DIOXIDE"
 
         else:
-            # T-TYPE 
+            # ── T-TYPE ──
             rod_base      = vol_module.TubsVolume(name=f"cap_{i}_rod")
             rod_base.rmin = 0.0
             rod_base.rmax = _CAP_OUTER_MM * mm
@@ -220,13 +216,13 @@ def _build_capillaries(sim, mm):
                 new_name=f"cap_{i}",
             )
             quartz_vol.name        = f"cap_{i}"
-            quartz_vol.mother      = TARGET_VOL_NAME
+            quartz_vol.mother      = "world"
             quartz_vol.material    = "G4_SILICON_DIOXIDE"
             quartz_vol.translation = [cx * mm, cy * mm, 0]
             sim.add_volume(quartz_vol)
 
             filament             = sim.add_volume("Tubs", f"cap_{i}_filament")
-            filament.mother      = TARGET_VOL_NAME
+            filament.mother      = "world"
             filament.rmin        = 0.0
             filament.rmax        = _FILAMENT_R_MM * mm
             filament.dz          = (_FILAMENT_LEN_MM / 2) * mm
@@ -238,10 +234,9 @@ def _build_sipms(sim, mm):
         z_sipm = sgn * _SIPM_Z_MM * mm
         z_card = sgn * _CARD_Z_MM * mm
 
-        # Readout cards are now hexagonal as well
         card_base      = vol_module.HexagonVolume(name=f"card_{end_name}_base")
-        card_base.rmax = _HEX_SIDE_MM * mm
-        card_base.dz   = (_CARD_THICK_MM / 2) * mm
+        card_base.radius = _HEX_SIDE_MM * mm
+        card_base.height   = (_CARD_THICK_MM / 2) * mm
         
         card_hole      = vol_module.TubsVolume(name=f"card_{end_name}_hole")
         card_hole.rmin = 0.0
@@ -275,12 +270,13 @@ def build_world(sim, units):
     world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
     world.material = "G4_AIR"
 
-    calor_base      = vol_module.HexagonVolume(name="calorimeter_base")
-    calor_base.rmax = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
-    calor_base.dz   = (_CALOR_THICK_MM / 2) * mm
+    calor_base = vol_module.HexagonVolume(name="calorimeter_base")
+    calor_base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM + 0.010) * mm
+    calor_base.height = (_CALOR_THICK_MM + 0.020) * mm
     
-    calor_vol       = _drill_holes(calor_base, "calorimeter", _CALOR_THICK_MM/2, mm)
-    calor_vol.name        = TARGET_VOL_NAME
+    # Change calor_base.dz/mm to (calor_base.height / 2) / mm
+    calor_vol = _drill_holes(calor_base, "calorimeter", (calor_base.height / 2) / mm, mm, clearance=0.010)
+    calor_vol.name        = TARGET_VOLUME_NAME
     calor_vol.mother      = "world"
     calor_vol.material    = "G4_AIR"
     calor_vol.translation = [0, 0, 0]
@@ -289,17 +285,15 @@ def build_world(sim, units):
     _build_capillaries(sim, mm)
     _build_sipms(sim, mm)
 
-    start_z = -_CALOR_THICK_MM / 2
-    current_layer_front = start_z
+    z_pos = -_CALOR_THICK_MM / 2
 
     for i in range(_N_LYSO):
-        gap_center_z = current_layer_front + (_GAP_THICK_MM / 2)
-        
+        z_pos   += _GAP_THICK_MM / 2
         gap_vol  = _make_gap(f"gap_{i}", mm)
         gap_vol.name        = f"gap_{i}"
-        gap_vol.mother      = TARGET_VOL_NAME
+        gap_vol.mother      = TARGET_VOLUME_NAME
         gap_vol.material    = "Tyvek"
-        gap_vol.translation = [0, 0, gap_center_z * mm]
+        gap_vol.translation = [0, 0, z_pos * mm]
         sim.add_volume(gap_vol)
 
         lyso_vol             = _make_lyso(f"lyso_{i}", mm)
@@ -309,19 +303,17 @@ def build_world(sim, units):
         lyso_vol.translation = [0, 0, 0]
         sim.add_volume(lyso_vol)
 
-        current_layer_front += _GAP_THICK_MM
+        z_pos += _GAP_THICK_MM / 2
 
         if i < _N_W:
-            abso_center_z = current_layer_front + (_W_THICK_MM / 2)
-            
+            z_pos   += _W_THICK_MM / 2
             abso_vol = _make_abso(f"abso_{i}", mm)
             abso_vol.name        = f"abso_{i}"
-            abso_vol.mother      = TARGET_VOL_NAME
+            abso_vol.mother      = TARGET_VOLUME_NAME
             abso_vol.material    = "Tungsten"
-            abso_vol.translation = [0, 0, abso_center_z * mm]
+            abso_vol.translation = [0, 0, z_pos * mm]
             sim.add_volume(abso_vol)
-            
-            current_layer_front += _W_THICK_MM
+            z_pos += _W_THICK_MM / 2
 
     return sim
 
@@ -477,7 +469,5 @@ def get_geometry_primitives() -> list[dict]:
             "color":  color,   
             "alpha":  0.35,
         })
-    
-    
 
     return prims

@@ -13,17 +13,11 @@ from scipy.ndimage import gaussian_filter1d
 # GEOMETRY CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 _TYVEK_MM      = 0.008 * 25.4
-_CAP_LENGTH_MM = 183.0
-_SIPM_THICK_MM = 0.3
-_SIPM_Z_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2
-
 _CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM
 _HOLE_INSET_MM = 3.5
 _HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 
 # Correct alignment mapping matching worlds/radi_cal_energy.py:
-# Indices 0, 1 -> T-type
-# Indices 2, 3 -> E-type
 CAP_XY_MM = np.array([
     [ _HOLE_OFFSET,  _HOLE_OFFSET],   # 0 — T-type (Top-Right)
     [-_HOLE_OFFSET, -_HOLE_OFFSET],   # 1 — T-type (Bottom-Left)
@@ -38,15 +32,41 @@ ARRIVAL_QUANTILE = 0.10
 MIN_PHOTONS_PER_FACE = 5
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHANNEL ASSIGNMENT
+# CHANNEL ASSIGNMENT (UPDATED FOR DYNAMIC Z-ALIGNMENT)
 # ─────────────────────────────────────────────────────────────────────────────
-def assign_channel(x_mm, y_mm, z_mm):
-    if abs(abs(z_mm) - _SIPM_Z_MM) > 1.0:
-        return -1
-    dists = np.hypot(CAP_XY_MM[:, 0] - x_mm, CAP_XY_MM[:, 1] - y_mm)
-    cap_idx = int(np.argmin(dists))
-    return cap_idx if z_mm < 0 else cap_idx + 4
+def assign_channels_dynamically(x_mm, y_mm, z_mm):
+    """
+    Automatically detects the actual SiPM plane positions from the hit data
+    to remain agnostic to LYSO thickness or cap changes, then assigns channels.
+    """
+    if len(z_mm) == 0:
+        return np.array([], dtype=int)
+        
+    # Find the two primary hit clusters along the Z axis (Upstream vs Downstream faces)
+    abs_z = np.abs(z_mm)
+    detected_sipm_z = np.median(abs_z[abs_z > (np.max(abs_z) - 5.0)])
+    
+    # Filter hits that do not arrive at either window face (tolerance within 2.5 mm)
+    valid_z_mask = np.abs(abs_z - detected_sipm_z) <= 2.5
+    
+    channels = np.full(len(z_mm), -1, dtype=int)
+    
+    # Process only hits hitting the window layers
+    idx_to_process = np.where(valid_z_mask)[0]
+    if len(idx_to_process) == 0:
+        return channels
 
+    # Vectorized distance mapping for efficiency
+    dx = x_mm[idx_to_process, np.newaxis] - CAP_XY_MM[:, 0]
+    dy = y_mm[idx_to_process, np.newaxis] - CAP_XY_MM[:, 1]
+    dists = np.hypot(dx, dy)
+    cap_indices = np.argmin(dists, axis=1)
+    
+    # Differentiate upstream (z < 0) from downstream (z > 0)
+    is_downstream = z_mm[idx_to_process] > 0
+    channels[idx_to_process] = np.where(is_downstream, cap_indices + 4, cap_indices)
+    
+    return channels
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  GAUSSIAN FITTER
@@ -74,26 +94,24 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    # Narrow the window slightly to avoid the broad flat skirts pulling the peak amplitude up
     fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
     if fit_mask.sum() < 5:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
     try:
         popt, pcov = curve_fit(
-            standard_gaussian,  # Use the new function
+            standard_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.8],  # Removed alpha initial guess
+            p0=[A0, mu0, iqr_sigma * 0.8],
             bounds=(
-    [0.5, mu0 - iqr_sigma, iqr_sigma * 0.05],   # instead of hardcoded 2.0
-    [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
-),
+                [0.5, mu0 - iqr_sigma, iqr_sigma * 0.05],
+                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
+            ),
             maxfev=10000,
         )
         A_fit, mu_fit, sig_fit = popt
         perr = np.sqrt(np.diag(pcov))
         
-        # Return 0.0 for alpha and its error to keep compatibility with the rest of your script
         return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), 0.0
     except Exception:
         return A0, mu0, iqr_sigma, np.nan, 0.0
@@ -124,7 +142,7 @@ def run(batch_dir: Path):
             try:
                 with uproot.open(fpath) as f:
                     if not f.keys():
-                        continue                    # skip empty ROOT files
+                        continue
                     tree = f[f.keys()[0]]
                     ev   = tree["EventID"].array(library="np").astype(int)
                     x    = tree["Position_X"].array(library="np")
@@ -144,6 +162,10 @@ def run(batch_dir: Path):
                 print(f"  Warning: could not read {fpath.name}: {e}")
         global_offset += max_ev_in_dir + 1
 
+    if not all_event_id:
+        print("  No tracking information found across files.")
+        return None
+
     event_id  = np.concatenate(all_event_id)
     x_mm      = np.concatenate(all_x)
     y_mm      = np.concatenate(all_y)
@@ -158,7 +180,8 @@ def run(batch_dir: Path):
     z_mm       = z_mm[is_optical]
     time_ns    = time_ns[is_optical]
 
-    channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm, y_mm, z_mm)])
+    # Dynamically maps channels based on runtime detected window coordinates
+    channels = assign_channels_dynamically(x_mm, y_mm, z_mm)
     on_sipm   = channels >= 0
     event_id  = event_id[on_sipm]
     time_ns   = time_ns[on_sipm]
@@ -205,9 +228,12 @@ def run(batch_dir: Path):
     best_minus_ps = np.array(best_minus_ps)
     dw_only_ps    = np.array(dw_only_ps)
     up_only_ps    = np.array(up_only_ps)
-    delta_t_ps    = dw_only_ps - up_only_ps
     dw_counts     = np.array(dw_counts)
     up_counts     = np.array(up_counts)
+
+    if len(best_minus_ps) == 0:
+        print("  Zero events survived photon filtering constraints.")
+        return None
 
     # ── Asymmetry diagnostics ───────────────────────────────────────────────
     diag_dw_n   = np.array(diag_dw_n)
@@ -256,7 +282,6 @@ def run(batch_dir: Path):
         fontsize=13, fontweight="bold"
     )
 
-    # Updated third entry to track and plot the BestMinus Resolution matching the paper
     distributions = [
         {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
          "title": "Downstream T-Type Direct Time ($t_{DW}$)", "color": "royalblue"},
@@ -271,7 +296,6 @@ def run(batch_dir: Path):
         if len(data) == 0:
             continue
 
-        # 1. Plot ranges (based on fit results)
         plot_center = dist["mu"]
         plot_sigma  = dist["sigma"]
         lo = plot_center - 3.0 * plot_sigma
@@ -282,15 +306,10 @@ def run(batch_dir: Path):
             color=dist["color"], alpha=0.6, edgecolor="black", label="Data"
         )
 
-        # 2. Recalculate the original bin width used during the fit
         q75, q25      = np.percentile(data, [75, 25])
         iqr_sigma     = max((q75 - q25) / 1.349, 1.0)
         fit_bin_width = (6.0 * iqr_sigma) / 40.0
-
-        # 3. Calculate the new bin width used for the plot
         plot_bin_width = (hi - lo) / 100.0
-        
-        # 4. The true scaling factor
         scale_factor = plot_bin_width / fit_bin_width
 
         x_fit     = np.linspace(lo, hi, 5000)
@@ -299,7 +318,7 @@ def run(batch_dir: Path):
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
-                label=f"Skewed Gaussian fit:\n$\\mu$ = {dist['mu']:.1f} ps\n$\\sigma$ = {dist['sigma']:.1f}{err_str} ps\n$\\alpha$ = {dist['alpha']:.2f}")
+                label=f"Gaussian fit:\n$\\mu$ = {dist['mu']:.1f} ps\n$\\sigma$ = {dist['sigma']:.1f}{err_str} ps")
 
         ax.set_title(dist["title"], fontsize=12)
         ax.set_xlabel("LocalTime (ps)", fontsize=10)

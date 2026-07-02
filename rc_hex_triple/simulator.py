@@ -207,7 +207,7 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             # hook depends on the dropped fields before relying on this
             # for worlds other than radi_cal_energy / radi_cal_triple.
             hits.attributes = [
-                "ParticleName", "Position", "EventID", "GlobalTime", "LocalTime",
+                "ParticleName", "Position", "EventID", "GlobalTime", "LocalTime", "TrackID",
             ]
             registry["hit_actors"].append(hits)
 

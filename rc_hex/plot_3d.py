@@ -258,12 +258,18 @@ def render_view(ax, hit_x, hit_y, hit_z,
                    c="#00cfff", s=1.0, alpha=0.4, depthshade=False,
                    label=f"Volume exits ({len(exit_x)})")
 
-    # Geometry wireframes
+   # Geometry wireframes
     for edges, color, label, lw, alpha in geom_collections:
         lbl = label if label else None
-        ax.add_collection3d(
-            Line3DCollection(edges, colors=color, linewidths=lw, alpha=alpha, label=lbl)
-        )
+        try:
+            ax.add_collection3d(
+                Line3DCollection(edges, colors=color, linewidths=lw, alpha=alpha, label=lbl)
+            )
+        except TypeError:
+            # Safely bypass older matplotlib 3D internal auto-scaling bugs
+            ax.add_collection(
+                Line3DCollection(edges, colors=color, linewidths=lw, alpha=alpha, label=lbl)
+            )
 
     # Beam arrow
     src, entry = _beam_arrow_endpoints(beam_cfg, phantom_cm)
