@@ -42,7 +42,7 @@ _Z_SENSOR_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2   # ≈ 91.65 mm
 C_LIGHT_MM_NS    = 299.792
 REFRACTIVE_INDEX = 1.60                          # BCF-92 core index
 V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR    = 0.8                         # set < 1 to account for TIR zig-zag
+BOUNCE_FACTOR    = 0.92                       # set < 1 to account for TIR zig-zag
 V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
 # GlobalTime window to accept as a prompt photon on each face.
