@@ -164,7 +164,7 @@ def _build_capillaries(sim, mm):
         if i in _E_TYPE_INDICES:
             # Active Quartz Cladding Sleeve
             sleeve = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
-            sleeve.mother      = "TARGET_VOL_NAME"
+            sleeve.mother      = TARGET_VOL_NAME
             sleeve.rmin        = _FILAMENT_R_MM * mm
             sleeve.rmax        = _CAP_OUTER_MM * mm     
             sleeve.dz          = half_calor             
@@ -173,7 +173,7 @@ def _build_capillaries(sim, mm):
 
             # Continuous active core filament
             core = sim.add_volume("Tubs", f"cap_{i}_active_core")
-            core.mother        = "TARGET_VOL_NAME"
+            core.mother        = TARGET_VOL_NAME
             core.rmin          = 0.0
             core.rmax          = _FILAMENT_R_MM * mm
             core.dz            = half_calor
