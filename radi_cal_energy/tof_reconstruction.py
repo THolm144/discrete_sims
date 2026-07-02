@@ -171,7 +171,8 @@ def main():
     print(f"{'─'*60}")
 
     run_dirs  = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
-    hit_files = [p for d in run_dirs for p in sorted(d.glob("detector_hits_*.root"))]
+   # Change this line in your Python script:
+    hit_files = [p for d in run_dirs for p in sorted(d.glob("**/detector_hits_*.root"))]
 
     if not hit_files:
         print("  WARNING: No hit files found.")
