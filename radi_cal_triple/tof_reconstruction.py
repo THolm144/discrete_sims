@@ -32,12 +32,22 @@ _SIPM_THICK_MM   = 0.3
 _CAP_LENGTH_MM   = _CALOR_THICK_MM + 57.7144 
 _Z_SENSOR_MM     = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2
 
-# OPTICAL KINEMATICS
-C_LIGHT_MM_NS    = 299.792
-REFRACTIVE_INDEX = 1.60
-V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR    = 0.92
-V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTICAL KINEMATICS & SHAPE TUNING
+# ─────────────────────────────────────────────────────────────────────────────
+C_LIGHT_MM_NS         = 299.792
+REFRACTIVE_INDEX      = 1.60
+V_LIGHT_MM_NS         = C_LIGHT_MM_NS / REFRACTIVE_INDEX
+
+# TUNE THIS (Shape Width): 
+# Lowering this (< 0.92) "squishes" the purple peak inward. 
+# Raising it (> 0.92) "stretches" it outward.
+BOUNCE_FACTOR         = 0.88 
+V_EFF_MM_NS           = V_LIGHT_MM_NS * BOUNCE_FACTOR
+
+# TUNE THIS (Tail Amplitude):
+# Typical Kuraray fiber attenuation length is 1000mm - 3000mm.
+ATTENUATION_LENGTH_MM = 1500.0 
 
 _GT_LO_NS = 0.25
 _GT_HI_NS = 1.5
@@ -152,11 +162,9 @@ def main():
     print(f"  Longitudinal Profile Reconstruction + Timing Resolution")
     print(f"{'─'*60}")
 
-    # Replace your current run_dirs assignment with this:
     raw_dirs = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
     run_dirs = []
     for d in raw_dirs:
-        # If there's a nested run_XXX folder inside run_XXX, use that instead
         nested = d / d.name
         run_dirs.append(nested if nested.is_dir() else d)
     hit_files = [p for d in run_dirs for p in sorted(d.glob("**/detector_hits_*.root"))]
@@ -165,10 +173,7 @@ def main():
         print("  WARNING: No hit files found.")
         return
 
-    # Data structures for E-type spatial reconstruction
     up_first, down_first = {}, {}
-    
-    # Data structures for T-type timing resolution
     t_type_best_minus_ps = []
 
     for fpath in hit_files:
@@ -219,10 +224,9 @@ def main():
         mask_t_up = is_t_type & is_optical & near_up
         mask_t_dw = is_t_type & is_optical & near_dw
         
-        ev_t_up, lt_t_up = ev[mask_t_up], lt[mask_t_up] * 1000.0  # convert to ps
+        ev_t_up, lt_t_up = ev[mask_t_up], lt[mask_t_up] * 1000.0  
         ev_t_dw, lt_t_dw = ev[mask_t_dw], lt[mask_t_dw] * 1000.0
 
-        # Group T-type local times by event
         up_times_by_ev = {}
         for e, t in zip(ev_t_up, lt_t_up):
             up_times_by_ev.setdefault(e, []).append(t)
@@ -243,7 +247,6 @@ def main():
     clean_bm = clean_around_mode(np.array(t_type_best_minus_ps), window_ps=100.0)
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
     
-    # Convert timing resolution to layer uncertainty
     sigma_z_mm = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
     sigma_layer = sigma_z_mm / _LAYER_PITCH_MM
 
@@ -257,7 +260,6 @@ def main():
         print("  ERROR: No coincident events found for reconstruction.")
         return
 
-    # ── New Relativistic ToF Calculation ──
     beta_factor = 1.0 - (V_EFF_MM_NS / C_LIGHT_MM_NS)
     z_emit_list = [
         (V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0) / beta_factor 
@@ -266,18 +268,27 @@ def main():
     z_emit_coin = np.array(z_emit_list)
     valid_coin  = z_emit_coin[(z_emit_coin >= -calor_half_mm - 15.0) & (z_emit_coin <= calor_half_mm + 15.0)]
 
-    def kde_profile(valid_z, bounds=lyso_bounds):
+    # ── Apply Optical Attenuation Correction Weights ──
+    # Cosh perfectly models symmetric light loss when summing signals from both ends
+    event_weights = np.cosh(valid_coin / ATTENUATION_LENGTH_MM)
+
+    # Update KDE to utilize the attenuation weights
+    def kde_profile(valid_z, weights, bounds=lyso_bounds):
         profile = np.zeros(_N_LYSO)
         if len(valid_z) < 5:
             for i, (z_min, z_max) in enumerate(bounds):
-                profile[i] = np.sum((valid_z >= z_min) & (valid_z <= z_max))
+                mask = (valid_z >= z_min) & (valid_z <= z_max)
+                profile[i] = np.sum(weights[mask])
         else:
-            kde = gaussian_kde(valid_z, bw_method=0.15)
+            # SciPy's gaussian_kde natively supports weighting events
+            kde = gaussian_kde(valid_z, bw_method=0.15, weights=weights)
+            total_weight = np.sum(weights)
             for i, (z_min, z_max) in enumerate(bounds):
-                profile[i] = kde.evaluate((z_min + z_max) / 2.0)[0]
+                # evaluate() returns a normalized density, so we multiply by total_weight
+                profile[i] = kde.evaluate((z_min + z_max) / 2.0)[0] * total_weight
         return profile
 
-    profile_coin = kde_profile(valid_coin)[::-1]
+    profile_coin = kde_profile(valid_coin, event_weights)[::-1]
     truth_curve = load_truth_dose_from_mhd(run_dirs)
     
     if truth_curve is not None and np.sum(profile_coin) > 0:
@@ -291,14 +302,13 @@ def main():
         ax.bar(layers, truth_curve, color="#00bcd4", alpha=0.45,
                edgecolor="#00838f", linewidth=1.0, width=0.8, label="Simulation Truth (DoseActor)")
 
-    # Added xerr based on the timing resolution derivation
     ax.errorbar(layers, profile_coin, xerr=sigma_layer, color="#6a1b9a", 
                 linewidth=2.5, marker="o", markersize=5, capsize=3, capthick=1.5,
                 label=f"ΔT Coincidence (σ_t = {sigma_t_ps:.1f} ps → ±{sigma_layer:.2f} layers)")
 
     ax.set_xlabel("LYSO Layer Number")
     ax.set_ylabel("Energy / Scaled Hits (MeV)")
-    ax.set_title("E-type SiPM ToF Reconstruction with Intrinsic T-Type Resolution Error")
+    ax.set_title("E-type SiPM ToF Reconstruction with Attenuation Correction")
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend(loc="upper right", fontsize=9)
 
