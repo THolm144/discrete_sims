@@ -21,6 +21,9 @@ _CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM
 _HOLE_INSET_MM = 3.5
 _HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 
+TIME = "GlobalTime"  # Use LocalTime for direct timing resolution analysis
+
+
 # Correct alignment mapping matching worlds/radi_cal_energy.py:
 # Indices 0, 1 -> T-type
 # Indices 2, 3 -> E-type
@@ -130,7 +133,7 @@ def run(batch_dir: Path):
                     x    = tree["Position_X"].array(library="np")
                     y    = tree["Position_Y"].array(library="np")
                     z    = tree["Position_Z"].array(library="np")
-                    t    = tree["LocalTime"].array(library="np")
+                    t    = tree[TIME].array(library="np")
                     pn   = tree["ParticleName"].array(library="np")
 
                     all_event_id.append(ev + global_offset)

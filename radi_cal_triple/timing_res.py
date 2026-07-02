@@ -28,6 +28,9 @@ CAP_XY_MM = np.array([
     [ _HOLE_OFFSET, -_HOLE_OFFSET],   # 3 — E-type (Bottom-Right)
 ])
 
+TIME = "GlobalTime"  # Use LocalTime for direct timing resolution analysis
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS PARAMETERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +139,7 @@ def run(batch_dir: Path):
                     x    = tree["Position_X"].array(library="np")
                     y    = tree["Position_Y"].array(library="np")
                     z    = tree["Position_Z"].array(library="np")
-                    t    = tree["LocalTime"].array(library="np")
+                    t    = tree["TIME"].array(library="np")
                     pn   = tree["ParticleName"].array(library="np")
 
                     all_event_id.append(ev + global_offset)
