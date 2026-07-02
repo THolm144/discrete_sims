@@ -17,7 +17,10 @@ _HOLE_INSET_MM = 3.5
 _HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 
 TIME = "LocalTime" 
-SIPM_JITTER_PS = 20.0
+
+# Realistic Hardware Jitter Parameters
+SIPM_SPTR_PS        = 50.0  # Single Photon Time Resolution (fluctuations in the avalanche)
+DIGITIZER_JITTER_PS = 17.5  # Constant electronics/TDC baseline jitter (RADiCAL paper floor)
 
 # Correct alignment mapping: Indices 0, 1 -> T-type | Indices 2, 3 -> E-type
 CAP_XY_MM = np.array([
@@ -37,7 +40,6 @@ MIN_PHOTONS_PER_FACE = 5
 #  GAUSSIAN FITTER
 # ─────────────────────────────────────────────────────────────────────────────
 def standard_gaussian(x, A, mu, sigma):
-    """Standard symmetric Gaussian distribution."""
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 def fit_gaussian_to_peak(data, n_bins=40):
@@ -47,16 +49,14 @@ def fit_gaussian_to_peak(data, n_bins=40):
     q75, q25  = np.percentile(data, [75, 25])
     iqr_sigma = max((q75 - q25) / 1.349, 1.0)
     center    = np.median(data)
-    lo = center - 3.0 * iqr_sigma
-    hi = center + 3.0 * iqr_sigma
+    lo, hi    = center - 3.0 * iqr_sigma, center + 3.0 * iqr_sigma
 
     counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
     mids = 0.5 * (edges[:-1] + edges[1:])
 
     smoothed  = gaussian_filter1d(counts.astype(float), sigma=2.0)
     peak_idx  = int(np.argmax(smoothed))
-    mu0       = float(mids[peak_idx])
-    A0        = float(smoothed[peak_idx])
+    mu0, A0   = float(mids[peak_idx]), float(smoothed[peak_idx])
 
     fit_mask = np.abs(mids - mu0) < 3.0 * iqr_sigma
     if fit_mask.sum() < 5:
@@ -69,9 +69,8 @@ def fit_gaussian_to_peak(data, n_bins=40):
             bounds=([0.5, mu0 - iqr_sigma, iqr_sigma * 0.05], [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]),
             maxfev=10000,
         )
-        A_fit, mu_fit, sig_fit = popt
         perr = np.sqrt(np.diag(pcov))
-        return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), 0.0
+        return float(popt[0]), float(popt[1]), float(popt[2]), float(perr[2]), 0.0
     except Exception:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
@@ -88,7 +87,7 @@ def clean_around_mode(arr, window_ps=60.0):
 def run(batch_dir: Path):
     t_start = time.perf_counter()
     
-    # ── Replicate ToF Script File Discovery ──
+    # Traverse directories robustly
     raw_dirs = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
     run_dirs = []
     for d in raw_dirs:
@@ -101,11 +100,11 @@ def run(batch_dir: Path):
         print("  WARNING: No detector_hits_*.root files found.")
         return None
 
-    # Dictionaries to accumulate UP and DW times across split ROOT files
+    # Dictionaries to accumulate UP and DW times avoiding EventID overlaps
     up_times_by_ev = {}
     dw_times_by_ev = {}
 
-    print(f"  [Checkpoint 1/4] Loading and parsing {len(hit_files)} ROOT files...")
+    print(f"  [Checkpoint 1/4] Parsing {len(hit_files)} ROOT files via dict mapping...")
     
     for fpath in hit_files:
         run_tag = fpath.parent.name
@@ -122,7 +121,7 @@ def run(batch_dir: Path):
                 lt = tree[TIME].array(library="np")
                 ev = tree["EventID"].array(library="np")
                 pn = tree["ParticleName"].array(library="np")
-        except Exception as exc:
+        except Exception:
             continue
 
         # Filter for optical photons
@@ -131,85 +130,68 @@ def run(batch_dir: Path):
         
         if len(ev) == 0: continue
 
-        # Convert to ps and apply SiPM Jitter INDEPENDENTLY to every photon
+        # Convert to ps and apply Single Photon SiPM avalanche jitter
         lt_ps = lt * 1000.0
-        if SIPM_JITTER_PS > 0:
-            lt_ps += np.random.normal(0.0, SIPM_JITTER_PS, size=len(lt_ps))
+        if SIPM_SPTR_PS > 0:
+            lt_ps += np.random.normal(0.0, SIPM_SPTR_PS, size=len(lt_ps))
 
-        # Assign Channels via Matrix Proximity
+        # Map to capillaries
         dx = x[:, None] - CAP_XY_MM[:, 0]
         dy = y[:, None] - CAP_XY_MM[:, 1]
         cap_idx = np.argmin(np.hypot(dx, dy), axis=1)
 
-        # Isolate T-Type Channels (indices 0 and 1)
+        # T-Type Only (0 and 1)
         is_t_type = (cap_idx == 0) | (cap_idx == 1)
-        is_up = z < 0
-        is_dw = z > 0
+        mask_up = is_t_type & (z < 0)
+        mask_dw = is_t_type & (z > 0)
 
-        mask_up = is_t_type & is_up
-        mask_dw = is_t_type & is_dw
-
-        # Accumulate into persistent dicts keyed by (run_tag, event_id)
         for e, t in zip(ev[mask_up], lt_ps[mask_up]):
-            key = (run_tag, int(e))
-            up_times_by_ev.setdefault(key, []).append(t)
+            up_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
 
         for e, t in zip(ev[mask_dw], lt_ps[mask_dw]):
-            key = (run_tag, int(e))
-            dw_times_by_ev.setdefault(key, []).append(t)
+            dw_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
 
-    print("  [Checkpoint 2/4] Consolidating coincident events...")
-    
-    # Analyze all unique events tracked
-    all_keys = set(up_times_by_ev.keys()) | set(dw_times_by_ev.keys())
+    print("  [Checkpoint 2/4] Extracting Quantiles & applying Digitizer jitter...")
+    all_keys = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
     
     best_minus_ps, dw_only_ps, up_only_ps = [], [], []
     diag_dw_n, diag_up_n = [], []
-    diag_dw_valid, diag_up_valid = [], []
 
     for key in all_keys:
-        up_times = up_times_by_ev.get(key, [])
-        dw_times = dw_times_by_ev.get(key, [])
+        up_times = up_times_by_ev[key]
+        dw_times = dw_times_by_ev[key]
         
         dw_num = len(dw_times)
         up_num = len(up_times)
         diag_dw_n.append(dw_num)
         diag_up_n.append(up_num)
 
-        dw_valid = dw_num >= MIN_PHOTONS_PER_FACE
-        up_valid = up_num >= MIN_PHOTONS_PER_FACE
-        diag_dw_valid.append(dw_valid)
-        diag_up_valid.append(up_valid)
-
-        if not dw_valid or not up_valid:
+        if dw_num < MIN_PHOTONS_PER_FACE or up_num < MIN_PHOTONS_PER_FACE:
             continue
 
-        # Extract timing markers using Quantile
+        # Extract timing markers and apply constant electronics floor jitter
         t_dw = np.quantile(dw_times, ARRIVAL_QUANTILE)
         t_up = np.quantile(up_times, ARRIVAL_QUANTILE)
+
+        if DIGITIZER_JITTER_PS > 0:
+            t_dw += np.random.normal(0.0, DIGITIZER_JITTER_PS)
+            t_up += np.random.normal(0.0, DIGITIZER_JITTER_PS)
 
         best_minus_ps.append((t_dw - t_up) / 2.0)
         dw_only_ps.append(t_dw)
         up_only_ps.append(t_up)
 
     n_ev = len(all_keys)
-    print(f"\n  ── Asymmetry Diagnostics (Pure T-Type Filament Isolation) ──")
-    print(f"  Total events           : {n_ev}")
-    
     if n_ev == 0 or len(best_minus_ps) == 0:
         print("  WARNING: 0 Events met the minimum photon threshold. Exiting early.")
         return None
 
     diag_dw_n, diag_up_n = np.array(diag_dw_n), np.array(diag_up_n)
-    diag_dw_v, diag_up_v = np.array(diag_dw_valid), np.array(diag_up_valid)
 
-    print(f"  DW median photons/ev   : {np.median(diag_dw_n):.1f}   (mean {np.mean(diag_dw_n):.1f})")
-    print(f"  UP median photons/ev   : {np.median(diag_up_n):.1f}   (mean {np.mean(diag_up_n):.1f})")
-    print(f"  DW yield valid timing  : {diag_dw_v.sum()}/{n_ev} ({100*diag_dw_v.mean():.0f}%)")
-    print(f"  UP yield valid timing  : {diag_up_v.sum()}/{n_ev} ({100*diag_up_v.mean():.0f}%)")
-    
-    ratio = np.mean(diag_dw_n) / max(np.mean(diag_up_n), 0.001)
-    print(f"  DW/UP photon ratio     : {ratio:.2f}")
+    print(f"\n  ── Asymmetry Diagnostics (Pure T-Type Filament Isolation) ──")
+    print(f"  Coincident events      : {len(best_minus_ps)} / {n_ev}")
+    print(f"  DW median photons/ev   : {np.median(diag_dw_n):.1f}")
+    print(f"  UP median photons/ev   : {np.median(diag_up_n):.1f}")
 
     print("  [Checkpoint 3/4] Filtering and Fitting Gaussian Profiles...")
     clean_dw = clean_around_mode(np.array(dw_only_ps), window_ps=150.0)
@@ -256,10 +238,7 @@ def run(batch_dir: Path):
     print(f"  [Execution Completed in {time.perf_counter() - t_start:.2f} seconds]")
 
     return {
-        "sigma_t_ps": bm_sigma, "sigma_t_err_ps": bm_sigma_err, "mu_ps": bm_mu,
-        "dw_sigma": dw_sigma, "up_sigma": up_sigma, "n_events_total": len(best_minus_ps),
-        "n_events_selected": len(clean_bm), "dw_median_photons": float(np.median(diag_dw_n)),
-        "up_median_photons": float(np.median(diag_up_n)),
+        "sigma_t_ps": bm_sigma, "dw_sigma": dw_sigma, "up_sigma": up_sigma
     }
 
 if __name__ == "__main__":
