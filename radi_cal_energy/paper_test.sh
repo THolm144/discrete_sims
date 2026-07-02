@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # run_sim_sweep.sh — OpenGATE simulation launcher (Organized Multi-Energy)
 # ─────────────────────────────────────────────────────────────────────────────
-
+#TEST TEXT
 WORLD="radi_cal_energy"
 PARTICLE="e-"
 # Adjusted energies to match some of the paper's test beam data points

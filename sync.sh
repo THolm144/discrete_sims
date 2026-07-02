@@ -11,4 +11,4 @@ rsync -avz --delete \
     --exclude='*.mhd' \
     --exclude='*.npy' \
     --exclude='runs/' \
-    ./ uakgun@172.16.17.251:~/THOMAS/discrete_sims/
+    ./ uakgun@172.16.17.251:~/env/THOMAS/discrete_sims/
