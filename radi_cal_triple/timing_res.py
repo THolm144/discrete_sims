@@ -28,8 +28,8 @@ CAP_XY_MM = np.array([
     [ _HOLE_OFFSET, -_HOLE_OFFSET],   # 3 — E-type (Bottom-Right)
 ])
 
-TIME = "GlobalTime"  # Use LocalTime for direct timing resolution analysis
-
+TIME = "LocalTime"  # Use LocalTime for direct timing resolution analysis
+SIPM_JITTER_PS = 20.0
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS PARAMETERS
@@ -227,6 +227,10 @@ def run(batch_dir: Path):
         up_times = t_arr[up_m]
         dw_times = t_arr[dw_m]
 
+        if SIPM_JITTER_PS > 0:
+            jitter = np.random.normal(0.0, SIPM_JITTER_PS, size=len(ev_times_ps))
+            ev_times_ps = ev_times_ps + jitter
+            
         dw_num = len(dw_times)
         up_num = len(up_times)
         diag_dw_n.append(dw_num)

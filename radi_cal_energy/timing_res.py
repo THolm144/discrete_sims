@@ -21,8 +21,8 @@ _CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM
 _HOLE_INSET_MM = 3.5
 _HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 
-TIME = "GlobalTime"  # Use LocalTime for direct timing resolution analysis
-
+TIME = "LocalTime"  # Use LocalTime for direct timing resolution analysis
+SIPM_JITTER_PS = 20.0
 
 # Correct alignment mapping matching worlds/radi_cal_energy.py:
 # Indices 0, 1 -> T-type
@@ -178,6 +178,10 @@ def run(batch_dir: Path):
         mask = event_id == ev_id
         ev_times_ps = time_ns[mask] * 1000.0
         ev_channels = channels[mask]
+
+        if SIPM_JITTER_PS > 0:
+            jitter = np.random.normal(0.0, SIPM_JITTER_PS, size=len(ev_times_ps))
+            ev_times_ps = ev_times_ps + jitter
 
         # ── EXPLICIT T-TYPE ISOLATION ──
         up_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
