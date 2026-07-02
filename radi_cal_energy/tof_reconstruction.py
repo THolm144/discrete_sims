@@ -170,8 +170,13 @@ def main():
     print(f"  Longitudinal Profile Reconstruction + Timing Resolution")
     print(f"{'─'*60}")
 
-    run_dirs  = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
-   # Change this line in your Python script:
+    # Replace your current run_dirs assignment with this:
+    raw_dirs = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
+    run_dirs = []
+    for d in raw_dirs:
+        # If there's a nested run_XXX folder inside run_XXX, use that instead
+        nested = d / d.name
+        run_dirs.append(nested if nested.is_dir() else d)
     hit_files = [p for d in run_dirs for p in sorted(d.glob("**/detector_hits_*.root"))]
 
     if not hit_files:
