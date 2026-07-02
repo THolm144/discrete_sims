@@ -18,24 +18,48 @@ if [ -z "$LATEST_BATCH" ]; then
     exit 1
 fi
 
-# Strip the trailing slash if present for a cleaner path string
 LATEST_BATCH=${LATEST_BATCH%/}
 
 echo "============================================================"
 echo "  Targeting latest sweep batch: $LATEST_BATCH"
-echo "  Executing batch analysis pipeline..."
+echo "  Processing each energy folder individually..."
 echo "============================================================"
 
-# 1. Execute the time profile plotting script on the found directory
-echo "-> Running plot_hits_vs_time.py..."
-python3 plot_hits_vs_time.py --batch-dir "$LATEST_BATCH"
+# Loop over each individual energy subdirectory (e.g., 25GeV, 50GeV)
+# Sorting ensuring they process in numerical order
+for ENERGY_DIR in $(ls -d "$LATEST_BATCH"/*GeV/ 2>/dev/null | sort -V); do
+    
+    # Verify it's a valid directory
+    [ -d "$ENERGY_DIR" ] || continue
+    ENERGY_DIR=${ENERGY_DIR%/}
+    ENERGY_NAME=$(basename "$ENERGY_DIR")
 
-echo "------------------------------------------------------------"
+    echo ""
+    echo " ────────────────────────────────────────────────────────────"
+    echo "  Processing Energy Target: $ENERGY_NAME"
+    echo "  Directory: $ENERGY_DIR"
+    echo " ────────────────────────────────────────────────────────────"
 
-# 2. Execute the timing resolution analysis script on the same directory
-echo "-> Running timing_res.py..."
-python3 timing_res.py --batch-dir "$LATEST_BATCH"
+    # 1. Run time profile plotting script
+    if [ -f "plot_hits_vs_time.py" ]; then
+        echo "  -> Running plot_hits_vs_time.py..."
+        python3 plot_hits_vs_time.py --batch-dir "$ENERGY_DIR"
+    else
+        echo "  [Warning] plot_hits_vs_time.py not found in current working directory."
+    fi
 
+    echo "  ------------------------------------------------------------"
+
+    # 2. Run timing resolution analysis script 
+    if [ -f "timing_res.py" ]; then
+        echo "  -> Running timing_res.py..."
+        python3 timing_res.py --batch-dir "$ENERGY_DIR"
+    else
+        echo "  [Warning] timing_res.py not found in current working directory."
+    fi
+done
+
+echo ""
 echo "============================================================"
-echo "  Pipeline execution finished successfully."
+echo "  All individual energy steps analyzed successfully."
 echo "============================================================"
