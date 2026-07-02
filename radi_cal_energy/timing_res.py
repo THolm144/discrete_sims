@@ -1,8 +1,8 @@
 import argparse
 import warnings
+import time
 from pathlib import Path
 from scipy.optimize import curve_fit
-from scipy.special import erf
 import numpy as np
 import uproot
 import matplotlib.pyplot as plt
@@ -77,26 +77,23 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    # Narrow the window slightly to avoid the broad flat skirts pulling the peak amplitude up
     fit_mask = np.abs(mids - mu0) < 3.0 * iqr_sigma
     if fit_mask.sum() < 5:
         return A0, mu0, iqr_sigma, np.nan, 0.0
 
     try:
         popt, pcov = curve_fit(
-            standard_gaussian,  # Use the new function
+            standard_gaussian,
             mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.8],  # Removed alpha initial guess
+            p0=[A0, mu0, iqr_sigma * 0.8],
             bounds=(
-    [0.5, mu0 - iqr_sigma, iqr_sigma * 0.05],   # instead of hardcoded 2.0
-    [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
-),
+                [0.5, mu0 - iqr_sigma, iqr_sigma * 0.05],
+                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
+            ),
             maxfev=10000,
         )
         A_fit, mu_fit, sig_fit = popt
         perr = np.sqrt(np.diag(pcov))
-        
-        # Return 0.0 for alpha and its error to keep compatibility with the rest of your script
         return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), 0.0
     except Exception:
         return A0, mu0, iqr_sigma, np.nan, 0.0
@@ -106,6 +103,8 @@ def fit_gaussian_to_peak(data, n_bins=40):
 # MAIN EXECUTION ROUTINE
 # ─────────────────────────────────────────────────────────────────────────────
 def run(batch_dir: Path):
+    t_start = time.perf_counter()
+    
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"))
     if not hit_files:
         print("  No detector_hits_*.root files found.")
@@ -121,13 +120,14 @@ def run(batch_dir: Path):
         grouped_files[fpath.parent].append(fpath)
 
     global_offset = 0
+    print(f"  [Checkpoint 1/6] Loading branches from {len(hit_files)} ROOT files...")
     for parent_dir, files in grouped_files.items():
         max_ev_in_dir = 0
         for fpath in files:
             try:
                 with uproot.open(fpath) as f:
                     if not f.keys():
-                        continue                    # skip empty ROOT files
+                        continue
                     tree = f[f.keys()[0]]
                     ev   = tree["EventID"].array(library="np").astype(int)
                     x    = tree["Position_X"].array(library="np")
@@ -147,6 +147,7 @@ def run(batch_dir: Path):
                 print(f"  Warning: could not read {fpath.name}: {e}")
         global_offset += max_ev_in_dir + 1
 
+    print("  [Checkpoint 2/6] Concatenating raw hit arrays...")
     event_id  = np.concatenate(all_event_id)
     x_mm      = np.concatenate(all_x)
     y_mm      = np.concatenate(all_y)
@@ -154,6 +155,7 @@ def run(batch_dir: Path):
     time_ns   = np.concatenate(all_time_ns)
     particle  = np.concatenate(all_particle)
 
+    print("  [Checkpoint 3/6] Filtering optical photons...")
     is_optical = (particle == b"opticalphoton") | (particle == "opticalphoton")
     event_id   = event_id[is_optical]
     x_mm       = x_mm[is_optical]
@@ -161,18 +163,37 @@ def run(batch_dir: Path):
     z_mm       = z_mm[is_optical]
     time_ns    = time_ns[is_optical]
 
+    print("  [Checkpoint 4/6] Assigning channels via matrix tracking...")
     channels = np.array([assign_channel(x, y, z) for x, y, z in zip(x_mm, y_mm, z_mm)])
     on_sipm   = channels >= 0
     event_id  = event_id[on_sipm]
     time_ns   = time_ns[on_sipm]
     channels  = channels[on_sipm]
 
-    unique_events = np.unique(event_id)
+    print("  [Checkpoint 5/6] Sorting and chunking unique event structures...")
+    time_ps = time_ns * 1000.0
+    is_up_channel = (channels == 0) | (channels == 1)
+    is_dw_channel = (channels == 4) | (channels == 5)
+
+    sort_idx = np.argsort(event_id)
+    ev_sorted = event_id[sort_idx]
+    time_sorted = time_ps[sort_idx]
+    up_mask_sorted = is_up_channel[sort_idx]
+    dw_mask_sorted = is_dw_channel[sort_idx]
+
+    split_indices = np.where(np.diff(ev_sorted) != 0)[0] + 1
+    ev_ids_split = np.split(ev_sorted, split_indices)
+    times_split = np.split(time_sorted, split_indices)
+    up_mask_split = np.split(up_mask_sorted, split_indices)
+    dw_mask_split = np.split(dw_mask_sorted, split_indices)
+
+    print("  [Checkpoint 6/6] Calculating quantile arrival times with SiPM Jitter...")
     best_minus_ps, dw_only_ps, up_only_ps = [], [], []
     dw_counts, up_counts = [], []
 
     diag_dw_n, diag_up_n       = [], []
     diag_dw_valid, diag_up_valid = [], []
+    final_unique_events = []
 
     for ev_id_arr, t_arr, up_m, dw_m in zip(ev_ids_split, times_split, up_mask_split, dw_mask_split):
         if len(ev_id_arr) == 0:
@@ -182,13 +203,13 @@ def run(batch_dir: Path):
         up_times = t_arr[up_m]
         dw_times = t_arr[dw_m]
 
-        # ── CORRECTED: Apply Intrinsic SiPM Jitter independently per photon ──
+        # ── Apply Intrinsic SiPM Jitter independently per photon face array ──
         if SIPM_JITTER_PS > 0:
             if len(up_times) > 0:
                 up_times = up_times + np.random.normal(0.0, SIPM_JITTER_PS, size=len(up_times))
             if len(dw_times) > 0:
                 dw_times = dw_times + np.random.normal(0.0, SIPM_JITTER_PS, size=len(dw_times))
-            
+
         dw_num = len(dw_times)
         up_num = len(up_times)
         diag_dw_n.append(dw_num)
@@ -210,6 +231,7 @@ def run(batch_dir: Path):
         up_only_ps.append(t_up)
         dw_counts.append(dw_num)
         up_counts.append(up_num)
+        final_unique_events.append(ev_id)
 
     best_minus_ps = np.array(best_minus_ps)
     dw_only_ps    = np.array(dw_only_ps)
@@ -217,6 +239,7 @@ def run(batch_dir: Path):
     delta_t_ps    = dw_only_ps - up_only_ps
     dw_counts     = np.array(dw_counts)
     up_counts     = np.array(up_counts)
+    unique_events = np.array(final_unique_events)
 
     # ── Asymmetry diagnostics ───────────────────────────────────────────────
     diag_dw_n   = np.array(diag_dw_n)
@@ -251,7 +274,7 @@ def run(batch_dir: Path):
     clean_up = clean_around_mode(selected_up, window_ps=150.0)
     clean_bm = clean_around_mode(selected_bm, window_ps=300.0)
 
-    # ── Skewed Gaussian peak fits ───────────────────────────────────────────
+    # ── Gaussian peak fits ────────────────────────────────────────────────────
     bm_amp, bm_mu, bm_sigma, bm_sigma_err, bm_alpha = fit_gaussian_to_peak(clean_bm)
     dw_amp, dw_mu, dw_sigma, dw_sigma_err, dw_alpha = fit_gaussian_to_peak(clean_dw)
     up_amp, up_mu, up_sigma, up_sigma_err, up_alpha = fit_gaussian_to_peak(clean_up)
@@ -261,11 +284,10 @@ def run(batch_dir: Path):
     energy_label = batch_dir.name
     fig.suptitle(
         f"Direct LocalTime Distributions for {energy_label} (Pure T-Type Filaments)\n"
-        f"Skewed Gaussian peak fit  |  Direct Q={ARRIVAL_QUANTILE:.2f} time marker  |  min {MIN_PHOTONS_PER_FACE} photons/face",
+        f"Gaussian peak fit  |  Direct Q={ARRIVAL_QUANTILE:.2f} time marker  |  min {MIN_PHOTONS_PER_FACE} photons/face",
         fontsize=13, fontweight="bold"
     )
 
-    # Updated third entry to track and plot the BestMinus Resolution matching the paper
     distributions = [
         {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
          "title": "Downstream T-Type Direct Time ($t_{DW}$)", "color": "royalblue"},
@@ -280,7 +302,6 @@ def run(batch_dir: Path):
         if len(data) == 0:
             continue
 
-        # 1. Plot ranges (based on fit results)
         plot_center = dist["mu"]
         plot_sigma  = dist["sigma"]
         lo = plot_center - 3.0 * plot_sigma
@@ -291,15 +312,10 @@ def run(batch_dir: Path):
             color=dist["color"], alpha=0.6, edgecolor="black", label="Data"
         )
 
-        # 2. Recalculate the original bin width used during the fit
         q75, q25      = np.percentile(data, [75, 25])
         iqr_sigma     = max((q75 - q25) / 1.349, 1.0)
         fit_bin_width = (6.0 * iqr_sigma) / 40.0
-
-        # 3. Calculate the new bin width used for the plot
         plot_bin_width = (hi - lo) / 100.0
-        
-        # 4. The true scaling factor
         scale_factor = plot_bin_width / fit_bin_width
 
         x_fit     = np.linspace(lo, hi, 5000)
@@ -308,7 +324,7 @@ def run(batch_dir: Path):
 
         err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
-                label=f"Skewed Gaussian fit:\n$\\mu$ = {dist['mu']:.1f} ps\n$\\sigma$ = {dist['sigma']:.1f}{err_str} ps\n$\\alpha$ = {dist['alpha']:.2f}")
+                label=f"Gaussian fit:\n$\\mu$ = {dist['mu']:.1f} ps\n$\\sigma$ = {dist['sigma']:.1f}{err_str} ps")
 
         ax.set_title(dist["title"], fontsize=12)
         ax.set_xlabel("LocalTime (ps)", fontsize=10)
@@ -322,6 +338,7 @@ def run(batch_dir: Path):
     plt.savefig(plot_path, dpi=200)
     plt.close()
     print(f"\n  Saved plot → {plot_path}")
+    print(f"  [Execution Completed in {time.perf_counter() - t_start:.2f} seconds]")
 
     return {
         "sigma_t_ps":        bm_sigma,
