@@ -55,7 +55,7 @@ for ENERGY in "${ENERGIES_KEV[@]}"; do
         done
 
         LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
-        RUN_OUT_DIR="${ENERGY_DIR}/run_${RUN_ID}"
+        RUN_OUT_DIR="${ENERGY_DIR}"
         mkdir -p "$RUN_OUT_DIR"
 
         # Dispatch single particle bundle into isolated directory
