@@ -3,7 +3,7 @@
 # run_sim.sh — OpenGATE simulation launcher 
 # Usage: bash run_sim.sh
 # ─────────────────────────────────────────────────────────────────────────────
-WORLD=radi_cal_triple
+WORLD=rc_hex_triple
 PARTICLE=e-
 ENERGY_KEV=150000000
 N_PARTICLES=5

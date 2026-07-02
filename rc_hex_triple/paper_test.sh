@@ -3,7 +3,7 @@
 # run_sim_sweep.sh — OpenGATE simulation launcher (Organized Multi-Energy)
 # ─────────────────────────────────────────────────────────────────────────────
 
-WORLD="radi_cal_triple"
+WORLD="rc_hex_triple"
 PARTICLE="e-"
 # Adjusted energies to match some of the paper's test beam data points
 ENERGIES_KEV=(25000000 50000000 100000000 150000000) 

@@ -1,5 +1,5 @@
 #!/bin/bash
-RUNS_DIR="runs/radi_cal_triple"
+RUNS_DIR="runs/rc_hex_triple"
 
 # Ensure the base directory exists
 if [ ! -d "$RUNS_DIR" ]; then

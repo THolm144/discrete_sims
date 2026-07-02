@@ -3,7 +3,7 @@
 # run_energy_sweep.sh — Hyper-Speed Single-Threaded Parallel OpenGATE Sweeper
 # ─────────────────────────────────────────────────────────────────────────────
 
-WORLD="radi_cal_energy"
+WORLD="rc_hex"
 PARTICLE="e-"
 BEAM_RADIUS=0.01
 OPTICAL="on"

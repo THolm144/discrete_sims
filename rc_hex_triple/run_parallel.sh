@@ -1,5 +1,5 @@
 #!/bin/bash
-WORLD=radi_cal_triple
+WORLD=rc_hex_triple
 PARTICLE=e-
 ENERGY_KEV=20000000
 N_PARTICLES=100
