@@ -218,13 +218,13 @@ def _build_capillaries(sim, mm):
                 new_name=f"cap_{i}",
             )
             quartz_vol.name        = f"cap_{i}"
-            quartz_vol.mother      = "TARGET_VOL_NAME"
+            quartz_vol.mother      = TARGET_VOL_NAME
             quartz_vol.material    = "G4_SILICON_DIOXIDE"
             quartz_vol.translation = [cx * mm, cy * mm, 0]
             sim.add_volume(quartz_vol)
 
             filament             = sim.add_volume("Tubs", f"cap_{i}_filament")
-            filament.mother      = "TARGET_VOL_NAME"
+            filament.mother      = TARGET_VOL_NAME
             filament.rmin        = 0.0
             filament.rmax        = _FILAMENT_R_MM * mm
             filament.dz          = (_FILAMENT_LEN_MM / 2) * mm
