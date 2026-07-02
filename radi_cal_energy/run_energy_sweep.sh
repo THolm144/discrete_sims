@@ -4,7 +4,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 WORLD="radi_cal_energy"
-PARTICLE="proton"
+PARTICLE="e-"
 BEAM_RADIUS=0.01
 OPTICAL="on"
 CHERENKOV="off"

@@ -4,7 +4,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 WORLD="radi_cal_triple"
-PARTICLE="proton"
+PARTICLE="e-"
 BEAM_RADIUS=0.01
 OPTICAL="on"
 CHERENKOV="off"
