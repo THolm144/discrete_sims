@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # run_sim.sh — OpenGATE simulation launcher
 # ─────────────────────────────────────────────────────────────────────────────
-WORLD=radi_cal_energy
+WORLD=rc_hex
 PARTICLE=e-
 ENERGY_KEV=150000000
 N_PARTICLES=1
@@ -27,24 +27,21 @@ PIDS=()
 
 for i in $(seq 0 $((N_RUNS - 1))); do
     echo "  Launching run ${i}..."
-    # We remove 'setsid' here so the shell keeps ownership of the PID tracker
     python3 simulator.py \
-        --world        $WORLD \
-        --particle     $PARTICLE \
-        --energy-kev   $ENERGY_KEV \
-        --n            $N_PARTICLES \
-        --threads      $THREADS \
-        --beam-radius  $BEAM_RADIUS \
-        --optical      $OPTICAL \
-        --cherenkov    $CHERENKOV \
+        --world "$WORLD" \
+        --particle "$PARTICLE" \
+        --energy-kev "$ENERGY_KEV" \
+        --n "$N_PARTICLES" \
+        --threads "$THREADS" \
+        --beam-radius "$BEAM_RADIUS" \
+        --optical "$OPTICAL" \
+        --cherenkov "$CHERENKOV" \
         --physics-list "$PHYSICS_LIST" \
-        --run-id       $i \
-         --output-dir   "${OUT_DIR}" &
+        --run-id "$i" \
+        --output-dir "${OUT_DIR}" &
     
-    # Capture the PID of the simulation we just backgrounded
     PIDS+=($!)
 
-    # Every PARALLEL launches, wait for the batch to finish
     if (( (i + 1) % PARALLEL == 0 )); then
         echo "  [Waiting for batch $((( i + 1) / PARALLEL)) to complete...]"
         wait

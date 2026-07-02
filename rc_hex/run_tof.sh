@@ -1,5 +1,5 @@
 #!/bin/bash
-RUNS_DIR="runs/radi_cal_energy"
+RUNS_DIR="runs/rc_hex"
 
 # Ensure the base directory exists
 if [ ! -d "$RUNS_DIR" ]; then

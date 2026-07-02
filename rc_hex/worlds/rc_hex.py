@@ -164,7 +164,7 @@ def _build_capillaries(sim, mm):
         if i in _E_TYPE_INDICES:
             # Active Quartz Cladding Sleeve
             sleeve = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
-            sleeve.mother      = "world"
+            sleeve.mother      = "TARGET_VOL_NAME"
             sleeve.rmin        = _FILAMENT_R_MM * mm
             sleeve.rmax        = _CAP_OUTER_MM * mm     
             sleeve.dz          = half_calor             
@@ -173,7 +173,7 @@ def _build_capillaries(sim, mm):
 
             # Continuous active core filament
             core = sim.add_volume("Tubs", f"cap_{i}_active_core")
-            core.mother        = "world"
+            core.mother        = "TARGET_VOL_NAME"
             core.rmin          = 0.0
             core.rmax          = _FILAMENT_R_MM * mm
             core.dz            = half_calor
@@ -218,13 +218,13 @@ def _build_capillaries(sim, mm):
                 new_name=f"cap_{i}",
             )
             quartz_vol.name        = f"cap_{i}"
-            quartz_vol.mother      = "world"
+            quartz_vol.mother      = "TARGET_VOL_NAME"
             quartz_vol.material    = "G4_SILICON_DIOXIDE"
             quartz_vol.translation = [cx * mm, cy * mm, 0]
             sim.add_volume(quartz_vol)
 
             filament             = sim.add_volume("Tubs", f"cap_{i}_filament")
-            filament.mother      = "world"
+            filament.mother      = "TARGET_VOL_NAME"
             filament.rmin        = 0.0
             filament.rmax        = _FILAMENT_R_MM * mm
             filament.dz          = (_FILAMENT_LEN_MM / 2) * mm
@@ -287,15 +287,17 @@ def build_world(sim, units):
     _build_capillaries(sim, mm)
     _build_sipms(sim, mm)
 
-    z_pos = -_CALOR_THICK_MM / 2
+    start_z = -_CALOR_THICK_MM / 2
+    current_layer_front = start_z
 
     for i in range(_N_LYSO):
-        z_pos   += _GAP_THICK_MM / 2
+        gap_center_z = current_layer_front + (_GAP_THICK_MM / 2)
+        
         gap_vol  = _make_gap(f"gap_{i}", mm)
         gap_vol.name        = f"gap_{i}"
         gap_vol.mother      = TARGET_VOLUME_NAME
         gap_vol.material    = "Tyvek"
-        gap_vol.translation = [0, 0, z_pos * mm]
+        gap_vol.translation = [0, 0, gap_center_z * mm]
         sim.add_volume(gap_vol)
 
         lyso_vol             = _make_lyso(f"lyso_{i}", mm)
@@ -305,17 +307,19 @@ def build_world(sim, units):
         lyso_vol.translation = [0, 0, 0]
         sim.add_volume(lyso_vol)
 
-        z_pos += _GAP_THICK_MM / 2
+        current_layer_front += _GAP_THICK_MM
 
         if i < _N_W:
-            z_pos   += _W_THICK_MM / 2
+            abso_center_z = current_layer_front + (_W_THICK_MM / 2)
+            
             abso_vol = _make_abso(f"abso_{i}", mm)
             abso_vol.name        = f"abso_{i}"
             abso_vol.mother      = TARGET_VOLUME_NAME
             abso_vol.material    = "Tungsten"
-            abso_vol.translation = [0, 0, z_pos * mm]
+            abso_vol.translation = [0, 0, abso_center_z * mm]
             sim.add_volume(abso_vol)
-            z_pos += _W_THICK_MM / 2
+            
+            current_layer_front += _W_THICK_MM
 
     return sim
 
