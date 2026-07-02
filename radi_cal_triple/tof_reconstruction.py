@@ -260,7 +260,7 @@ def main():
 
     beta_factor = 1.0 - (V_EFF_MM_NS / C_LIGHT_MM_NS)
     z_emit_list = [
-        (V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0) / beta_factor 
+        - (V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0)
         for k in common_keys
     ]
     z_emit_coin = np.array(z_emit_list)
