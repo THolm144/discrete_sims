@@ -14,8 +14,8 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 # 4 Energies total. We have 200 cores. 
 # We can allocate exactly 50 single-threaded runs per energy step simultaneously.
 # 50 runs * 20 particles per run = 1,000 total particles per energy target.
-N_PARTICLES_PER_RUN=1
-N_RUNS_PER_ENERGY=1
+N_PARTICLES_PER_RUN=20
+N_RUNS_PER_ENERGY=50
 THREADS_PER_RUN=1      # 1 thread eliminates multi-threading lock contention
 MAX_CONCURRENT_SIMS=200 # Utilize all 200 physical cores
 
