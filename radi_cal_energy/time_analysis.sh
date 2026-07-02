@@ -1,21 +1,20 @@
 #!/bin/bash
 
-# Define the base directory containing the simulation runs
-RUNS_DIR="runs/radi_cal_energy"
+# Define the base directory containing the simulation sweeps
+RUNS_DIR="/home/uakgun/env/THOMAS/discrete_sims/radi_cal_energy/runs/radi_cal_energy"
 
 # Ensure the base directory exists
 if [ ! -d "$RUNS_DIR" ]; then
-    echo "Error: Directory $RUNS_DIR does not exist. Are you in the right folder?"
+    echo "Error: Directory $RUNS_DIR does not exist."
     exit 1
 fi
 
-# Find the most recently modified sub-directory inside RUNS_DIR, regardless of name
-# This looks only at top-level directories under RUNS_DIR (-maxdepth 1)
-LATEST_BATCH=$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | cut -d' ' -f2-)
+# Find the most recently modified sweep_* sub-directory inside RUNS_DIR
+LATEST_BATCH=$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -name "sweep_*" -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | cut -d' ' -f2-)
 
 # Check if a directory was actually found
 if [ -z "$LATEST_BATCH" ]; then
-    echo "Error: No directories found inside $RUNS_DIR."
+    echo "Error: No sweep directories found inside $RUNS_DIR."
     exit 1
 fi
 
@@ -23,7 +22,7 @@ fi
 LATEST_BATCH=${LATEST_BATCH%/}
 
 echo "============================================================"
-echo "  Targeting latest batch: $LATEST_BATCH"
+echo "  Targeting latest sweep batch: $LATEST_BATCH"
 echo "  Executing batch analysis pipeline..."
 echo "============================================================"
 
