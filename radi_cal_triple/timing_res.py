@@ -203,7 +203,7 @@ def run(batch_dir: Path):
         up_times = t_arr[up_m]
         dw_times = t_arr[dw_m]
 
-        # ── Apply Intrinsic SiPM Jitter independently per photon face array ──
+        # Apply Intrinsic SiPM Jitter independently per photon face array
         if SIPM_JITTER_PS > 0:
             if len(up_times) > 0:
                 up_times = up_times + np.random.normal(0.0, SIPM_JITTER_PS, size=len(up_times))
@@ -212,11 +212,13 @@ def run(batch_dir: Path):
 
         dw_num = len(dw_times)
         up_num = len(up_times)
+        
         diag_dw_n.append(dw_num)
         diag_up_n.append(up_num)
 
         dw_valid = dw_num >= MIN_PHOTONS_PER_FACE
         up_valid = up_num >= MIN_PHOTONS_PER_FACE
+        
         diag_dw_valid.append(dw_valid)
         diag_up_valid.append(up_valid)
 
@@ -233,10 +235,16 @@ def run(batch_dir: Path):
         up_counts.append(up_num)
         final_unique_events.append(ev_id)
 
+    # Convert safely to NumPy arrays
     best_minus_ps = np.array(best_minus_ps)
     dw_only_ps    = np.array(dw_only_ps)
     up_only_ps    = np.array(up_only_ps)
-    delta_t_ps    = dw_only_ps - up_only_ps
+    
+    if len(best_minus_ps) > 0:
+        delta_t_ps = dw_only_ps - up_only_ps
+    else:
+        delta_t_ps = np.array([])
+        
     dw_counts     = np.array(dw_counts)
     up_counts     = np.array(up_counts)
     unique_events = np.array(final_unique_events)
