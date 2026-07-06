@@ -29,7 +29,7 @@ CAP_XY_MM = np.array([
 # ANALYSIS PARAMETERS
 # ─────────────────────────────────────────────────────────────────────────────
 ARRIVAL_QUANTILE = 0.10
-MIN_PHOTONS_PER_FACE = 5
+# NOTE: MIN_PHOTONS_PER_FACE removed — no minimum-photon gate on events anymore.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CHANNEL ASSIGNMENT (UPDATED FOR DYNAMIC Z-ALIGNMENT)
@@ -38,19 +38,23 @@ def assign_channels_dynamically(x_mm, y_mm, z_mm):
     """
     Automatically detects the actual SiPM plane positions from the hit data
     to remain agnostic to LYSO thickness or cap changes, then assigns channels.
+
+    NOTE: This is geometric channel assignment (deciding which physical SiPM
+    face a hit belongs to), not a statistical filter on the timing
+    distribution, so it is left intact.
     """
     if len(z_mm) == 0:
         return np.array([], dtype=int)
-        
+
     # Find the two primary hit clusters along the Z axis (Upstream vs Downstream faces)
     abs_z = np.abs(z_mm)
     detected_sipm_z = np.median(abs_z[abs_z > (np.max(abs_z) - 5.0)])
-    
+
     # Filter hits that do not arrive at either window face (tolerance within 2.5 mm)
     valid_z_mask = np.abs(abs_z - detected_sipm_z) <= 2.5
-    
+
     channels = np.full(len(z_mm), -1, dtype=int)
-    
+
     # Process only hits hitting the window layers
     idx_to_process = np.where(valid_z_mask)[0]
     if len(idx_to_process) == 0:
@@ -61,15 +65,15 @@ def assign_channels_dynamically(x_mm, y_mm, z_mm):
     dy = y_mm[idx_to_process, np.newaxis] - CAP_XY_MM[:, 1]
     dists = np.hypot(dx, dy)
     cap_indices = np.argmin(dists, axis=1)
-    
+
     # Differentiate upstream (z < 0) from downstream (z > 0)
     is_downstream = z_mm[idx_to_process] > 0
     channels[idx_to_process] = np.where(is_downstream, cap_indices + 4, cap_indices)
-    
+
     return channels
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  GAUSSIAN FITTER
+#  GAUSSIAN FITTER (fits the FULL distribution, no windowing)
 # ─────────────────────────────────────────────────────────────────────────────
 def standard_gaussian(x, A, mu, sigma):
     """Standard symmetric Gaussian distribution."""
@@ -80,11 +84,13 @@ def fit_gaussian_to_peak(data, n_bins=40):
     if len(data) < 8:
         return 0.0, float(np.median(data)), float(np.std(data)), np.nan, 0.0
 
-    q75, q25  = np.percentile(data, [75, 25])
-    iqr_sigma = max((q75 - q25) / 1.349, 1.0)
+    # Use full data range for binning/bounds seeding — no IQR-based windowing.
     center    = np.median(data)
-    lo = center - 3.0 * iqr_sigma
-    hi = center + 3.0 * iqr_sigma
+    spread    = max(np.std(data), 1.0)
+    lo = float(np.min(data))
+    hi = float(np.max(data))
+    if hi <= lo:
+        hi = lo + 1.0
 
     counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
     mids = 0.5 * (edges[:-1] + edges[1:])
@@ -94,27 +100,25 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    fit_mask = np.abs(mids - mu0) < 1.2 * iqr_sigma
-    if fit_mask.sum() < 5:
-        return A0, mu0, iqr_sigma, np.nan, 0.0
-
+    # Fit against the ENTIRE histogram — no fit_mask restriction to a narrow
+    # window around the mode.
     try:
         popt, pcov = curve_fit(
             standard_gaussian,
-            mids[fit_mask], counts[fit_mask],
-            p0=[A0, mu0, iqr_sigma * 0.8],
+            mids, counts,
+            p0=[A0, mu0, spread],
             bounds=(
-                [0.5, mu0 - iqr_sigma, iqr_sigma * 0.05],
-                [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]
+                [0.0, lo, 1e-6],
+                [A0 * 10.0 + 1.0, hi, (hi - lo)]
             ),
-            maxfev=10000,
+            maxfev=20000,
         )
         A_fit, mu_fit, sig_fit = popt
         perr = np.sqrt(np.diag(pcov))
-        
+
         return float(A_fit), float(mu_fit), float(sig_fit), float(perr[2]), 0.0
     except Exception:
-        return A0, mu0, iqr_sigma, np.nan, 0.0
+        return A0, mu0, spread, np.nan, 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,8 +212,10 @@ def run(batch_dir: Path):
         diag_dw_n.append(dw_num)
         diag_up_n.append(up_num)
 
-        dw_valid = dw_num >= MIN_PHOTONS_PER_FACE
-        up_valid = up_num >= MIN_PHOTONS_PER_FACE
+        # No minimum-photon gate: any event with at least one hit on each
+        # face is included.
+        dw_valid = dw_num > 0
+        up_valid = up_num > 0
         diag_dw_valid.append(dw_valid)
         diag_up_valid.append(up_valid)
 
@@ -250,44 +256,31 @@ def run(batch_dir: Path):
     ratio = np.mean(diag_dw_n) / max(np.mean(diag_up_n), 0.001)
     print(f"  DW/UP photon ratio     : {ratio:.2f}")
 
+    # No outlier removal / mode-clustering — use the full raw distributions.
     selected_bm = best_minus_ps
     selected_dw = dw_only_ps
     selected_up = up_only_ps
 
-    # ── Outlier removal ───────────────────────────────────────────────────────
-    def clean_around_mode(arr, window_ps=60.0):
-        if len(arr) == 0:
-            return arr
-        counts, edges = np.histogram(arr, bins=40)
-        smoothed = gaussian_filter1d(counts.astype(float), sigma=2.0)
-        peak_bin = np.argmax(smoothed)
-        mode_center = 0.5 * (edges[peak_bin] + edges[peak_bin + 1])
-        return arr[np.abs(arr - mode_center) < window_ps]
-
-    clean_dw = clean_around_mode(selected_dw, window_ps=150.0)
-    clean_up = clean_around_mode(selected_up, window_ps=150.0)
-    clean_bm = clean_around_mode(selected_bm, window_ps=100.0)
-
-    # ── Skewed Gaussian peak fits ───────────────────────────────────────────
-    bm_amp, bm_mu, bm_sigma, bm_sigma_err, bm_alpha = fit_gaussian_to_peak(clean_bm)
-    dw_amp, dw_mu, dw_sigma, dw_sigma_err, dw_alpha = fit_gaussian_to_peak(clean_dw)
-    up_amp, up_mu, up_sigma, up_sigma_err, up_alpha = fit_gaussian_to_peak(clean_up)
+    # ── Gaussian peak fits over the FULL (unfiltered) distributions ────────
+    bm_amp, bm_mu, bm_sigma, bm_sigma_err, bm_alpha = fit_gaussian_to_peak(selected_bm)
+    dw_amp, dw_mu, dw_sigma, dw_sigma_err, dw_alpha = fit_gaussian_to_peak(selected_dw)
+    up_amp, up_mu, up_sigma, up_sigma_err, up_alpha = fit_gaussian_to_peak(selected_up)
 
     # ── Plots ────────────────────────────────────────────────────────────────
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
     energy_label = batch_dir.name
     fig.suptitle(
         f"Direct LocalTime Distributions for {energy_label} (Pure T-Type Filaments)\n"
-        f"Skewed Gaussian peak fit  |  Direct Q={ARRIVAL_QUANTILE:.2f} time marker  |  min {MIN_PHOTONS_PER_FACE} photons/face",
+        f"Unfiltered Gaussian fit over full distribution  |  Direct Q={ARRIVAL_QUANTILE:.2f} time marker",
         fontsize=13, fontweight="bold"
     )
 
     distributions = [
-        {"data": clean_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
+        {"data": selected_dw, "amp": dw_amp, "mu": dw_mu, "sigma": dw_sigma, "sigma_err": dw_sigma_err, "alpha": dw_alpha,
          "title": "Downstream T-Type Direct Time ($t_{DW}$)", "color": "royalblue"},
-        {"data": clean_up, "amp": up_amp, "mu": up_mu, "sigma": up_sigma, "sigma_err": up_sigma_err, "alpha": up_alpha,
+        {"data": selected_up, "amp": up_amp, "mu": up_mu, "sigma": up_sigma, "sigma_err": up_sigma_err, "alpha": up_alpha,
          "title": "Upstream T-Type Direct Time ($t_{UP}$)",   "color": "crimson"},
-        {"data": clean_bm, "amp": bm_amp, "mu": bm_mu, "sigma": bm_sigma, "sigma_err": bm_sigma_err, "alpha": bm_alpha,
+        {"data": selected_bm, "amp": bm_amp, "mu": bm_mu, "sigma": bm_sigma, "sigma_err": bm_sigma_err, "alpha": bm_alpha,
          "title": "BestMinus Timing Resolution $(t_{DW} - t_{UP})/2$", "color": "darkorchid"},
     ]
 
@@ -296,27 +289,25 @@ def run(batch_dir: Path):
         if len(data) == 0:
             continue
 
-        plot_center = dist["mu"]
-        plot_sigma  = dist["sigma"]
-        lo = plot_center - 3.0 * plot_sigma
-        hi = plot_center + 3.0 * plot_sigma
+        lo = float(np.min(data))
+        hi = float(np.max(data))
+        if hi <= lo:
+            hi = lo + 1.0
 
         counts, edges, _ = ax.hist(
             data, bins=100, range=(lo, hi),
             color=dist["color"], alpha=0.6, edgecolor="black", label="Data"
         )
 
-        q75, q25      = np.percentile(data, [75, 25])
-        iqr_sigma     = max((q75 - q25) / 1.349, 1.0)
-        fit_bin_width = (6.0 * iqr_sigma) / 40.0
+        fit_bin_width = (hi - lo) / 40.0
         plot_bin_width = (hi - lo) / 100.0
-        scale_factor = plot_bin_width / fit_bin_width
+        scale_factor = plot_bin_width / fit_bin_width if fit_bin_width > 0 else 1.0
 
         x_fit     = np.linspace(lo, hi, 5000)
         amplitude = dist["amp"] * scale_factor if dist["amp"] > 0 else counts.max()
         y_fit     = standard_gaussian(x_fit, amplitude, dist["mu"], dist["sigma"])
 
-        err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (IQR fallback)"
+        err_str = f" ± {dist['sigma_err']:.1f}" if not np.isnan(dist["sigma_err"]) else " (fallback)"
         ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
                 label=f"Gaussian fit:\n$\\mu$ = {dist['mu']:.1f} ps\n$\\sigma$ = {dist['sigma']:.1f}{err_str} ps")
 
@@ -342,7 +333,7 @@ def run(batch_dir: Path):
         "up_sigma":          up_sigma,
         "up_mu":             up_mu,
         "n_events_total":    len(best_minus_ps),
-        "n_events_selected": len(clean_bm),
+        "n_events_selected": len(selected_bm),
         "dw_median_photons": float(np.median(diag_dw_n)),
         "up_median_photons": float(np.median(diag_up_n)),
     }
@@ -360,8 +351,8 @@ if __name__ == "__main__":
     batch_path   = Path(args.batch_dir)
     energy_label = batch_path.name
     print(f"\n{'─'*60}")
-    print(f"  Timing Resolution — Pure Direct LocalTime Mode")
-    print(f"  No electronics modeling | Arrival Marker Quantile: {ARRIVAL_QUANTILE}")
+    print(f"  Timing Resolution — Pure Direct LocalTime Mode (Unfiltered)")
+    print(f"  No electronics modeling | No outlier removal | Arrival Marker Quantile: {ARRIVAL_QUANTILE}")
     print(f"  Batch : {energy_label}")
     print(f"{'─'*60}")
 
@@ -370,7 +361,7 @@ if __name__ == "__main__":
     if result is not None:
         s  = result["sigma_t_ps"]
         se = result["sigma_t_err_ps"]
-        err_str = f" ± {se:.2f}" if not np.isnan(se) else " (IQR fallback)"
+        err_str = f" ± {se:.2f}" if not np.isnan(se) else " (fallback)"
 
         print(f"\n  BestMinus σ_t  =  {s:.2f}{err_str} ps")
         print(f"  Downstream σ   =  {result['dw_sigma']:.2f} ps")
@@ -380,7 +371,7 @@ if __name__ == "__main__":
 
         out_txt = batch_path / "direct_timing_resolution.txt"
         with open(out_txt, "w") as f:
-            f.write(f"Method          : Direct LocalTime (No Electronics Baseline)\n")
+            f.write(f"Method          : Direct LocalTime (No Electronics Baseline, Unfiltered)\n")
             f.write(f"Arrival Quantile: {ARRIVAL_QUANTILE}\n")
             f.write(f"sigma_t_ps      : {s:.4f}\n")
             f.write(f"sigma_t_err_ps  : {se:.4f}\n")
