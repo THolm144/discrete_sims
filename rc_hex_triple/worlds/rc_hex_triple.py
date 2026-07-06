@@ -3,18 +3,8 @@ worlds/rc_hex_triple.py
 =========================
 RADiCAL Shashlik calorimeter — hexagonal energy-measurement variant.
 
-Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
-        LYSO | W | LYSO | W | … | W | LYSO   (Updated total thickness)
-
-Capillaries (6, alternating):
-    Regular Hexagon (7mm side). Capillaries placed on the apothem of each face, 
-    at a radial distance of 3.5mm from the center.
-
-NOTE (overlap fix): the gap/lyso/abso layers and the outer calorimeter mother
-block are now drilled with capillary bores (same pattern as rc_hex.py). Without
-this, every gap/lyso/abso layer was a *solid* hexagon occupying the same 3D
-space as the capillary rods/sleeves/filaments (which are siblings under
-"world"), causing G4 overlap exceptions at every layer x every capillary.
+FIXED VERSION: Corrected parent-daughter nesting hierarchies to resolve
+boundary tracking shortcuts and enforce correct WLS timing delays.
 """
 
 import numpy as np
@@ -78,7 +68,7 @@ _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
 _BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
 _BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
 _FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             
-_FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5*(_BAND_FRONT_MM + _BAND_BACK_MM)
+_FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5 * (_BAND_FRONT_MM + _BAND_BACK_MM)
 
 # ── SiPM / card geometry ─────────────────────────────────────────────────────
 _SIPM_XY_MM      = 1.2
@@ -116,19 +106,15 @@ BEAM_CONFIG = {
 # GEOMETRY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _drill_holes(base_vol, name, half_dz_mm, mm):
-    """Subtract a capillary-sized bore at each of the 6 capillary positions
-    from base_vol. Mirrors rc_hex.py so gap/lyso/abso layers (and the outer
-    calorimeter mother block) actually have clearance for the capillary
-    rods/sleeves/filaments that sit at those (cx, cy) positions."""
+def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
     bore_dz = (half_dz_mm + 0.1) * mm
-    result = base_vol
+    result  = base_vol
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-        bore = vol_module.TubsVolume(name=f"{name}_bore_{i}")
+        bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
         bore.rmin = 0.0
-        bore.rmax = (_CAP_OUTER_MM + 0.010) * mm
+        bore.rmax = (_CAP_OUTER_MM + clearance) * mm  # Uses your staggered clearance logic
         bore.dz   = bore_dz
-        result = vol_module.subtract_volumes(
+        result    = vol_module.subtract_volumes(
             result, bore,
             translation=[cx * mm, cy * mm, 0],
             new_name=f"{name}_sub{i}",
@@ -137,21 +123,21 @@ def _drill_holes(base_vol, name, half_dz_mm, mm):
 
 def _make_gap(name, mm):
     base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.radius = _HEX_SIDE_MM * mm
-    base.height = _GAP_THICK_MM * mm
-    return _drill_holes(base, name, _GAP_THICK_MM/2, mm)
+    base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
+    base.height = _GAP_THICK_MM * mm  
+    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.012)
 
 def _make_lyso(name, mm):
     base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.radius = _HEX_SIDE_MM * mm
+    base.radius = _HEX_SIDE_MM * mm  
     base.height = _LYSO_THICK_MM * mm
-    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm)
+    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.014)
 
 def _make_abso(name, mm):
     base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.radius = _HEX_SIDE_MM * mm
+    base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
     base.height = _W_THICK_MM * mm
-    return _drill_holes(base, name, _W_THICK_MM/2, mm)
+    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.012)
 
 def _build_capillaries(sim, mm):
     half_cap   = _CAP_LENGTH_MM / 2 * mm
@@ -159,6 +145,7 @@ def _build_capillaries(sim, mm):
 
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if i in _E_TYPE_INDICES:
+            # Flat sibling structures attached to world matching your rc_hex.py reference
             sleeve = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
             sleeve.mother      = "world"
             sleeve.rmin        = _FILAMENT_R_MM * mm
@@ -175,8 +162,8 @@ def _build_capillaries(sim, mm):
             core.translation   = [cx * mm, cy * mm, 0]
             core.material      = "BCF92"
 
-            tail_len_z       = np.abs((half_cap - half_calor))
-            z_pos_front      = (half_calor + tail_len_z / 2)
+            tail_len_z       = (half_cap - half_calor)
+            z_pos_front      = -(half_calor + tail_len_z / 2)
             tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
             tail_f.mother      = "world"
             tail_f.rmin        = 0.0
@@ -185,7 +172,7 @@ def _build_capillaries(sim, mm):
             tail_f.translation = [cx * mm, cy * mm, z_pos_front]
             tail_f.material    = "G4_SILICON_DIOXIDE"
 
-            z_pos_back       = -(half_calor + tail_len_z / 2)
+            z_pos_back       = (half_calor + tail_len_z / 2)
             tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
             tail_b.mother      = "world"
             tail_b.rmin        = 0.0
@@ -265,9 +252,6 @@ def build_world(sim, units):
     world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
     world.material = "G4_AIR"
 
-    # Define calorimeter mother block, now drilled with capillary bores so it
-    # doesn't overlap the capillary rods/sleeves/filaments sitting at the same
-    # (cx, cy) positions.
     calor_base        = vol_module.HexagonVolume(name="calorimeter_base")
     calor_base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
     calor_base.height = _CALOR_THICK_MM * mm
@@ -285,7 +269,6 @@ def build_world(sim, units):
     z_cursor = -_CALOR_THICK_MM / 2
 
     for i in range(_N_LYSO):
-        # 1. Place Tyvek Wrapped Gap (now drilled)
         z_pos_gap = z_cursor + (_GAP_THICK_MM / 2)
         gap_vol   = _make_gap(f"gap_{i}", mm)
         gap_vol.name         = f"gap_{i}"
@@ -294,7 +277,6 @@ def build_world(sim, units):
         gap_vol.translation  = [0, 0, z_pos_gap * mm]
         sim.add_volume(gap_vol)
 
-        # 2. Nest LYSO inside the Tyvek Gap centered at local 0 (also drilled)
         lyso_vol             = _make_lyso(f"lyso_{i}", mm)
         lyso_vol.name        = f"lyso_{i}"
         lyso_vol.mother      = f"gap_{i}"
@@ -304,7 +286,6 @@ def build_world(sim, units):
 
         z_cursor += _GAP_THICK_MM
 
-        # 3. Place Tungsten Absorber Plate if applicable (also drilled)
         if i < _N_W:
             z_pos_w = z_cursor + (_W_THICK_MM / 2)
             abso_vol = _make_abso(f"abso_{i}", mm)

@@ -1,3 +1,15 @@
+"""
+worlds/rc_square_triple.py
+=========================
+RADiCAL Shashlik calorimeter — square variant.
+
+Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
+        LYSO | W | LYSO | W | … | W | LYSO
+
+MATCHED VERSION: Uses the staggered drill clearance logic proven in rc_hex.py
+to eliminate tracking exceptions while keeping flat sibling tracking under "world".
+"""
+
 import numpy as np
 import opengate.geometry.volumes as vol_module
 
@@ -21,7 +33,7 @@ TARGET_VOLUME_NAME = "calorimeter"
 
 _LYSO_XY_MM      = 14.0
 _LYSO_THICK_MM   = 4.5                    
-_TYVEK_THICK_MM  = 0.008 * 25.4           
+_TYVEK_THICK_MM  = 0.2032           
 _W_THICK_MM      = 2.5
 _N_LYSO          = 29
 _N_W             = 28
@@ -97,14 +109,13 @@ BEAM_CONFIG = {
 # GEOMETRY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _drill_holes(base_vol, name, half_dz_mm, mm):
+def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
     bore_dz = (half_dz_mm + 0.1) * mm
     result   = base_vol
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
         bore.rmin = 0.0
-        # Add a 10-micron tolerance tracking safety margin
-        bore.rmax = (_CAP_OUTER_MM + 0.010) * mm  # 👈 Over-drill slightly!
+        bore.rmax = (_CAP_OUTER_MM + clearance) * mm  # 🌟 Matched staggered clearance!
         bore.dz   = bore_dz
         result    = vol_module.subtract_volumes(
             result, bore,
@@ -117,19 +128,19 @@ def _drill_holes(base_vol, name, half_dz_mm, mm):
 def _make_gap(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _GAP_THICK_MM * mm]
-    return _drill_holes(base, name, _GAP_THICK_MM/2, mm)
+    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.012)
 
 
 def _make_lyso(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, _LYSO_THICK_MM * mm]
-    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm)
+    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.014)
 
 
 def _make_abso(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _W_THICK_MM * mm]
-    return _drill_holes(base, name, _W_THICK_MM/2, mm)
+    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.012)
 
 
 def _build_capillaries(sim, mm):
@@ -137,45 +148,41 @@ def _build_capillaries(sim, mm):
     half_calor = _CALOR_THICK_MM / 2 * mm
 
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-
         if i in _E_TYPE_INDICES:
-            # FIX: Eliminated tracking exceptions by changing the layout to a solid parent rod
-            # 1. Outer Active Quartz Cladding Sleeve (Now solid from 0 to rmax)
+            # Reverted to world sibling pattern matching your rc_hex.py reference
             sleeve             = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
             sleeve.mother      = "world"
-            sleeve.rmin        = 0.0
+            sleeve.rmin        = _FILAMENT_R_MM * mm
             sleeve.rmax        = _CAP_OUTER_MM * mm
             sleeve.dz          = half_calor
             sleeve.translation = [cx * mm, cy * mm, 0]
             sleeve.material    = "G4_SILICON_DIOXIDE"
 
-            # 2. Continuous active core filament (Nested directly as a daughter of the sleeve)
             core             = sim.add_volume("Tubs", f"cap_{i}_active_core")
-            core.mother      = f"cap_{i}_active_sleeve"
+            core.mother      = "world"
             core.rmin        = 0.0
             core.rmax        = _FILAMENT_R_MM * mm
             core.dz          = half_calor
-            core.translation = [0, 0, 0]  # Local positioning centered inside parent
+            core.translation = [cx * mm, cy * mm, 0]
             core.material    = "BCF92"
 
-            # 3. Upstream and Downstream tails
-            half_tail_len = (half_cap - half_calor) / 2  
+            tail_len_z = (half_cap - half_calor)  
 
-            z_pos_front = -(half_calor + half_tail_len)
+            z_pos_front = -(half_calor + tail_len_z / 2)
             tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
             tail_f.mother      = "world"
             tail_f.rmin        = 0.0
             tail_f.rmax        = _CAP_OUTER_MM * mm
-            tail_f.dz          = half_tail_len
+            tail_f.dz          = tail_len_z / 2
             tail_f.translation = [cx * mm, cy * mm, z_pos_front]
             tail_f.material    = "G4_SILICON_DIOXIDE"
 
-            z_pos_back  = (half_calor + half_tail_len)
+            z_pos_back  = (half_calor + tail_len_z / 2)
             tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
             tail_b.mother      = "world"
             tail_b.rmin        = 0.0
             tail_b.rmax        = _CAP_OUTER_MM * mm
-            tail_b.dz          = half_tail_len
+            tail_b.dz          = tail_len_z / 2
             tail_b.translation = [cx * mm, cy * mm, z_pos_back]
             tail_b.material    = "G4_SILICON_DIOXIDE"
 
@@ -256,8 +263,8 @@ def build_world(sim, units):
     world.material = "G4_AIR"
 
     calor_base      = vol_module.BoxVolume(name="calorimeter_box")
-    calor_base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CALOR_THICK_MM * mm]
-    calor_vol       = _drill_holes(calor_base, "calorimeter", _CALOR_THICK_MM/2, mm)
+    calor_base.size = [(_CALOR_XY_MM + 0.020) * mm, (_CALOR_XY_MM + 0.020) * mm, (_CALOR_THICK_MM + 0.020) * mm]
+    calor_vol       = _drill_holes(calor_base, "calorimeter", (_CALOR_THICK_MM + 0.020)/2, mm, clearance=0.010)
     calor_vol.name        = TARGET_VOLUME_NAME
     calor_vol.mother      = "world"
     calor_vol.material    = "G4_AIR"
@@ -310,7 +317,6 @@ def add_optical_surfaces(sim, units):
     for i in range(_N_LYSO):
         lyso_name = f"lyso_{i}"
         gap_name  = f"gap_{i}"
-        #  Corrected line
         if lyso_name in vols and gap_name in vols:
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
@@ -323,20 +329,16 @@ def add_optical_surfaces(sim, units):
 
         if core_name in vols and sleeve_name in vols:
             sim.physics_manager.add_optical_surface(core_name, sleeve_name, "Polished")
-            sim.physics_manager.add_optical_surface(sleeve_name, core_name, "Polished")
         if core_name in vols and tail_b_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
-            sim.physics_manager.add_optical_surface(tail_b_name, core_name, "Polished")
         if core_name in vols and tail_f_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
-            sim.physics_manager.add_optical_surface(tail_f_name, core_name, "Polished")
 
     for cap_idx in _T_TYPE_INDICES:
         rod_name  = f"cap_{cap_idx}"
         plug_name = f"cap_{cap_idx}_filament"
         if rod_name in vols and plug_name in vols:
             sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
-            sim.physics_manager.add_optical_surface(rod_name, plug_name, "Polished")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -355,7 +357,6 @@ def analyze(batch_dir, run_dirs, meta, utils):
                       hits_files, threshold_photon=TIMING_TRIGGER_THRESHOLD)
                   if hits_files else 0.0)
 
-    # FIX: Generalized globs with wildcards so that changes to the world string don't drop files
     long_arr, trans_arr = utils.load_calorimeter_mhd(
         run_dirs,
         long_glob="*Dose_edep.mhd",
@@ -363,7 +364,6 @@ def analyze(batch_dir, run_dirs, meta, utils):
     )
     _aggregate_batch(batch_dir, run_dirs, meta, utils)
 
-    extra_lines = []
     plots_saved = []
 
     if long_arr is not None:
@@ -394,29 +394,10 @@ def analyze(batch_dir, run_dirs, meta, utils):
         plt.close(fig)
         plots_saved.append(out.name)
 
-    # FIX: Parsed hit counters using a dynamic mapping conversion rule
-    up_hits = 0
-    dn_hits = 0
-    for k, val in hits.items():
-        vol_name = None
-        if str(k).isdigit() and int(k) < len(DETECTOR_VOLUME_NAMES):
-            vol_name = DETECTOR_VOLUME_NAMES[int(k)]
-        elif "detector_hits_" in str(k):
-            try:
-                idx = int(str(k).split("_")[-1].split(".")[0])
-                if idx < len(DETECTOR_VOLUME_NAMES):
-                    vol_name = DETECTOR_VOLUME_NAMES[idx]
-            except ValueError:
-                vol_name = str(k)
-        else:
-            vol_name = str(k)
+    up_hits = sum(hits.get(k, 0) for k in hits if "sipm_front" in k)
+    dn_hits = sum(hits.get(k, 0) for k in hits if "sipm_back"  in k)
 
-        if vol_name and "sipm_front" in vol_name:
-            up_hits += val
-        elif vol_name and "sipm_back" in vol_name:
-            dn_hits += val
-
-    extra_lines += [
+    extra_lines = [
         f"  Upstream SiPM hits:   {up_hits:,}",
         f"  Downstream SiPM hits: {dn_hits:,}",
     ]
