@@ -1,30 +1,18 @@
 import argparse
+import importlib
 from pathlib import Path
 import numpy as np
 import uproot
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
+from scipy.optimize import curve_fit
+from scipy.ndimage import gaussian_filter1d
 
 try:
     import analysis_utils as utils
 except ImportError:
     print("WARNING: Could not import 'utils'. Ensure this script is run from the OpenGATE sim directory.")
     utils = None
-
-import warnings
-
-from scipy.stats import gaussian_kde
-from scipy.optimize import curve_fit
-from scipy.ndimage import gaussian_filter1d
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY CONSTANTS (UPDATED TO BE COMPATIBLE WITH VARIABLE LYSO THICKNESS)
-# ─────────────────────────────────────────────────────────────────────────────
-_TYVEK_THICK_MM  = 0.2032
-_W_THICK_MM      = 2.5
-_N_LYSO          = 29
-_N_W             = 28
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OPTICAL KINEMATICS
@@ -35,46 +23,71 @@ V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 BOUNCE_FACTOR    = 0.92                          # account for TIR zig-zag
 V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
-_GT_LO_NS = 0.0 
-_GT_HI_NS = 50.0    
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CAPILLARY XY POSITIONS  (indices 2, 3 are E-type)
-# ─────────────────────────────────────────────────────────────────────────────
-_HOLE_OFFSET_MM  = 3.7032
-CAP_XY_MM = np.array([
-    [ _HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 0 — T-type
-    [-_HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 1 — T-type
-    [-_HOLE_OFFSET_MM,  _HOLE_OFFSET_MM],   # 2 — E-type  ← used here
-    [ _HOLE_OFFSET_MM, -_HOLE_OFFSET_MM],   # 3 — E-type  ← used here
-])
-_E_TYPE_INDICES  = {2, 3}
-_T_TYPE_INDICES  = {0, 1}
+_GT_LO_NS = 0.0
+_GT_HI_NS = 50.0
 
 # TIMING CALCULATION PARAMETERS
 ARRIVAL_QUANTILE     = 0.10
 MIN_PHOTONS_PER_FACE = 1
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GEOMETRY LOADER (pulls constants directly from the world module — no guessing)
+# ─────────────────────────────────────────────────────────────────────────────
+def load_geometry(world_name: str):
+    """
+    Imports worlds.<world_name> and extracts everything timing_res.py needs.
+    Falls back to the old 4-point square layout only if the module doesn't
+    define _CAP_POSITIONS_MM (i.e. pre-hex world files).
+    """
+    mod = importlib.import_module(f"worlds.{world_name}")
+
+    if hasattr(mod, "_CAP_POSITIONS_MM"):
+        cap_xy = np.array(mod._CAP_POSITIONS_MM)
+    else:
+        # legacy square layout fallback
+        offset = getattr(mod, "_HOLE_OFFSET_MM", 3.7032)
+        cap_xy = np.array([
+            [ offset,  offset],
+            [-offset, -offset],
+            [-offset,  offset],
+            [ offset, -offset],
+        ])
+
+    return {
+        "lyso_thick_mm":  mod._LYSO_THICK_MM,
+        "tyvek_thick_mm": mod._TYVEK_THICK_MM,
+        "w_thick_mm":     mod._W_THICK_MM,
+        "n_lyso":         mod._N_LYSO,
+        "n_w":            mod._N_W,
+        "cap_xy_mm":      cap_xy,
+        "e_type_idx":     set(mod._E_TYPE_INDICES),
+        "t_type_idx":     set(mod._T_TYPE_INDICES),
+        "cap_length_mm":  getattr(mod, "_CAP_LENGTH_MM", None),
+        "sipm_z_mm":      getattr(mod, "_SIPM_Z_MM", None),
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS (Geometry & Truth)
 # ─────────────────────────────────────────────────────────────────────────────
-def get_lyso_layer_bounds(lyso_thick, calor_thick):
+def get_lyso_layer_bounds(lyso_thick, tyvek_thick, w_thick, n_lyso, n_w, calor_thick):
     """Calculates active crystal bounds dynamically given current geometry configuration."""
-    gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+    gap_thick = lyso_thick + 2 * tyvek_thick
     bounds = []
     current_z = -calor_thick / 2
-    for idx in range(_N_LYSO):
-        z_start = current_z + _TYVEK_THICK_MM
+    for idx in range(n_lyso):
+        z_start = current_z + tyvek_thick
         z_end   = z_start + lyso_thick
         bounds.append((z_start, z_end))
-        current_z += gap_thick + (_W_THICK_MM if idx < _N_W else 0)
+        current_z += gap_thick + (w_thick if idx < n_w else 0)
     return bounds
 
-def assign_channel(x_mm, y_mm):
-    dists = np.hypot(CAP_XY_MM[:, 0, None] - x_mm, CAP_XY_MM[:, 1, None] - y_mm)
+def assign_channel(x_mm, y_mm, cap_xy_mm):
+    dists = np.hypot(cap_xy_mm[:, 0, None] - x_mm, cap_xy_mm[:, 1, None] - y_mm)
     return np.argmin(dists, axis=0)
 
-def load_truth_dose_from_mhd(run_dirs: list, lyso_thick, calor_thick):
+def load_truth_dose_from_mhd(run_dirs: list, lyso_thick, tyvek_thick, w_thick, n_lyso, n_w, calor_thick):
     if not utils: return None
     try:
         long_arr, _ = utils.load_calorimeter_mhd(
@@ -83,7 +96,7 @@ def load_truth_dose_from_mhd(run_dirs: list, lyso_thick, calor_thick):
         if long_arr is None: return None
         dz_mm, avg = 0.1, long_arr / max(len(run_dirs), 1)
         layer_edeps = []
-        for (z_start, z_end) in get_lyso_layer_bounds(lyso_thick, calor_thick):
+        for (z_start, z_end) in get_lyso_layer_bounds(lyso_thick, tyvek_thick, w_thick, n_lyso, n_w, calor_thick):
             z_offset_start = z_start - (-calor_thick / 2)
             z_offset_end   = z_end   - (-calor_thick / 2)
             i0 = max(0, min(int(round(z_offset_start / dz_mm)), len(avg)))
@@ -92,6 +105,7 @@ def load_truth_dose_from_mhd(run_dirs: list, lyso_thick, calor_thick):
         return np.array(layer_edeps)
     except Exception:
         return None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS (Timing Fit)
@@ -135,12 +149,15 @@ def clean_around_mode(arr, window_ps=60.0):
     mode_center   = 0.5 * (edges[peak_bin] + edges[peak_bin + 1])
     return arr[np.abs(arr - mode_center) < window_ps]
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-dir", required=True, type=str)
+    parser.add_argument("--world", required=True, type=str,
+                         help="World module name, e.g. rc_hex_triple")
     args = parser.parse_args()
 
     batch_dir = Path(args.batch_dir)
@@ -148,56 +165,43 @@ def main():
     print(f"  Longitudinal Profile Reconstruction + Timing Resolution")
     print(f"{'─'*60}")
 
+    geo = load_geometry(args.world)
+
+    lyso_thick     = geo["lyso_thick_mm"]
+    tyvek_thick_mm = geo["tyvek_thick_mm"]
+    w_thick_mm     = geo["w_thick_mm"]
+    n_lyso         = geo["n_lyso"]
+    n_w            = geo["n_w"]
+    cap_xy_mm      = geo["cap_xy_mm"]
+    e_type_idx     = geo["e_type_idx"]
+    t_type_idx     = geo["t_type_idx"]
+
+    gap_thick_mm   = lyso_thick + 2 * tyvek_thick_mm
+    calor_thick_mm = (n_lyso * gap_thick_mm) + (n_w * w_thick_mm)
+    calor_half_mm  = calor_thick_mm / 2
+    layer_pitch_mm = gap_thick_mm + w_thick_mm
+
+    lyso_bounds = get_lyso_layer_bounds(lyso_thick, tyvek_thick_mm, w_thick_mm, n_lyso, n_w, calor_thick_mm)
+
+    # SiPM plane location comes straight from the world module now — no
+    # inference from hit-file z-extrema, since that broke across world variants.
+    detected_z_sensor = geo["sipm_z_mm"]
+    if detected_z_sensor is None:
+        detected_z_sensor = calor_half_mm  # last-resort fallback
+
+    print(f"  World                 : {args.world}")
+    print(f"  SiPM Plane Z          : ±{detected_z_sensor:.2f} mm")
+    print(f"  LYSO Thickness        : {lyso_thick:.2f} mm")
+    print(f"  Calorimeter Thickness : {calor_thick_mm:.2f} mm")
+
     # 1. Recursive glob ensures .root files are found no matter how deep they are nested
     hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
-
     if not hit_files:
         print("  WARNING: No hit files found.")
         return
 
     # 2. Extract unique directories containing the hits to feed the legacy truth reader
     run_dirs = sorted(list(set(fpath.parent for fpath in hit_files)))
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # DYNAMIC GEOMETRY SCAN: Extract parameters from first populated file
-    # ─────────────────────────────────────────────────────────────────────────
-    detected_z_sensor = None
-    for fpath in hit_files:
-        try:
-            with uproot.open(fpath) as f:
-                tree_key = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
-                if not tree_key: continue
-                z_arr = f[tree_key]["Position_Z"].array(library="np")
-                if len(z_arr) > 0:
-                    abs_z = np.abs(z_arr)
-                    detected_z_sensor = float(np.median(abs_z[abs_z > (np.max(abs_z) - 5.0)]))
-                    break
-        except Exception:
-            continue
-
-    if detected_z_sensor is None:
-        print("  ERROR: Could not establish physical SiPM plane location from data.")
-        return
-
-    # Back-calculate LYSO thickness depending on geometry version
-    if abs(detected_z_sensor - 91.65) < 1.5:
-        lyso_thick = 1.5
-    elif abs(detected_z_sensor - 135.15) < 1.5:
-        lyso_thick = 4.5
-    else:
-        # Fallback linear estimation based on cap dimension variations
-        lyso_thick = 1.5 + (detected_z_sensor - 91.65) / _N_LYSO
-        
-    gap_thick_mm   = lyso_thick + 2 * _TYVEK_THICK_MM
-    calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
-    calor_half_mm  = calor_thick_mm / 2
-    layer_pitch_mm = gap_thick_mm + _W_THICK_MM
-
-    lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
-
-    print(f"  Detected SiPM Plane Z : ±{detected_z_sensor:.2f} mm")
-    print(f"  Deduced LYSO Thickness: {lyso_thick:.2f} mm")
-    print(f"  Calorimeter Thickness : {calor_thick_mm:.2f} mm")
 
     # ─────────────────────────────────────────────────────────────────────────
     # TRACKING DATA PASS
@@ -226,12 +230,12 @@ def main():
             print(f"  WARN: could not read {fpath.name}: {exc}")
             continue
 
-        channels = assign_channel(x, y)
+        channels = assign_channel(x, y, cap_xy_mm)
         near_up  = np.abs(z + detected_z_sensor) < sipm_z_tol_mm
         near_dw  = np.abs(z - detected_z_sensor) < sipm_z_tol_mm
 
         # ── 1. E-Type Spatial Reconstruction (GlobalTime) ──
-        is_e_type = np.isin(channels, list(_E_TYPE_INDICES))
+        is_e_type = np.isin(channels, list(e_type_idx))
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
 
         mask_e_up = is_e_type & is_prompt & near_up
@@ -248,7 +252,7 @@ def main():
                 down_first[key] = float(ti)
 
         # ── 2. T-Type Timing Resolution (LocalTime) ──
-        is_t_type  = np.isin(channels, list(_T_TYPE_INDICES))
+        is_t_type  = np.isin(channels, list(t_type_idx))
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
 
         mask_t_up = is_t_type & is_optical & near_up
@@ -280,7 +284,7 @@ def main():
 
     clean_bm = clean_around_mode(np.array(t_type_best_minus_ps), window_ps=100.0)
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
-    
+
     sigma_z_mm = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
     sigma_layer = sigma_z_mm / layer_pitch_mm
 
@@ -299,7 +303,7 @@ def main():
     valid_coin  = z_emit_coin[(z_emit_coin >= -calor_half_mm - 15.0) & (z_emit_coin <= calor_half_mm + 15.0)]
 
     def kde_profile(valid_z, bounds=lyso_bounds):
-        profile = np.zeros(_N_LYSO)
+        profile = np.zeros(n_lyso)
         if len(valid_z) < 5:
             for i, (z_min, z_max) in enumerate(bounds):
                 profile[i] = np.sum((valid_z >= z_min) & (valid_z <= z_max))
@@ -310,26 +314,26 @@ def main():
         return profile
 
     profile_coin = kde_profile(valid_coin)[::-1]
-    truth_curve = load_truth_dose_from_mhd(run_dirs, lyso_thick, calor_thick_mm)
-    
+    truth_curve = load_truth_dose_from_mhd(run_dirs, lyso_thick, tyvek_thick_mm, w_thick_mm, n_lyso, n_w, calor_thick_mm)
+
     if truth_curve is not None and np.sum(profile_coin) > 0:
         profile_coin *= (np.sum(truth_curve) / np.sum(profile_coin))
 
     # ── Plotting ──
-    layers = np.arange(1, _N_LYSO + 1)
+    layers = np.arange(1, n_lyso + 1)
     fig, ax = plt.subplots(figsize=(10, 5))
 
     if truth_curve is not None:
         ax.bar(layers, truth_curve, color="#00bcd4", alpha=0.45,
                edgecolor="#00838f", linewidth=1.0, width=0.8, label="Simulation Truth (DoseActor)")
 
-    ax.errorbar(layers, profile_coin, xerr=sigma_layer, color="#6a1b9a", 
+    ax.errorbar(layers, profile_coin, xerr=sigma_layer, color="#6a1b9a",
                 linewidth=2.5, marker="o", markersize=5, capsize=3, capthick=1.5,
                 label=f"ΔT Coincidence (σ_t = {sigma_t_ps:.1f} ps → ±{sigma_layer:.2f} layers)")
 
     ax.set_xlabel("LYSO Layer Number")
     ax.set_ylabel("Energy / Scaled Hits (MeV)")
-    ax.set_title(f"E-type SiPM ToF Reconstruction ({lyso_thick:.1f}mm LYSO Geometry)")
+    ax.set_title(f"E-type SiPM ToF Reconstruction ({lyso_thick:.1f}mm LYSO Geometry, {args.world})")
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend(loc="upper right", fontsize=9)
 
