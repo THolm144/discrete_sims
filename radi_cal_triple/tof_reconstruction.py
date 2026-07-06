@@ -158,7 +158,7 @@ def main():
     for d in raw_dirs:
         nested = d / d.name
         run_dirs.append(nested if nested.is_dir() else d)
-    hit_files = [p for d in run_dirs for p in sorted(d.glob("**/detector_hits_*.root", recursive = True))]
+    hit_files = [p for d in run_dirs for p in sorted(d.rglob("detector_hits_*.root"))]
 
     if not hit_files:
         print("  WARNING: No hit files found.")
