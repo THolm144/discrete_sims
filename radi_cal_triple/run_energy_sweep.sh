@@ -14,10 +14,10 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 # 4 Energies total. We have 200 cores. 
 # We can allocate exactly 50 single-threaded runs per energy step simultaneously.
 # 50 runs * 20 particles per run = 1,000 total particles per energy target.
-N_PARTICLES_PER_RUN=20
+N_PARTICLES_PER_RUN=15
 N_RUNS_PER_ENERGY=50
 THREADS_PER_RUN=1      # 1 thread eliminates multi-threading lock contention
-MAX_CONCURRENT_SIMS=200 # Utilize all 200 physical cores
+MAX_CONCURRENT_SIMS=150 # Utilize all 200 physical cores
 
 # Define target sweep energies in keV (25 GeV, 50 GeV, 100 GeV, 200 GeV)
 ENERGIES_KEV=(25000000 50000000 100000000 200000000)
