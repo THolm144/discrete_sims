@@ -217,6 +217,10 @@ def main():
                     gt = tree["GlobalTime"].array(library="np")
                     lt = tree["LocalTime"].array(library="np")
                     ev = tree["EventID"].array(library="np")
+                    pn = tree["ParticleName"].array(library="np")
+                    
+                    
+
             except Exception as exc:
                 print(f"  WARN: could not read {fpath.name}: {exc}")
                 continue
@@ -228,8 +232,9 @@ def main():
 
             # ── 1. E-Type Spatial Reconstruction (GlobalTime) ──
             is_e_type = np.isin(channels, list(_E_TYPE_INDICES))
-            mask_e_up = is_e_type & is_prompt & near_up
-            mask_e_dw = is_e_type & is_prompt & near_dw
+            is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
+            mask_e_up = is_e_type & is_prompt & near_up & is_optical
+            mask_e_dw = is_e_type & is_prompt & near_dw & is_optical
 
             for eid, ti in zip(ev[mask_e_up], gt[mask_e_up]):
                 key = int(eid)  
@@ -243,8 +248,9 @@ def main():
 
             # ── 2. T-Type Timing Resolution (LocalTime) ──
             is_t_type  = np.isin(channels, list(_T_TYPE_INDICES))
-            mask_t_up = is_t_type & is_prompt & near_up
-            mask_t_dw = is_t_type & is_prompt & near_dw
+            is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
+            mask_t_up = is_t_type & is_prompt & near_up & is_optical
+            mask_t_dw = is_t_type & is_prompt & near_dw & is_optical
 
             ev_t_up, lt_t_up = ev[mask_t_up], lt[mask_t_up] * 1000.0  
             ev_t_dw, lt_t_dw = ev[mask_t_dw], lt[mask_t_dw] * 1000.0
