@@ -66,7 +66,7 @@ elif [ -n "$HAS_SWEEP_RUNS" ]; then
     echo "============================================================"
 
     # Natural/version sort so 25GeV, 50GeV, 100GeV order sensibly
-    mapfile -t ENERGY_DIRS < <(find "$LATEST_BATCH" -mindepth 1 -maxdepth 1 -type d | sort -V)
+    mapfile -t ENERGY_DIRS < <(find "$LATEST_BATCH" -mindepth 2 -maxdepth 2 -type d -name "run_*" -printf '%h\n' | sort -u -V)
 
     if [ ${#ENERGY_DIRS[@]} -eq 0 ]; then
         echo "Error: Sweep structure detected but no energy sub-folders found."
