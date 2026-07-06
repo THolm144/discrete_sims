@@ -311,7 +311,7 @@ def main():
                 profile[i] = kde.evaluate((z_min + z_max) / 2.0)[0] * total_weight
         return profile
 
-    profile_coin = kde_profile(valid_coin, event_weights)[::-1]
+    profile_coin = kde_profile(valid_coin, event_weights)
     truth_curve = load_truth_dose_from_mhd(run_dirs, lyso_thick, calor_thick_mm)
     
     if truth_curve is not None and np.sum(profile_coin) > 0:
