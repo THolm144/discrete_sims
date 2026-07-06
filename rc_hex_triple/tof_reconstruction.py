@@ -35,8 +35,8 @@ V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 BOUNCE_FACTOR    = 0.92                          # account for TIR zig-zag
 V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
-_GT_LO_NS = 0.25   
-_GT_HI_NS = 1.5    
+_GT_LO_NS = 0.0 
+_GT_HI_NS = 50.0    
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPILLARY XY POSITIONS  (indices 2, 3 are E-type)

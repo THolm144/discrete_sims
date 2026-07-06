@@ -41,8 +41,8 @@ BOUNCE_FACTOR    = 0.88
 V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
 ATTENUATION_LENGTH_MM = 1500.0 
 
-_GT_LO_NS = 0.25   
-_GT_HI_NS = 1.5    
+_GT_LO_NS = 0.0   
+_GT_HI_NS = 50.0    
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPILLARY XY POSITIONS 

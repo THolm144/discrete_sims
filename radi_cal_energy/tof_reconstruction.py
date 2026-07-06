@@ -52,8 +52,8 @@ ATTENUATION_LENGTH_MM = 1500.0
 # GlobalTime window to accept as a prompt photon on each face.
 # Upstream:   photons arrive before beam reaches back face (~0.25–1.0 ns)
 # Downstream: beam transit floor ~0.6 ns; cap at 1.5 ns to reject late WLS
-_GT_LO_NS = 0.25   # reject Cherenkov from beam halo arriving too early
-_GT_HI_NS = 1.5    # reject BCF-92 WLS delayed tail (τ ≈ 2.7 ns)
+_GT_LO_NS = 0.0 # reject Cherenkov from beam halo arriving too early
+_GT_HI_NS = 50.0    # reject BCF-92 WLS delayed tail (τ ≈ 2.7 ns)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPILLARY XY POSITIONS  (indices 2, 3 are E-type)
