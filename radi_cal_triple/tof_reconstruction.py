@@ -18,7 +18,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY CONSTANTS  (must match radi_cal_energy.py exactly)
 # ─────────────────────────────────────────────────────────────────────────────
-_LYSO_THICK_MM   = 1.5
+_LYSO_THICK_MM   = 4.5
 _TYVEK_THICK_MM  = 0.2032
 _W_THICK_MM      = 2.5
 _N_LYSO          = 29
