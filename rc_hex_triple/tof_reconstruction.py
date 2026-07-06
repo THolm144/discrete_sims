@@ -194,13 +194,70 @@ def main():
     print(f"  LYSO Thickness        : {lyso_thick:.2f} mm")
     print(f"  Calorimeter Thickness : {calor_thick_mm:.2f} mm")
 
-    # 1. Recursive glob ensures .root files are found no matter how deep they are nested
-    hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
-    if not hit_files:
-        print("  WARNING: No hit files found.")
+    batches = find_batches(batch_dir)
+    if not batches:
+        print(f"  WARNING: No hit files found anywhere under {batch_dir}.")
         return
 
-    # 2. Extract unique directories containing the hits to feed the legacy truth reader
+    print(f"  Found {len(batches)} batch(es) to process: {[b[0] for b in batches]}")
+
+    for label, out_dir, hit_files in batches:
+        print(f"\n{'─'*60}")
+        print(f"  Processing batch: {label}  ({len(hit_files)} hit files)")
+        print(f"{'─'*60}")
+        process_batch(
+            label=label,
+            out_dir=out_dir,
+            hit_files=hit_files,
+            lyso_thick=lyso_thick,
+            n_lyso=n_lyso,
+            calor_half_mm=calor_half_mm,
+            layer_pitch_mm=layer_pitch_mm,
+            lyso_bounds=lyso_bounds,
+            detected_z_sensor=detected_z_sensor,
+            cap_xy_mm=cap_xy_mm,
+            e_type_idx=e_type_idx,
+            t_type_idx=t_type_idx,
+            tyvek_thick_mm=tyvek_thick_mm,
+            w_thick_mm=w_thick_mm,
+            n_w=n_w,
+            calor_thick_mm=calor_thick_mm,
+            world_name=args.world,
+        )
+
+
+def find_batches(root: Path):
+    """
+    Discovers what to process under --batch-dir.
+
+    If root's immediate subdirectories each contain hit files somewhere
+    beneath them (e.g. sweep_XXXXXX/25GeV/run_0/detector_hits_0.root),
+    each subdirectory is treated as its own batch -- processed and saved
+    independently, mirroring the per-energy-point plots from a sweep.
+    Falls back to treating root itself as one flat batch if it directly
+    contains hits with no such per-point nesting (e.g. pointing
+    --batch-dir straight at a single run_N or a pre-sweep batch dir).
+    """
+    batches = []
+    subdirs = sorted(d for d in root.iterdir() if d.is_dir())
+    for d in subdirs:
+        hits = sorted(d.rglob("detector_hits_*.root"))
+        if hits:
+            batches.append((d.name, d, hits))
+
+    if not batches:
+        hits = sorted(root.rglob("detector_hits_*.root"))
+        if hits:
+            batches.append((root.name, root, hits))
+
+    return batches
+
+
+def process_batch(label, out_dir, hit_files, lyso_thick, n_lyso, calor_half_mm,
+                   layer_pitch_mm, lyso_bounds, detected_z_sensor, cap_xy_mm,
+                   e_type_idx, t_type_idx, tyvek_thick_mm, w_thick_mm, n_w,
+                   calor_thick_mm, world_name):
+    # Extract unique directories containing the hits to feed the legacy truth reader
     run_dirs = sorted(list(set(fpath.parent for fpath in hit_files)))
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -333,15 +390,15 @@ def main():
 
     ax.set_xlabel("LYSO Layer Number")
     ax.set_ylabel("Energy / Scaled Hits (MeV)")
-    ax.set_title(f"E-type SiPM ToF Reconstruction ({lyso_thick:.1f}mm LYSO Geometry, {args.world})")
+    ax.set_title(f"E-type SiPM ToF Reconstruction ({lyso_thick:.1f}mm LYSO Geometry, {world_name} - {label})")
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend(loc="upper right", fontsize=9)
 
     fig.tight_layout()
-    out_path = batch_dir / "tof_reconstruction_with_errors.png"
+    out_path = out_dir / "tof_reconstruction_with_errors.png"
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    print(f"\n  Saved plot → {out_path}")
+    print(f"  Saved plot -> {out_path}")
 
 if __name__ == "__main__":
     main()
