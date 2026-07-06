@@ -140,6 +140,9 @@ def clean_around_mode(arr, window_ps=60.0):
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-dir", required=True, type=str)
@@ -153,16 +156,15 @@ def main():
     print(f"  Longitudinal Profile Reconstruction + Timing Resolution")
     print(f"{'─'*60}")
 
-    raw_dirs = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
-    run_dirs = []
-    for d in raw_dirs:
-        nested = d / d.name
-        run_dirs.append(nested if nested.is_dir() else d)
-    hit_files = [p for d in run_dirs for p in sorted(d.rglob("detector_hits_*.root"))]
+    # Discover ALL root files recursively anywhere inside the targeted batch/energy folder
+    hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
 
     if not hit_files:
         print("  WARNING: No hit files found.")
         return
+
+    # Extract unique parent directories for the truth dose reader fallback
+    run_dirs = sorted(list(set(fpath.parent for fpath in hit_files)))
 
     up_first, down_first = {}, {}
     up_times_by_ev, dw_times_by_ev = {}, {}
@@ -171,7 +173,6 @@ def main():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for fpath in hit_files:
-            run_tag = fpath.parent.name
             try:
                 with uproot.open(fpath) as f:
                     tree_key = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
@@ -200,19 +201,17 @@ def main():
             mask_e_dw = is_e_type & is_prompt & near_dw
 
             for eid, ti in zip(ev[mask_e_up], gt[mask_e_up]):
-                key = (run_tag, int(eid))
+                key = int(eid)  # Keyed simply by unique EventID
                 if key not in up_first or ti < up_first[key]:
                     up_first[key] = float(ti)
 
             for eid, ti in zip(ev[mask_e_dw], gt[mask_e_dw]):
-                key = (run_tag, int(eid))
+                key = int(eid)  # Keyed simply by unique EventID
                 if key not in down_first or ti < down_first[key]:
                     down_first[key] = float(ti)
 
             # ── 2. T-Type Timing Resolution (LocalTime) ──
             is_t_type  = np.isin(channels, list(_T_TYPE_INDICES))
-            
-            # Rely on is_prompt window instead of strict ParticleName string matching
             mask_t_up = is_t_type & is_prompt & near_up
             mask_t_dw = is_t_type & is_prompt & near_dw
 
@@ -220,11 +219,11 @@ def main():
             ev_t_dw, lt_t_dw = ev[mask_t_dw], lt[mask_t_dw] * 1000.0
 
             for e, t in zip(ev_t_up, lt_t_up):
-                key = (run_tag, int(e))
+                key = int(e)  # Keyed simply by unique EventID
                 up_times_by_ev.setdefault(key, []).append(t)
 
             for e, t in zip(ev_t_dw, lt_t_dw):
-                key = (run_tag, int(e))
+                key = int(e)  # Keyed simply by unique EventID
                 dw_times_by_ev.setdefault(key, []).append(t)
 
     # ── Coincidence matching ──
@@ -258,7 +257,6 @@ def main():
         print("  ERROR: No coincident events found for reconstruction.")
         return
 
-    beta_factor = 1.0 - (V_EFF_MM_NS / C_LIGHT_MM_NS)
     z_emit_list = [
         - (V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0)
         for k in common_keys
