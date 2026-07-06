@@ -116,7 +116,7 @@ def fit_gaussian_to_peak(data, n_bins=50):
         popt, _ = curve_fit(
             standard_gaussian, mids[fit_mask], counts[fit_mask],
             p0=[A0, mu0, iqr_sigma * 0.7],
-            bounds=([0.5, mu0 - iqr_sigma, 1.0], [A0 * 3.0, mu0 + iQuot_sigma, iqr_sigma * 2.0]),
+            bounds=([0.5, mu0 - iqr_sigma, 1.0], [A0 * 3.0, mu0 + iqr_sigma, iqr_sigma * 2.0]),
             method='trf', loss='soft_l1', maxfev=10000
         )
         return float(popt[0]), float(popt[1]), float(popt[2])
