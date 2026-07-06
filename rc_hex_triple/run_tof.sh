@@ -26,4 +26,4 @@ echo "  Reconstructing longitudinal profile via ToF kinematics..."
 echo "============================================================"
 
 # Execute the Time-of-Flight kinematic reconstruction script on the found directory
-python3 tof_reconstruction.py --batch-dir "$LATEST_BATCH"
+python3 tof_reconstruction.py --world "rc_hex_triple"--batch-dir "$LATEST_BATCH"
