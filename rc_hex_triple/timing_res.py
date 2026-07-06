@@ -10,38 +10,32 @@ from collections import defaultdict
 from scipy.ndimage import gaussian_filter1d
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY CONSTANTS
+# GEOMETRY CONSTANTS (UPDATED FOR HEXAGONAL SETUP)
 # ─────────────────────────────────────────────────────────────────────────────
-_TYVEK_MM      = 0.008 * 25.4
-_CALOR_XY_MM   = 14.0 + 2 * _TYVEK_MM
-_HOLE_INSET_MM = 3.5
-_HOLE_OFFSET   = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
+_HEX_SIDE_MM     = 7.0
+_CAP_R_MM        = 3.5                            
 
-# Correct alignment mapping matching worlds/radi_cal_energy.py:
-CAP_XY_MM = np.array([
-    [ _HOLE_OFFSET,  _HOLE_OFFSET],   # 0 — T-type (Top-Right)
-    [-_HOLE_OFFSET, -_HOLE_OFFSET],   # 1 — T-type (Bottom-Left)
-    [-_HOLE_OFFSET,  _HOLE_OFFSET],   # 2 — E-type (Top-Left)
-    [ _HOLE_OFFSET, -_HOLE_OFFSET],   # 3 — E-type (Bottom-Right)
-])
+# Generate the 6 hexagonal capillary face positions exactly matching worlds/radi_cal_energy_hex.py
+HEX_CAP_XY_MM = []
+for i in range(6):
+    angle = np.pi / 2 + i * (np.pi / 3)
+    cx = _CAP_R_MM * np.cos(angle)
+    cy = _CAP_R_MM * np.sin(angle)
+    HEX_CAP_XY_MM.append([cx, cy])
+HEX_CAP_XY_MM = np.array(HEX_CAP_XY_MM)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS PARAMETERS
 # ─────────────────────────────────────────────────────────────────────────────
 ARRIVAL_QUANTILE = 0.10
-# NOTE: MIN_PHOTONS_PER_FACE removed — no minimum-photon gate on events anymore.
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHANNEL ASSIGNMENT (UPDATED FOR DYNAMIC Z-ALIGNMENT)
+# CHANNEL ASSIGNMENT (UPDATED FOR HEXAGONAL LAYOUT)
 # ─────────────────────────────────────────────────────────────────────────────
 def assign_channels_dynamically(x_mm, y_mm, z_mm):
     """
     Automatically detects the actual SiPM plane positions from the hit data
     to remain agnostic to LYSO thickness or cap changes, then assigns channels.
-
-    NOTE: This is geometric channel assignment (deciding which physical SiPM
-    face a hit belongs to), not a statistical filter on the timing
-    distribution, so it is left intact.
     """
     if len(z_mm) == 0:
         return np.array([], dtype=int)
@@ -60,15 +54,16 @@ def assign_channels_dynamically(x_mm, y_mm, z_mm):
     if len(idx_to_process) == 0:
         return channels
 
-    # Vectorized distance mapping for efficiency
-    dx = x_mm[idx_to_process, np.newaxis] - CAP_XY_MM[:, 0]
-    dy = y_mm[idx_to_process, np.newaxis] - CAP_XY_MM[:, 1]
+    # Vectorized distance mapping across all 6 capillary positions
+    dx = x_mm[idx_to_process, np.newaxis] - HEX_CAP_XY_MM[:, 0]
+    dy = y_mm[idx_to_process, np.newaxis] - HEX_CAP_XY_MM[:, 1]
     dists = np.hypot(dx, dy)
     cap_indices = np.argmin(dists, axis=1)
 
     # Differentiate upstream (z < 0) from downstream (z > 0)
+    # Upstream maps to 0-5, Downstream maps to 6-11
     is_downstream = z_mm[idx_to_process] > 0
-    channels[idx_to_process] = np.where(is_downstream, cap_indices + 4, cap_indices)
+    channels[idx_to_process] = np.where(is_downstream, cap_indices + 6, cap_indices)
 
     return channels
 
@@ -84,7 +79,6 @@ def fit_gaussian_to_peak(data, n_bins=40):
     if len(data) < 8:
         return 0.0, float(np.median(data)), float(np.std(data)), np.nan, 0.0
 
-    # Use full data range for binning/bounds seeding — no IQR-based windowing.
     center    = np.median(data)
     spread    = max(np.std(data), 1.0)
     lo = float(np.min(data))
@@ -100,8 +94,6 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0       = float(mids[peak_idx])
     A0        = float(smoothed[peak_idx])
 
-    # Fit against the ENTIRE histogram — no fit_mask restriction to a narrow
-    # window around the mode.
     try:
         popt, pcov = curve_fit(
             standard_gaussian,
@@ -203,17 +195,17 @@ def run(batch_dir: Path):
         ev_times_ps = time_ns[mask] * 1000.0
         ev_channels = channels[mask]
 
-        # ── EXPLICIT T-TYPE ISOLATION ──
-        up_times = ev_times_ps[(ev_channels == 0) | (ev_channels == 1)]
-        dw_times = ev_times_ps[(ev_channels == 4) | (ev_channels == 5)]
+        # ── EXPLICIT HEXAGONAL T-TYPE ISOLATION ──
+        # From worlds/radi_cal_energy_hex.py: T-types are indices 1, 3, 5
+        # Downstream T-types map to 1+6=7, 3+6=9, 5+6=11
+        up_times = ev_times_ps[(ev_channels == 1) | (ev_channels == 3) | (ev_channels == 5)]
+        dw_times = ev_times_ps[(ev_channels == 7) | (ev_channels == 9) | (ev_channels == 11)]
 
         dw_num = len(dw_times)
         up_num = len(up_times)
         diag_dw_n.append(dw_num)
         diag_up_n.append(up_num)
 
-        # No minimum-photon gate: any event with at least one hit on each
-        # face is included.
         dw_valid = dw_num > 0
         up_valid = up_num > 0
         diag_dw_valid.append(dw_valid)
@@ -247,7 +239,7 @@ def run(batch_dir: Path):
     diag_dw_v   = np.array(diag_dw_valid)
     diag_up_v   = np.array(diag_up_valid)
     n_ev        = len(unique_events)
-    print(f"\n  ── Asymmetry Diagnostics (Pure T-Type Filament Isolation) ──")
+    print(f"\n  ── Asymmetry Diagnostics (Hexagonal Pure T-Type Filament Isolation) ──")
     print(f"  Total events           : {n_ev}")
     print(f"  DW median photons/ev   : {np.median(diag_dw_n):.1f}   (mean {np.mean(diag_dw_n):.1f})")
     print(f"  UP median photons/ev   : {np.median(diag_up_n):.1f}   (mean {np.mean(diag_up_n):.1f})")
@@ -256,7 +248,6 @@ def run(batch_dir: Path):
     ratio = np.mean(diag_dw_n) / max(np.mean(diag_up_n), 0.001)
     print(f"  DW/UP photon ratio     : {ratio:.2f}")
 
-    # No outlier removal / mode-clustering — use the full raw distributions.
     selected_bm = best_minus_ps
     selected_dw = dw_only_ps
     selected_up = up_only_ps
@@ -270,7 +261,7 @@ def run(batch_dir: Path):
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
     energy_label = batch_dir.name
     fig.suptitle(
-        f"Direct LocalTime Distributions for {energy_label} (Pure T-Type Filaments)\n"
+        f"Direct LocalTime Distributions for {energy_label} (Hexagonal Pure T-Type Filaments)\n"
         f"Unfiltered Gaussian fit over full distribution  |  Direct Q={ARRIVAL_QUANTILE:.2f} time marker",
         fontsize=13, fontweight="bold"
     )
@@ -351,7 +342,7 @@ if __name__ == "__main__":
     batch_path   = Path(args.batch_dir)
     energy_label = batch_path.name
     print(f"\n{'─'*60}")
-    print(f"  Timing Resolution — Pure Direct LocalTime Mode (Unfiltered)")
+    print(f"  Timing Resolution — Hexagonal Pure Direct LocalTime Mode")
     print(f"  No electronics modeling | No outlier removal | Arrival Marker Quantile: {ARRIVAL_QUANTILE}")
     print(f"  Batch : {energy_label}")
     print(f"{'─'*60}")
@@ -371,7 +362,7 @@ if __name__ == "__main__":
 
         out_txt = batch_path / "direct_timing_resolution.txt"
         with open(out_txt, "w") as f:
-            f.write(f"Method          : Direct LocalTime (No Electronics Baseline, Unfiltered)\n")
+            f.write(f"Method          : Hexagonal Direct LocalTime (No Electronics Baseline, Unfiltered)\n")
             f.write(f"Arrival Quantile: {ARRIVAL_QUANTILE}\n")
             f.write(f"sigma_t_ps      : {s:.4f}\n")
             f.write(f"sigma_t_err_ps  : {se:.4f}\n")

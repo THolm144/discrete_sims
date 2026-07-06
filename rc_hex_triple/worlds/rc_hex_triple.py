@@ -1,5 +1,5 @@
 """
-worlds/radi_cal_energy_hex.py
+worlds/rc_hex_triple.py
 =========================
 RADiCAL Shashlik calorimeter — hexagonal energy-measurement variant.
 
