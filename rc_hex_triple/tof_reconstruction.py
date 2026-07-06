@@ -148,12 +148,15 @@ def main():
     print(f"  Longitudinal Profile Reconstruction + Timing Resolution")
     print(f"{'─'*60}")
 
-    run_dirs  = sorted([d for d in batch_dir.iterdir() if d.is_dir() and d.name.startswith("run_")])
-    hit_files = [p for d in run_dirs for p in sorted(d.rglob("detector_hits_*.root"))]
+    # 1. Recursive glob ensures .root files are found no matter how deep they are nested
+    hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
 
     if not hit_files:
         print("  WARNING: No hit files found.")
         return
+
+    # 2. Extract unique directories containing the hits to feed the legacy truth reader
+    run_dirs = sorted(list(set(fpath.parent for fpath in hit_files)))
 
     # ─────────────────────────────────────────────────────────────────────────
     # DYNAMIC GEOMETRY SCAN: Extract parameters from first populated file
@@ -205,7 +208,6 @@ def main():
     sipm_z_tol_mm = 2.5
 
     for fpath in hit_files:
-        run_tag = fpath.parent.name
         try:
             with uproot.open(fpath) as f:
                 tree_key = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
@@ -236,12 +238,12 @@ def main():
         mask_e_dw = is_e_type & is_prompt & near_dw
 
         for eid, ti in zip(ev[mask_e_up], gt[mask_e_up]):
-            key = (run_tag, int(eid))
+            key = int(eid)  # Keyed simply by unique EventID to prevent cross-run dropped coincidences
             if key not in up_first or ti < up_first[key]:
                 up_first[key] = float(ti)
 
         for eid, ti in zip(ev[mask_e_dw], gt[mask_e_dw]):
-            key = (run_tag, int(eid))
+            key = int(eid)
             if key not in down_first or ti < down_first[key]:
                 down_first[key] = float(ti)
 
@@ -256,11 +258,11 @@ def main():
         ev_t_dw, lt_t_dw = ev[mask_t_dw], lt[mask_t_dw] * 1000.0
 
         for e, t in zip(ev_t_up, lt_t_up):
-            key = (run_tag, int(e))
+            key = int(e)
             up_times_by_ev.setdefault(key, []).append(t)
 
         for e, t in zip(ev_t_dw, lt_t_dw):
-            key = (run_tag, int(e))
+            key = int(e)
             dw_times_by_ev.setdefault(key, []).append(t)
 
     # Coincidence fold
