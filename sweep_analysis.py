@@ -378,7 +378,7 @@ def main():
         fig_tof.suptitle(f"Continuous E-Type ToF Reconstructions — {mod}", fontsize=14, fontweight="bold", y=0.98)
         fig_tof.tight_layout()
         fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
-        print(analysis_out)
+        print(f"Saved ToF panels to {analysis_out}")
         plt.close(fig_tof)
 
     # 3. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
