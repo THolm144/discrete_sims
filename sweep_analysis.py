@@ -178,9 +178,17 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
             key = int(eid)
             if key not in down_first or ti < down_first[key]: down_first[key] = float(ti)
 
-        # 2. T-Type Timing Parsing
+        # ─────────────────────────────────────────────────────────────────────
+        # REVISED T-TYPE ISOLATION
+        # ─────────────────────────────────────────────────────────────────────
         is_t = np.isin(channels, list(t_indices))
-        m_t_up, m_t_dw = is_t & is_optical & near_up, is_t & is_optical & near_dw
+        
+        # Pull hits hitting T-channels, filtering ONLY by optical photon type
+        m_t_all = is_t & is_optical
+        
+        # Differentiate Upstream (z < 0) from Downstream (z > 0)
+        m_t_up = m_t_all & (z < 0)
+        m_t_dw = m_t_all & (z > 0)
 
         for e, t in zip(ev[m_t_up], lt[m_t_up] * 1000.0): up_times_by_ev.setdefault(int(e), []).append(t)
         for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0): dw_times_by_ev.setdefault(int(e), []).append(t)
