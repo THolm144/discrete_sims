@@ -197,7 +197,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
             t_dw_q = np.quantile(dw_times_by_ev[e], ARRIVAL_QUANTILE)
             all_bm_raw_ps.append((t_dw_q - t_up_q) / 2.0)
 
-    clean_bm = clean_around_mode(np.array(all_bm_raw_ps), window_ps=120.0)
+    clean_bm = clean_around_mode(np.array(all_bm_raw_ps), window_ps=500.0)
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
     # Map out ToF Z profiles
@@ -301,7 +301,7 @@ def main():
             data = master_summary[mod][ekey]["raw_bm_data"]
             
             if len(data) > 0:
-                clean = clean_around_mode(data, window_ps=150.0)
+                clean = clean_around_mode(data, window_ps=500.0)
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 if hi <= lo: hi = lo + 1.0
                 
