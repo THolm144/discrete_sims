@@ -271,11 +271,17 @@ def main():
                 master_summary[mod][energy_label] = res
 
     # ─────────────────────────────────────────────────────────────────────────
-    # MATRIX GRAPH VISUALIZATION ENGINE (CORRECTED SEPARATE MODULE FIGURES)
+    # MATRIX GRAPH VISUALIZATION ENGINE (WITH FIT LINES & TRUTH OVERLAYS)
     # ─────────────────────────────────────────────────────────────────────────
     mod_colors = {"radi_cal_energy": "#1976d2", "radi_cal_triple": "#388e3c", "rc_hex": "#d32f2f", "rc_hex_triple": "#7b1fa2"}
     mod_markers = {"radi_cal_energy": "s", "radi_cal_triple": "^", "rc_hex": "o", "rc_hex_triple": "D"}
     layers = np.arange(1, _N_LYSO + 1)
+
+    # Attempt to pull in the OpenGATE simulation utilities for DoseActor extraction
+    try:
+        import analysis_utils as utils
+    except ImportError:
+        utils = None
 
     for mod in modules:
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
@@ -283,11 +289,10 @@ def main():
             continue
         
         n_energies = len(energy_keys)
-        # Dynamically determine grid sizing based on available energy counts
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # 1. Generate Dedicated Multi-Panel TIMING Histogram Figure for this Module
+        # 1. Dedicated Multi-Panel TIMING Histogram Figure (With Gaussian Fits)
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
@@ -297,22 +302,28 @@ def main():
             
             if len(data) > 0:
                 clean = clean_around_mode(data, window_ps=150.0)
-                s_t = master_summary[mod][ekey]["sigma_t_ps"]
+                lo, hi = float(np.min(clean)), float(np.max(clean))
+                if hi <= lo: hi = lo + 1.0
                 
-                # Plot distribution matching individual script design
-                ax.hist(clean, bins=50, color=mod_colors[mod], alpha=0.6, edgecolor="black")
+                # Plot Data Histogram
+                counts, edges, _ = ax.hist(clean, bins=50, range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
+                
+                # Refit and overlay the continuous Gaussian line shape
+                amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=50)
+                x_fit = np.linspace(lo, hi, 1000)
+                y_fit = standard_gaussian(x_fit, amp, mu, sigma)
+                
+                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.0, 
+                        label=f"Gaussian Fit\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps")
+                
                 ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
                 ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
                 ax.set_ylabel("Events / Bin", fontsize=9)
-                
-                # Overlay quick numeric baseline text box
-                ax.text(0.05, 0.9, f"$\\sigma_t$ = {s_t:.1f} ps\nCoincidences = {len(data)}", 
-                        transform=ax.transAxes, fontsize=9, bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8, ec="gray"))
+                ax.legend(loc="upper right", fontsize=8, frameon=True)
             else:
                 ax.text(0.5, 0.5, "Empty Dataset", ha='center', va='center')
             ax.grid(True, linestyle=":", alpha=0.5)
 
-        # Hide unused subplots if energy counts don't fill the grid square
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
 
@@ -321,7 +332,7 @@ def main():
         fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
         plt.close(fig_time)
 
-        # 2. Generate Dedicated Multi-Panel TOF Reconstruction Figure for this Module
+        # 2. Dedicated Multi-Panel TOF Reconstruction Figure (With DoseActor Overlay)
         fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_tof = axs_tof.flatten()
 
@@ -330,21 +341,53 @@ def main():
             prof = master_summary[mod][ekey]["tof_profile"]
             s_t = master_summary[mod][ekey]["sigma_t_ps"]
             pitch = master_summary[mod][ekey]["pitch_mm"]
+            lyso_thick = master_summary[mod][ekey]["lyso_thick"]
             
-            # Map temporal uncertainty to spatial layer error bars
             sigma_z = V_EFF_MM_NS * (s_t / 1000.0)
             sigma_layer = sigma_z / pitch
 
             total_hits = np.sum(prof)
             norm_prof = prof / total_hits if total_hits > 0 else prof
 
+            # Cross-crawl directories to grab simulation truth files (.mhd)
+            edir_path = base_dir / mod / "runs" / mod / sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))[-1].name / ekey
+            run_dirs = sorted(list(set(fpath.parent for fpath in edir_path.rglob("detector_hits_*.root"))))
+            
+            truth_curve = None
+            if utils and run_dirs:
+                try:
+                    gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+                    calor_thick = (_N_LYSO * gap_thick) + (_N_W * _W_THICK_MM)
+                    bounds = get_lyso_layer_bounds(lyso_thick, calor_thick)
+                    long_arr, _ = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
+                    if long_arr is not None:
+                        dz_mm, avg = 0.1, long_arr / max(len(run_dirs), 1)
+                        layer_edeps = []
+                        for (z_start, z_end) in bounds:
+                            z_offset_start = z_start - (-calor_thick / 2)
+                            z_offset_end   = z_end   - (-calor_thick / 2)
+                            i0 = max(0, min(int(round(z_offset_start / dz_mm)), len(avg)))
+                            i1 = max(0, min(int(round(z_offset_end   / dz_mm)), len(avg)))
+                            layer_edeps.append(float(np.sum(avg[i0:i1])))
+                        truth_curve = np.array(layer_edeps)
+                except:
+                    truth_curve = None
+
+            # Plot simulation truth bar background if available
+            if truth_curve is not None and np.sum(truth_curve) > 0:
+                norm_truth = truth_curve / np.sum(truth_curve)
+                ax.bar(layers, norm_truth, color="#00bcd4", alpha=0.35, edgecolor="#00838f", linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
+
+            # Plot reconstruction overlay line
             ax.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod], 
-                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0)
+                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0, label="ΔT Coincidence")
+            
             ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
             ax.set_xlabel("LYSO Layer Number", fontsize=9)
-            ax.set_ylabel("Normalized Hit Density Fraction", fontsize=9)
+            ax.set_ylabel("Normalized Density Fraction", fontsize=9)
             ax.set_xlim(0, _N_LYSO + 1)
             ax.grid(True, linestyle=":", alpha=0.5)
+            ax.legend(loc="upper right", fontsize=8)
 
         for idx in range(n_energies, len(axs_tof)):
             fig_tof.delaxes(axs_tof[idx])
@@ -356,7 +399,7 @@ def main():
 
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 3. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH (4 lines)
+    # 3. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
     # ─────────────────────────────────────────────────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(9, 6))
 
@@ -369,7 +412,7 @@ def main():
             x_energy.append(extract_numerical_energy(ekey))
             s_t = master_summary[mod][ekey]["sigma_t_ps"]
             y_res.append(s_t)
-            y_err.append(s_t * 0.04 + 1.0)  # Systematic estimation envelope metric
+            y_err.append(s_t * 0.04 + 1.0)
 
         ax_perf.errorbar(x_energy, y_res, yerr=y_err, marker=mod_markers[mod], color=mod_colors[mod],
                          linewidth=2, markersize=7, capsize=4, capthick=1.5, linestyle="--", label=mod)
