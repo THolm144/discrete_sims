@@ -288,24 +288,21 @@ def main():
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 if hi <= lo: hi = lo + 1.0
                 
-                # 1. Dynamically compute Freedman-Diaconis optimal bin width for THIS specific dataset
-                q75, q25 = np.percentile(clean, [75, 25])
-                iqr = q75 - q25
+                # 1. Dynamically compute range and set a structural minimum bin count
+                # For N ~ 60, we force ~35-45 bins so it matches the high-granularity reference style.
+                total_range = hi - lo
                 
-                if iqr > 0 and len(clean) > 1:
-                    fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
-                else:
-                    # Fallback to a fraction of standard deviation if IQR collapses
-                    fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
+                # Base bin count on a mix of range and standard deviation
+                data_std = np.std(clean) if len(clean) > 1 else 5.0
+                if data_std <= 0: data_std = 1.0
                 
-                # Safeguard: Keep the dynamic width bounded between 0.5 ps and 10.0 ps
-                optimal_width = max(0.5, min(fd_width, 10.0))
+                # Dynamically target around 5-6 bins per standard deviation for crisp peaks
+                plot_bins = int(np.clip((total_range / (data_std / 5.5)), 30, 55))
                 
-                # 2. Convert the optimal width into an explicit bin count
-                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
-                actual_plot_width = (hi - lo) / plot_bins
+                # 2. Extract the actual mathematical plot width resulting from this split
+                actual_plot_width = total_range / plot_bins
                 
-                # 3. Draw Histogram with its unique optimal bin count
+                # 3. Draw Histogram with high-resolution crisp slices
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi), 
                                            color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
                 
