@@ -501,27 +501,29 @@ def main():
         fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
         plt.close(fig_dw_hits)
    # ─────────────────────────────────────────────────────────────────────
-        # 3.5. DOWNSTREAM FIRST-PHOTON ARRIVAL & DOSEACTOR OVERLAY
+        # 3.5. DOWNSTREAM PROMPT PHOTON STRIKES VS DISTANCE
         # ─────────────────────────────────────────────────────────────────────
-        # Define which layer indices (0-indexed) contain the WLS filament
-        # UPDATE THESE NUMBERS to match your actual module geometry!
-        WLS_LAYERS = {8,9,10,11}
+        # 0-indexed layers corresponding to the shower-max band in T-type bores
+        WLS_LAYERS = {8, 9, 10, 11} 
 
-        fig_first, axs_first = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
-        axs_first = axs_first.flatten()
+        fig_dist, axs_dist = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_dist = axs_dist.flatten()
 
         for idx, ekey in enumerate(energy_keys):
-            ax = axs_first[idx]
+            ax = axs_dist[idx]
             first_times = master_summary[mod][ekey]["dw_first_times"]
             lyso_thick = master_summary[mod][ekey]["lyso_thick"]
             
             if len(first_times) > 0:
-                # 1. Plot the time-domain histogram
-                counts, edges, _ = ax.hist(first_times, bins=100, range=(0.0, 5.0), color="#ff9800", 
-                                           alpha=0.6, edgecolor="black", linewidth=0.5, 
-                                           label=f"1st Photon (N={len(first_times)})")
+                # 1. Convert time to pseudo-distance
+                distances_mm = first_times * V_EFF_MM_NS
+                max_dist = 5.0 * V_EFF_MM_NS # Scale x-axis based on previous 5.0 ns limit
                 
-                # 2. Extract DoseActor Truth Data (if available)
+                counts, edges, _ = ax.hist(distances_mm, bins=100, range=(0.0, max_dist), color="#ff9800", 
+                                           alpha=0.6, edgecolor="black", linewidth=0.5, 
+                                           label=f"Prompt Strikes (N={len(first_times)})")
+                
+                # 2. Extract and Map DoseActor Truth Data
                 sweep_dirs = sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))
                 edir_path = base_dir / mod / "runs" / mod / sweep_dirs[-1].name / ekey
                 run_dirs = sorted(list(set(fp.parent for fp in edir_path.rglob("detector_hits_*.root"))))
@@ -537,12 +539,12 @@ def main():
                             dz_mm = 0.1
                             avg = long_arr / max(len(run_dirs), 1)
                             
-                            # Assuming downstream sensor is at +calor_thick/2
-                            z_sensor = calor_thick / 2.0 
+                            z_sensor = 110.0 # From cap_length/2
+                            z_source_mm = -130.15 # Beam origin from config
                             
                             max_hist_height = np.max(counts) if len(counts) > 0 else 1.0
                             
-                            layer_times = []
+                            layer_dists = []
                             layer_edeps = []
                             
                             for i, (z_start, z_end) in enumerate(bounds):
@@ -553,46 +555,51 @@ def main():
                                 edep = float(np.sum(avg[i0:i1]))
                                 layer_edeps.append(edep)
                                 
-                                # Calculate time-of-flight for the center of this layer
+                                # Kinematic mapping
                                 z_center = (z_start + z_end) / 2.0
-                                distance_to_sensor = abs(z_sensor - z_center)
-                                t_expected = distance_to_sensor / V_EFF_MM_NS
-                                layer_times.append(t_expected)
+                                t_beam = (z_center - z_source_mm) / C_LIGHT_MM_NS
+                                t_optical = abs(z_sensor - z_center) / V_EFF_MM_NS
+                                
+                                # Convert expected total time into the same distance proxy
+                                t_expected = t_beam + t_optical
+                                d_expected = t_expected * V_EFF_MM_NS
+                                layer_dists.append(d_expected)
                             
-                            # Normalize DoseActor bars to the histogram height for visibility
+                            # Normalize and plot DoseActor bars
                             layer_edeps = np.array(layer_edeps)
                             if np.sum(layer_edeps) > 0:
                                 norm_edeps = (layer_edeps / np.max(layer_edeps)) * (max_hist_height * 0.9)
                                 
-                                # Plot each layer as a bar on the time axis
-                                for i, (t_val, edep_val) in enumerate(zip(layer_times, norm_edeps)):
-                                    # Highlight WLS layers
+                                # Scale bar width appropriately for distance axis (e.g., 5-6 mm)
+                                bar_width = 0.04 * V_EFF_MM_NS 
+                                
+                                for i, (d_val, edep_val) in enumerate(zip(layer_dists, norm_edeps)):
                                     bar_color = "#e91e63" if i in WLS_LAYERS else "#00bcd4"
                                     bar_label = "WLS Region (Sim Truth)" if (i in WLS_LAYERS and i == min(WLS_LAYERS)) else \
                                                 "Standard LYSO (Sim Truth)" if (i not in WLS_LAYERS and i == 0) else None
                                     
-                                    ax.bar(t_val, edep_val, width=0.04, color=bar_color, alpha=0.5, 
+                                    ax.bar(d_val, edep_val, width=bar_width, color=bar_color, alpha=0.5, 
                                            edgecolor="black", linewidth=0.5, label=bar_label)
                     except Exception as e:
                         print(f"    [Warning] Could not overlay DoseActor: {e}")
 
-                ax.set_title(f"Prompt Arrival (Shower Max): {ekey}", fontsize=11, fontweight="bold")
-                ax.set_xlabel("First Photon Global Time (ns)", fontsize=9)
-                ax.set_ylabel("Events / 50 ps bin", fontsize=9)
-                ax.set_xlim(0.0, 5.0)
+                ax.set_title(f"Prompt Strikes vs Distance: {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel(f"Kinematic Pseudo-Distance (mm) [t * v_eff]", fontsize=9)
+                ax.set_ylabel("Events", fontsize=9)
+                ax.set_xlim(0.0, max_dist)
                 ax.legend(loc="upper right", fontsize=8, frameon=True)
             else:
                 ax.text(0.5, 0.5, "No Data", ha='center', va='center')
             ax.grid(True, linestyle=":", alpha=0.5)
 
-        for idx in range(n_energies, len(axs_first)):
-            fig_first.delaxes(axs_first[idx])
+        for idx in range(n_energies, len(axs_dist)):
+            fig_dist.delaxes(axs_dist[idx])
 
-        fig_first.suptitle(f"Downstream First-Photon Arrival with Truth Overlay — {mod}", 
+        fig_dist.suptitle(f"Downstream Prompt Strikes vs Distance — {mod}", 
                            fontsize=14, fontweight="bold", y=0.98)
-        fig_first.tight_layout()
-        fig_first.savefig(analysis_out / f"{mod}_dw_first_photon_time.png", dpi=200)
-        plt.close(fig_first)
+        fig_dist.tight_layout()
+        fig_dist.savefig(analysis_out / f"{mod}_dw_prompt_distance.png", dpi=200)
+        plt.close(fig_dist)
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
     # ─────────────────────────────────────────────────────────────────────
