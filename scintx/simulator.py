@@ -204,11 +204,7 @@ def add_beam_source(sim, args, world, beam_cfg: dict, units):
     source.direction.type     = "momentum"
     source.direction.momentum = direction.tolist()
 
-    # FLASH PULSE TIMING PROFILE:
-    # Restrict all histories within a 5 microsecond time frame to capture 
-    # the true temporal delivery rate of the Iowa microsecond macro-pulse.
-    source.time.type = "linear"
-    source.time.duration = 5.0 * units.us
+    
 
     source.n = args.n  # OpenGATE distributes this target natively across threads
     return source
@@ -306,6 +302,14 @@ def main():
     sim.progress_bar      = False  # Keep clean inside massive batch arrays
 
     save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
+    # Find this section at the bottom of your main() function in simulator.py:
+    sim.number_of_threads = args.threads
+    sim.progress_bar      = False 
+
+    # --- ADD THIS LINE FOR FLASH TIMING ---
+    sim.run_timing_intervals = [[0.0 * units.us, 5.0 * units.us]]
+    # ────────────────────────────────────
+
     sim.run()
 
 
