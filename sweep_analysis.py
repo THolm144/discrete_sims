@@ -305,13 +305,19 @@ def main():
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 if hi <= lo: hi = lo + 1.0
                 
-                # Plot Data Histogram
-                counts, edges, _ = ax.hist(clean, bins="auto", color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
+                # Plot Data Histogram dynamically
+                counts, edges, _ = ax.hist(clean, bins="auto", range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
                 
-                # Refit and overlay the continuous Gaussian line shape
-                amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=50)
+                # Get the true mu and sigma from the raw data
+                _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=50) 
+                
+                # Calculate the exact bin width chosen by "auto"
+                bin_width = edges[1] - edges[0]
+                
+                # Generate smooth curve and scale it to the new histogram area
                 x_fit = np.linspace(lo, hi, 1000)
-                y_fit = standard_gaussian(x_fit, amp, mu, sigma)
+                area = len(clean) * bin_width
+                y_fit = (area / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_fit - mu) / sigma) ** 2)
                 
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.0, 
                         label=f"Gaussian Fit\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps")
