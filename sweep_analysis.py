@@ -480,7 +480,7 @@ def main():
             dw_times = master_summary[mod][ekey]["dw_e_times"]
             
             if len(dw_times) > 0:
-                ax.hist(dw_times, bins=100, range=(_GT_LO_NS, _GT_HI_NS), color=mod_colors[mod], 
+                ax.hist(dw_times, bins=70, range=(_GT_LO_NS, _GT_HI_NS), color=mod_colors[mod], 
                         alpha=0.7, edgecolor="black", linewidth=0.5, label=f"Downstream E-Hits\nTotal={len(dw_times)}")
                 
                 ax.set_title(f"Downstream Intensity: {ekey}", fontsize=11, fontweight="bold")
