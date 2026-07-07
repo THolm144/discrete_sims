@@ -92,7 +92,7 @@ def fit_gaussian_to_peak(data, n_bins=40):
     except Exception:
         return A0, mu0, spread
 
-def clean_around_mode(arr, window_ps=80.0):
+def clean_around_mode(arr, window_ps=500.0):
     if len(arr) == 0: return arr
     counts, edges = np.histogram(arr, bins=40)
     peak_bin = np.argmax(gaussian_filter1d(counts.astype(float), sigma=2.0))
