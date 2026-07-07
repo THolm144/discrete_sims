@@ -501,9 +501,8 @@ def main():
         fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
         plt.close(fig_dw_hits)
    # ─────────────────────────────────────────────────────────────────────
-        # 3.5. DOWNSTREAM PROMPT PHOTON STRIKES VS DISTANCE
+        # 3.5. DOWNSTREAM PROMPT STRIKES VS DISTANCE (SINGLE-SIDED ZOOM)
         # ─────────────────────────────────────────────────────────────────────
-        # 0-indexed layers corresponding to the shower-max band in T-type bores
         WLS_LAYERS = {8, 9, 10, 11} 
 
         fig_dist, axs_dist = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
@@ -515,15 +514,23 @@ def main():
             lyso_thick = master_summary[mod][ekey]["lyso_thick"]
             
             if len(first_times) > 0:
-                # 1. Convert time to pseudo-distance
                 distances_mm = first_times * V_EFF_MM_NS
-                max_dist = 5.0 * V_EFF_MM_NS # Scale x-axis based on previous 5.0 ns limit
                 
-                counts, edges, _ = ax.hist(distances_mm, bins=100, range=(0.0, max_dist), color="#ff9800", 
+                # FOCUS THE AXIS: roughly 120 mm to 350 mm captures the physical calorimeter space
+                view_min, view_max = 120.0, 350.0 
+                
+                counts, edges, _ = ax.hist(distances_mm, bins=80, range=(view_min, view_max), color="#ff9800", 
                                            alpha=0.6, edgecolor="black", linewidth=0.5, 
                                            label=f"Prompt Strikes (N={len(first_times)})")
                 
-                # 2. Extract and Map DoseActor Truth Data
+                # Find and plot the peak (mode) to track the shower max
+                if len(counts) > 0 and np.max(counts) > 0:
+                    peak_idx = np.argmax(counts)
+                    peak_dist = edges[peak_idx] + (edges[1] - edges[0]) / 2.0
+                    ax.axvline(peak_dist, color="red", linestyle="--", linewidth=1.5, 
+                               label=f"Peak: {peak_dist:.1f} mm")
+
+                # Map DoseActor Truth Data
                 sweep_dirs = sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))
                 edir_path = base_dir / mod / "runs" / mod / sweep_dirs[-1].name / ekey
                 run_dirs = sorted(list(set(fp.parent for fp in edir_path.rglob("detector_hits_*.root"))))
@@ -538,14 +545,11 @@ def main():
                         if long_arr is not None:
                             dz_mm = 0.1
                             avg = long_arr / max(len(run_dirs), 1)
-                            
-                            z_sensor = 110.0 # From cap_length/2
-                            z_source_mm = -130.15 # Beam origin from config
-                            
+                            z_sensor = 110.0 
+                            z_source_mm = -130.15 
                             max_hist_height = np.max(counts) if len(counts) > 0 else 1.0
                             
-                            layer_dists = []
-                            layer_edeps = []
+                            layer_dists, layer_edeps = [], []
                             
                             for i, (z_start, z_end) in enumerate(bounds):
                                 z_offset_start = z_start - (-calor_thick / 2)
@@ -555,39 +559,36 @@ def main():
                                 edep = float(np.sum(avg[i0:i1]))
                                 layer_edeps.append(edep)
                                 
-                                # Kinematic mapping
                                 z_center = (z_start + z_end) / 2.0
-                                t_beam = (z_center - z_source_mm) / C_LIGHT_MM_NS
-                                t_optical = abs(z_sensor - z_center) / V_EFF_MM_NS
-                                
-                                # Convert expected total time into the same distance proxy
-                                t_expected = t_beam + t_optical
-                                d_expected = t_expected * V_EFF_MM_NS
-                                layer_dists.append(d_expected)
+                                t_expected = ((z_center - z_source_mm) / C_LIGHT_MM_NS) + (abs(z_sensor - z_center) / V_EFF_MM_NS)
+                                layer_dists.append(t_expected * V_EFF_MM_NS)
                             
-                            # Normalize and plot DoseActor bars
                             layer_edeps = np.array(layer_edeps)
                             if np.sum(layer_edeps) > 0:
                                 norm_edeps = (layer_edeps / np.max(layer_edeps)) * (max_hist_height * 0.9)
-                                
-                                # Scale bar width appropriately for distance axis (e.g., 5-6 mm)
-                                bar_width = 0.04 * V_EFF_MM_NS 
+                                bar_width = 2.0 
                                 
                                 for i, (d_val, edep_val) in enumerate(zip(layer_dists, norm_edeps)):
-                                    bar_color = "#e91e63" if i in WLS_LAYERS else "#00bcd4"
-                                    bar_label = "WLS Region (Sim Truth)" if (i in WLS_LAYERS and i == min(WLS_LAYERS)) else \
-                                                "Standard LYSO (Sim Truth)" if (i not in WLS_LAYERS and i == 0) else None
-                                    
-                                    ax.bar(d_val, edep_val, width=bar_width, color=bar_color, alpha=0.5, 
-                                           edgecolor="black", linewidth=0.5, label=bar_label)
+                                    if view_min <= d_val <= view_max: # Only plot bars within view
+                                        bar_color = "#e91e63" if i in WLS_LAYERS else "#00bcd4"
+                                        bar_label = "WLS Region (Sim Truth)" if (i in WLS_LAYERS and i == min(WLS_LAYERS)) else \
+                                                    "Standard LYSO (Sim Truth)" if (i not in WLS_LAYERS and i == 0) else None
+                                        
+                                        ax.bar(d_val, edep_val, width=bar_width, color=bar_color, alpha=0.5, 
+                                               edgecolor="black", linewidth=0.5, label=bar_label)
                     except Exception as e:
                         print(f"    [Warning] Could not overlay DoseActor: {e}")
 
                 ax.set_title(f"Prompt Strikes vs Distance: {ekey}", fontsize=11, fontweight="bold")
-                ax.set_xlabel(f"Kinematic Pseudo-Distance (mm) [t * v_eff]", fontsize=9)
+                ax.set_xlabel(f"Kinematic Pseudo-Distance (mm)", fontsize=9)
                 ax.set_ylabel("Events", fontsize=9)
-                ax.set_xlim(0.0, max_dist)
-                ax.legend(loc="upper right", fontsize=8, frameon=True)
+                ax.set_xlim(view_min, view_max)
+                
+                # Clean up legend duplicates
+                handles, labels = ax.get_legend_handles_labels()
+                by_label = dict(zip(labels, handles))
+                ax.legend(by_label.values(), by_label.keys(), loc="upper right", fontsize=8, frameon=True)
+                
             else:
                 ax.text(0.5, 0.5, "No Data", ha='center', va='center')
             ax.grid(True, linestyle=":", alpha=0.5)
@@ -595,10 +596,10 @@ def main():
         for idx in range(n_energies, len(axs_dist)):
             fig_dist.delaxes(axs_dist[idx])
 
-        fig_dist.suptitle(f"Downstream Prompt Strikes vs Distance — {mod}", 
+        fig_dist.suptitle(f"Downstream Prompt Strikes vs Distance (Cropped) — {mod}", 
                            fontsize=14, fontweight="bold", y=0.98)
         fig_dist.tight_layout()
-        fig_dist.savefig(analysis_out / f"{mod}_dw_prompt_distance.png", dpi=200)
+        fig_dist.savefig(analysis_out / f"{mod}_dw_prompt_distance_cropped.png", dpi=200)
         plt.close(fig_dist)
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
