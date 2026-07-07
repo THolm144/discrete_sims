@@ -284,7 +284,7 @@ def run(batch_dir: Path):
             hi = lo + 1.0
 
         counts, edges, _ = ax.hist(
-            data, bins=100, range=(lo, hi),
+            data, bins=40, range=(lo, hi),
             color=dist["color"], alpha=0.6, edgecolor="black", label="Data"
         )
 
