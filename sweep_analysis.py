@@ -279,7 +279,7 @@ def main():
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
-        TARGET_PLOT_WIDTH_PS = 5.0   # Fix plot visual width to exactly 5 ps per bin
+        TARGET_PLOT_WIDTH_PS = 1.0   # Fix plot visual width to exactly 5 ps per bin
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
