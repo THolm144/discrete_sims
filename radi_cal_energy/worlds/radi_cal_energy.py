@@ -210,7 +210,8 @@ def _build_sipms(sim, mm):
         z_card = sgn * _CARD_Z_MM * mm
 
         card_box       = vol_module.BoxVolume(name=f"card_{end_name}_box")
-        card_box.size  = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _CARD_THICK_MM * mm]
+        # Change this line in radi_cal_energy.py to use half-thickness:
+        card_box.size  = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, (_CARD_THICK_MM / 2) * mm]
         card_hole      = vol_module.TubsVolume(name=f"card_{end_name}_hole")
         card_hole.rmin = 0.0
         card_hole.rmax = _CARD_HOLE_R_MM * mm
