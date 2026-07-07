@@ -5,10 +5,13 @@
 *.npy
 *.zraw
 *.png
-analysis/
-runs/
 
-# Ignore configuration/metadata dumps if unwanted
+# Ignore local and nested runs/analysis paths
+runs/
+analysis/
+**/analysis/
+
+# Ignore configuration/metadata dumps
 *.json
 
 # System files
