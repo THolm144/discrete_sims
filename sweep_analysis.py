@@ -331,7 +331,13 @@ def main():
             else:
                 ax.text(0.5, 0.5, "Empty Dataset", ha='center', va='center')
             ax.grid(True, linestyle=":", alpha=0.5)
+        for idx in range(n_energies, len(axs_time)):
+            fig_time.delaxes(axs_time[idx])
 
+        fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_time.tight_layout()
+        fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200) # <--- THIS is what went missing
+        plt.close(fig_time)
         # ─────────────────────────────────────────────────────────────────────
         # 2. TOF Profile Figures (Restored)
         # ─────────────────────────────────────────────────────────────────────
