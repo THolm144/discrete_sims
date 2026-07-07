@@ -500,27 +500,81 @@ def main():
         fig_dw_hits.tight_layout()
         fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
         plt.close(fig_dw_hits)
-    # ─────────────────────────────────────────────────────────────────────
-        # 3.5. DOWNSTREAM FIRST-PHOTON ARRIVAL (Shower-Max Zoom)
+   # ─────────────────────────────────────────────────────────────────────
+        # 3.5. DOWNSTREAM FIRST-PHOTON ARRIVAL & DOSEACTOR OVERLAY
         # ─────────────────────────────────────────────────────────────────────
+        # Define which layer indices (0-indexed) contain the WLS filament
+        # UPDATE THESE NUMBERS to match your actual module geometry!
+        WLS_LAYERS = {8,9,10,11}
+
         fig_first, axs_first = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_first = axs_first.flatten()
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_first[idx]
             first_times = master_summary[mod][ekey]["dw_first_times"]
+            lyso_thick = master_summary[mod][ekey]["lyso_thick"]
             
             if len(first_times) > 0:
-                # Zoom in on the 0 to 5 ns range, using 100 bins (50 ps per bin)
-                ax.hist(first_times, bins=100, range=(0.0, 5.0), color="#ff9800", 
-                        alpha=0.8, edgecolor="black", linewidth=0.5, 
-                        label=f"1st Photon\nN={len(first_times)}")
+                # 1. Plot the time-domain histogram
+                counts, edges, _ = ax.hist(first_times, bins=100, range=(0.0, 5.0), color="#ff9800", 
+                                           alpha=0.6, edgecolor="black", linewidth=0.5, 
+                                           label=f"1st Photon (N={len(first_times)})")
                 
-                # Dynamically calculate the mode to label the peak shift
-                counts, edges = np.histogram(first_times, bins=100, range=(0.0, 5.0))
-                peak_time = edges[np.argmax(counts)] + 0.025  # Center of the 50ps bin
-                ax.axvline(peak_time, color="red", linestyle="--", linewidth=1.5, 
-                           label=f"Peak: {peak_time:.2f} ns")
+                # 2. Extract DoseActor Truth Data (if available)
+                sweep_dirs = sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))
+                edir_path = base_dir / mod / "runs" / mod / sweep_dirs[-1].name / ekey
+                run_dirs = sorted(list(set(fp.parent for fp in edir_path.rglob("detector_hits_*.root"))))
+
+                if utils and run_dirs:
+                    try:
+                        gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+                        calor_thick = (_N_LYSO * gap_thick) + (_N_W * _W_THICK_MM)
+                        bounds = get_lyso_layer_bounds(lyso_thick, calor_thick)
+                        long_arr, _ = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
+                        
+                        if long_arr is not None:
+                            dz_mm = 0.1
+                            avg = long_arr / max(len(run_dirs), 1)
+                            
+                            # Assuming downstream sensor is at +calor_thick/2
+                            z_sensor = calor_thick / 2.0 
+                            
+                            max_hist_height = np.max(counts) if len(counts) > 0 else 1.0
+                            
+                            layer_times = []
+                            layer_edeps = []
+                            
+                            for i, (z_start, z_end) in enumerate(bounds):
+                                z_offset_start = z_start - (-calor_thick / 2)
+                                z_offset_end = z_end - (-calor_thick / 2)
+                                i0 = max(0, min(int(round(z_offset_start / dz_mm)), len(avg)))
+                                i1 = max(0, min(int(round(z_offset_end / dz_mm)), len(avg)))
+                                edep = float(np.sum(avg[i0:i1]))
+                                layer_edeps.append(edep)
+                                
+                                # Calculate time-of-flight for the center of this layer
+                                z_center = (z_start + z_end) / 2.0
+                                distance_to_sensor = abs(z_sensor - z_center)
+                                t_expected = distance_to_sensor / V_EFF_MM_NS
+                                layer_times.append(t_expected)
+                            
+                            # Normalize DoseActor bars to the histogram height for visibility
+                            layer_edeps = np.array(layer_edeps)
+                            if np.sum(layer_edeps) > 0:
+                                norm_edeps = (layer_edeps / np.max(layer_edeps)) * (max_hist_height * 0.9)
+                                
+                                # Plot each layer as a bar on the time axis
+                                for i, (t_val, edep_val) in enumerate(zip(layer_times, norm_edeps)):
+                                    # Highlight WLS layers
+                                    bar_color = "#e91e63" if i in WLS_LAYERS else "#00bcd4"
+                                    bar_label = "WLS Region (Sim Truth)" if (i in WLS_LAYERS and i == min(WLS_LAYERS)) else \
+                                                "Standard LYSO (Sim Truth)" if (i not in WLS_LAYERS and i == 0) else None
+                                    
+                                    ax.bar(t_val, edep_val, width=0.04, color=bar_color, alpha=0.5, 
+                                           edgecolor="black", linewidth=0.5, label=bar_label)
+                    except Exception as e:
+                        print(f"    [Warning] Could not overlay DoseActor: {e}")
 
                 ax.set_title(f"Prompt Arrival (Shower Max): {ekey}", fontsize=11, fontweight="bold")
                 ax.set_xlabel("First Photon Global Time (ns)", fontsize=9)
@@ -534,7 +588,7 @@ def main():
         for idx in range(n_energies, len(axs_first)):
             fig_first.delaxes(axs_first[idx])
 
-        fig_first.suptitle(f"Downstream First-Photon Arrival Profiles (Shower-Max Proxy) — {mod}", 
+        fig_first.suptitle(f"Downstream First-Photon Arrival with Truth Overlay — {mod}", 
                            fontsize=14, fontweight="bold", y=0.98)
         fig_first.tight_layout()
         fig_first.savefig(analysis_out / f"{mod}_dw_first_photon_time.png", dpi=200)
