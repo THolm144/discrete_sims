@@ -305,12 +305,10 @@ def main():
                 if data_std <= 0: data_std = 1.0
                 
                 # Dynamically target around 5-6 bins per standard deviation for crisp peaks
-                plot_bins = int(np.clip((total_range / (data_std / 5.5)), 30, 55))
+                # Use a solid, high-resolution 100-bin layout for thousands of events
+                plot_bins = 100
+                actual_plot_width = (hi - lo) / plot_bins
                 
-                # 2. Extract the actual mathematical plot width resulting from this split
-                actual_plot_width = total_range / plot_bins
-                
-                # 3. Draw Histogram with high-resolution crisp slices
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi), 
                                            color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
                 
