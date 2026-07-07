@@ -1,0 +1,33 @@
+════════════════════════════════════════════════════════════════════════════════
+ RADiCAL SIMULATION UNIFIED HOVERSON RUN SUMMARY SHEET
+ Generated: 2026-07-07 10:14:03
+════════════════════════════════════════════════════════════════════════════════
+
+■ TARGET DETECTOR CONFIGURATION MODULE: radi_cal_energy
+─────────────────────────────────────────────────────────────────
+  Energy Layer    | Timing Resolution (σ_t)   | Spatial Error (σ_z)
+─────────────────────────────────────────────────────────────────
+  [No valid data records isolated for target matrix configuration]
+════════════════════════════════════════════════════════════════════════════════
+
+■ TARGET DETECTOR CONFIGURATION MODULE: radi_cal_triple
+─────────────────────────────────────────────────────────────────
+  Energy Layer    | Timing Resolution (σ_t)   | Spatial Error (σ_z)
+─────────────────────────────────────────────────────────────────
+  [No valid data records isolated for target matrix configuration]
+════════════════════════════════════════════════════════════════════════════════
+
+■ TARGET DETECTOR CONFIGURATION MODULE: rc_hex
+─────────────────────────────────────────────────────────────────
+  Energy Layer    | Timing Resolution (σ_t)   | Spatial Error (σ_z)
+─────────────────────────────────────────────────────────────────
+  [No valid data records isolated for target matrix configuration]
+════════════════════════════════════════════════════════════════════════════════
+
+■ TARGET DETECTOR CONFIGURATION MODULE: rc_hex_triple
+─────────────────────────────────────────────────────────────────
+  Energy Layer    | Timing Resolution (σ_t)   | Spatial Error (σ_z)
+─────────────────────────────────────────────────────────────────
+  [No valid data records isolated for target matrix configuration]
+════════════════════════════════════════════════════════════════════════════════
+

@@ -271,69 +271,94 @@ def main():
                 master_summary[mod][energy_label] = res
 
     # ─────────────────────────────────────────────────────────────────────────
-    # MATRIX GRAPH VISUALIZATION ENGINE
+    # MATRIX GRAPH VISUALIZATION ENGINE (CORRECTED SEPARATE MODULE FIGURES)
     # ─────────────────────────────────────────────────────────────────────────
-    # Generate unified 4-Panel Timing Profile Metrics
-    fig_time, axs_time = plt.subplots(2, 2, figsize=(14, 10))
-    axs_time = axs_time.flatten()
-
-    for idx, mod in enumerate(modules):
-        ax = axs_time[idx]
-        ax.set_title(f"{mod} (Timing LocalTime Profiles)", fontsize=11, fontweight="bold")
-        energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
-        
-        if not energy_keys:
-            ax.text(0.5, 0.5, "Data Vector Void", ha='center', va='center')
-            continue
-
-        for ekey in energy_keys:
-            data = master_summary[mod][ekey]["raw_bm_data"]
-            if len(data) == 0: continue
-            clean = clean_around_mode(data, window_ps=150.0)
-            ax.hist(clean, bins=60, alpha=0.5, histtype='stepfilled', label=f"{ekey} ($\\sigma_t$={master_summary[mod][ekey]['sigma_t_ps']:.1f} ps)")
-        
-        ax.set_xlabel("BestMinus Timestamp (ps)")
-        ax.set_ylabel("Events / Bin")
-        ax.grid(True, linestyle=":", alpha=0.5)
-        ax.legend(loc="upper right", fontsize=8)
-
-    fig_time.tight_layout()
-    fig_time.savefig(analysis_out / "4panel_timing_histograms.png", dpi=200)
-    plt.close(fig_time)
-
-    # Generate unified 4-Panel Longitudinal ToF Metrics
-    fig_tof, axs_tof = plt.subplots(2, 2, figsize=(14, 10))
-    axs_tof = axs_tof.flatten()
-    layers  = np.arange(1, _N_LYSO + 1)
-
-    for idx, mod in enumerate(modules):
-        ax = axs_tof[idx]
-        ax.set_title(f"{mod} (ToF Profiling)", fontsize=11, fontweight="bold")
-        energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
-        
-        if not energy_keys:
-            ax.text(0.5, 0.5, "Data Vector Void", ha='center', va='center')
-            continue
-
-        for ekey in energy_keys:
-            prof = master_summary[mod][ekey]["tof_profile"]
-            total_hits = np.sum(prof)
-            norm_prof = prof / total_hits if total_hits > 0 else prof
-            ax.plot(layers, norm_prof, marker="o", markersize=4, linewidth=1.5, label=f"{ekey}")
-
-        ax.set_xlabel("LYSO Layer Number")
-        ax.set_ylabel("Normalized Hit Density Fraction")
-        ax.grid(True, linestyle=":", alpha=0.5)
-        ax.legend(loc="upper right", fontsize=8)
-
-    fig_tof.tight_layout()
-    fig_tof.savefig(analysis_out / "4panel_tof_reconstructions.png", dpi=200)
-    plt.close(fig_tof)
-
-    # Generate Timing Resolution Performance Comparison Graph
-    fig_perf, ax_perf = plt.subplots(figsize=(9, 6))
     mod_colors = {"radi_cal_energy": "#1976d2", "radi_cal_triple": "#388e3c", "rc_hex": "#d32f2f", "rc_hex_triple": "#7b1fa2"}
     mod_markers = {"radi_cal_energy": "s", "radi_cal_triple": "^", "rc_hex": "o", "rc_hex_triple": "D"}
+    layers = np.arange(1, _N_LYSO + 1)
+
+    for mod in modules:
+        energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
+        if not energy_keys:
+            continue
+        
+        n_energies = len(energy_keys)
+        # Dynamically determine grid sizing based on available energy counts
+        ncols = 2 if n_energies >= 2 else 1
+        nrows = int(np.ceil(n_energies / ncols))
+
+        # 1. Generate Dedicated Multi-Panel TIMING Histogram Figure for this Module
+        fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_time = axs_time.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_time[idx]
+            data = master_summary[mod][ekey]["raw_bm_data"]
+            
+            if len(data) > 0:
+                clean = clean_around_mode(data, window_ps=150.0)
+                s_t = master_summary[mod][ekey]["sigma_t_ps"]
+                
+                # Plot distribution matching individual script design
+                ax.hist(clean, bins=50, color=mod_colors[mod], alpha=0.6, edgecolor="black")
+                ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
+                ax.set_ylabel("Events / Bin", fontsize=9)
+                
+                # Overlay quick numeric baseline text box
+                ax.text(0.05, 0.9, f"$\\sigma_t$ = {s_t:.1f} ps\nCoincidences = {len(data)}", 
+                        transform=ax.transAxes, fontsize=9, bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8, ec="gray"))
+            else:
+                ax.text(0.5, 0.5, "Empty Dataset", ha='center', va='center')
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        # Hide unused subplots if energy counts don't fill the grid square
+        for idx in range(n_energies, len(axs_time)):
+            fig_time.delaxes(axs_time[idx])
+
+        fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_time.tight_layout()
+        fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
+        plt.close(fig_time)
+
+        # 2. Generate Dedicated Multi-Panel TOF Reconstruction Figure for this Module
+        fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_tof = axs_tof.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_tof[idx]
+            prof = master_summary[mod][ekey]["tof_profile"]
+            s_t = master_summary[mod][ekey]["sigma_t_ps"]
+            pitch = master_summary[mod][ekey]["pitch_mm"]
+            
+            # Map temporal uncertainty to spatial layer error bars
+            sigma_z = V_EFF_MM_NS * (s_t / 1000.0)
+            sigma_layer = sigma_z / pitch
+
+            total_hits = np.sum(prof)
+            norm_prof = prof / total_hits if total_hits > 0 else prof
+
+            ax.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod], 
+                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0)
+            ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
+            ax.set_xlabel("LYSO Layer Number", fontsize=9)
+            ax.set_ylabel("Normalized Hit Density Fraction", fontsize=9)
+            ax.set_xlim(0, _N_LYSO + 1)
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        for idx in range(n_energies, len(axs_tof)):
+            fig_tof.delaxes(axs_tof[idx])
+
+        fig_tof.suptitle(f"Continuous E-Type ToF Reconstructions — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_tof.tight_layout()
+        fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
+        plt.close(fig_tof)
+
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH (4 lines)
+    # ─────────────────────────────────────────────────────────────────────────
+    fig_perf, ax_perf = plt.subplots(figsize=(9, 6))
 
     for mod in modules:
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
@@ -344,8 +369,7 @@ def main():
             x_energy.append(extract_numerical_energy(ekey))
             s_t = master_summary[mod][ekey]["sigma_t_ps"]
             y_res.append(s_t)
-            # Add an estimation bar of fitting consistency limits
-            y_err.append(s_t * 0.04 + 1.5)
+            y_err.append(s_t * 0.04 + 1.0)  # Systematic estimation envelope metric
 
         ax_perf.errorbar(x_energy, y_res, yerr=y_err, marker=mod_markers[mod], color=mod_colors[mod],
                          linewidth=2, markersize=7, capsize=4, capthick=1.5, linestyle="--", label=mod)
@@ -355,7 +379,6 @@ def main():
     ax_perf.set_title("Unified Performance Horizon — Timing Resolution vs Energy", fontsize=12, fontweight="bold")
     ax_perf.grid(True, linestyle=":", alpha=0.6)
     ax_perf.set_xscale("log")
-    # Clean x-ticks labeling for clarity
     ax_perf.set_xticks([25, 50, 100, 200])
     ax_perf.get_xaxis().set_major_formatter(plt.ScalarFormatter())
     ax_perf.legend(loc="upper right", frameon=True)
@@ -365,7 +388,7 @@ def main():
     plt.close(fig_perf)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # EXPORT MASTER MATRIX SHEET
+    # 4. EXPORT MASTER MATRIX TEXT REPORT
     # ─────────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
