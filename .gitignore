@@ -4,6 +4,8 @@
 *.raw
 *.npy
 *.zraw
+*.png
+analysis/
 runs/
 
 # Ignore configuration/metadata dumps if unwanted
