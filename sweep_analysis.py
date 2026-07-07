@@ -2,6 +2,20 @@
 import os
 import sys
 import argparse
+"""
+unified_sweep_analysis.py
+==========================
+Aggregates timing-resolution and ToF-reconstruction results across all four
+RADiCAL geometry variants (radi_cal_energy, radi_cal_triple, rc_hex,
+rc_hex_triple) and all energy points in each module's latest sweep.
+
+Outputs (in analysis/sweep_summary_<timestamp>/):
+    {module}_timing_panels.png   -- 4-panel BestMinus timing histograms
+    {module}_tof_panels.png      -- 4-panel E-type ToF longitudinal reconstruction
+    {module}_dw_e_hits_time.png  -- Downstream E-type SiPM hits vs Time
+    timing_resolution_vs_energy.png -- sigma_t vs energy, all 4 modules, error bars
+    timing_vs_energy_report.txt  -- text summary of all sigma_t / sigma_z values
+"""
 import datetime
 import warnings
 from pathlib import Path
@@ -20,12 +34,12 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # OPTICAL KINEMATICS CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 C_LIGHT_MM_NS = 299.792
-REFRACTIVE_INDEX = 1.60                          
+REFRACTIVE_INDEX = 1.60
 V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR = 0.92                          
+BOUNCE_FACTOR = 0.92
 V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
-_GT_LO_NS = 0.0  
+_GT_LO_NS = 0.0
 _GT_HI_NS = 50.0
 _TYVEK_THICK_MM = 0.2032
 _W_THICK_MM = 2.5
@@ -35,13 +49,13 @@ _N_W = 28
 ARRIVAL_QUANTILE = 0.10
 MIN_PHOTONS_PER_FACE = 1
 
-# Geometry mappings
+# ── Geometry mappings ──────────────────────────────────────────────────────
 _SQUARE_HOLE_OFFSET = 3.7032
 SQUARE_CAP_XY = np.array([
-    [ _SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET], # 0 (T)
-    [-_SQUARE_HOLE_OFFSET, -_SQUARE_HOLE_OFFSET], # 1 (T)
-    [-_SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET], # 2 (E)
-    [ _SQUARE_HOLE_OFFSET, -_SQUARE_HOLE_OFFSET], # 3 (E)
+    [ _SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET],  # 0 (T)
+    [-_SQUARE_HOLE_OFFSET, -_SQUARE_HOLE_OFFSET],  # 1 (T)
+    [-_SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET],  # 2 (E)
+    [ _SQUARE_HOLE_OFFSET, -_SQUARE_HOLE_OFFSET],  # 3 (E)
 ])
 
 HEX_CAP_R_MM = 3.5
@@ -50,8 +64,11 @@ HEX_CAP_XY = np.array([
     for i in range(6)
 ])
 
+# Known SiPM z-plane landmarks, used only to label output (not required for correctness)
+_KNOWN_Z_PLANES = {91.65: 1.5, 135.15: 4.5}
+
 # ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY & LOGIC RESOLVERS
+# HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 def get_lyso_layer_bounds(lyso_thick, calor_thick):
     gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
@@ -68,12 +85,13 @@ def standard_gaussian(x, A, mu, sigma):
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 def fit_gaussian_to_peak(data, n_bins=40):
-    if len(data) < 8: 
-        return 0.0, float(np.median(data)), float(np.std(data))
+    if len(data) < 8:
+        return 0.0, float(np.median(data)) if len(data) else 0.0, float(np.std(data)) if len(data) else 0.0
     center = np.median(data)
     spread = max(np.std(data), 1.0)
     lo, hi = float(np.min(data)), float(np.max(data))
-    if hi <= lo: hi = lo + 1.0
+    if hi <= lo:
+        hi = lo + 1.0
 
     counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
     mids = 0.5 * (edges[:-1] + edges[1:])
@@ -92,8 +110,9 @@ def fit_gaussian_to_peak(data, n_bins=40):
     except Exception:
         return A0, mu0, spread
 
-def clean_around_mode(arr, window_ps=80.0):
-    if len(arr) == 0: return arr
+def clean_around_mode(arr, window_ps=500.0):
+    if len(arr) == 0:
+        return arr
     counts, edges = np.histogram(arr, bins=40)
     peak_bin = np.argmax(gaussian_filter1d(counts.astype(float), sigma=2.0))
     mode_center = 0.5 * (edges[peak_bin] + edges[peak_bin + 1])
@@ -108,28 +127,33 @@ def extract_numerical_energy(label: str) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING
 # ─────────────────────────────────────────────────────────────────────────────
-def analyze_energy_batch(batch_dir: Path, is_hex: bool):
+def analyze_energy_batch(batch_dir: Path, is_hex: bool, verbose_label: str = ""):
     hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
     if not hit_files:
         return None
 
+    # ── Detect SiPM z-plane from the first populated file ──────────────────
     detected_z_sensor = None
     for fpath in hit_files:
         try:
             with uproot.open(fpath) as f:
                 tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
-                if not tk: continue
+                if not tk:
+                    continue
                 z_arr = f[tk]["Position_Z"].array(library="np")
                 if len(z_arr) > 0:
                     abs_z = np.abs(z_arr)
                     detected_z_sensor = float(np.median(abs_z[abs_z > (np.max(abs_z) - 5.0)]))
                     break
-        except: continue
+        except Exception:
+            continue
 
     if detected_z_sensor is None:
         return None
 
-    lyso_thick = 1.5 if abs(detected_z_sensor - 91.65) < 3.0 else 4.5
+    # Pick nearest known landmark
+    lyso_thick = min(_KNOWN_Z_PLANES.items(), key=lambda kv: abs(kv[0] - detected_z_sensor))[1]
+
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
@@ -143,96 +167,78 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
     all_bm_raw_ps = []
     all_dw_e_times = []  # Array tracker for downstream E-type hits vs time
 
-    # Group files by parent run directories to apply a clean global offset sequence
-    run_dirs = sorted(list(set(f.parent for f in hit_files)))
-    global_offset = 0
+    for fpath in hit_files:
+        # run_tag disambiguates EventIDs across run_* directories
+        run_tag = fpath.parent.name
+        try:
+            with uproot.open(fpath) as f:
+                tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
+                if not tk:
+                    continue
+                tree = f[tk]
+                if tree.num_entries == 0:
+                    continue
+                x = tree["Position_X"].array(library="np")
+                y = tree["Position_Y"].array(library="np")
+                z = tree["Position_Z"].array(library="np")
+                gt = tree["GlobalTime"].array(library="np")
+                lt = tree["LocalTime"].array(library="np")
+                ev = tree["EventID"].array(library="np")
+                pn = tree["ParticleName"].array(library="np")
+        except Exception:
+            continue
 
-    for rdir in run_dirs:
-        rdir_files = sorted(list(rdir.glob("detector_hits_*.root")))
-        max_ev_in_run = -1
+        dx = x[:, np.newaxis] - cap_xy_map[:, 0]
+        dy = y[:, np.newaxis] - cap_xy_map[:, 1]
+        channels = np.argmin(np.hypot(dx, dy), axis=1)
 
-        for fpath in rdir_files:
-            try:
-                with uproot.open(fpath) as f:
-                    tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
-                    if not tk: continue
-                    tree = f[tk]
-                    if tree.num_entries == 0: continue
-                    x = tree["Position_X"].array(library="np")
-                    y = tree["Position_Y"].array(library="np")
-                    z = tree["Position_Z"].array(library="np")
-                    gt = tree["GlobalTime"].array(library="np")
-                    lt = tree["LocalTime"].array(library="np")
-                    ev_raw = tree["EventID"].array(library="np").astype(int)
-                    
-                    pn_raw = tree["ParticleName"].array(library="np")
-                    pn = pn_raw.astype(str) if pn_raw.dtype.kind != 'U' else pn_raw
-            except: continue
+        near_up = np.abs(z + detected_z_sensor) < 2.5
+        near_dw = np.abs(z - detected_z_sensor) < 2.5
+        is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
 
-            if len(ev_raw) == 0: continue
-            ev = ev_raw + global_offset
-            max_ev_in_run = max(max_ev_in_run, int(ev_raw.max() + global_offset))
+        # ── E-Type spatial reconstruction (GlobalTime, first-photon) ───────
+        is_e = np.isin(channels, list(e_indices))
+        is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
+        m_e_up, m_e_dw = is_e & is_prompt & near_up, is_e & is_prompt & near_dw
 
-            dx = x[:, np.newaxis] - cap_xy_map[:, 0]
-            dy = y[:, np.newaxis] - cap_xy_map[:, 1]
-            channels = np.argmin(np.hypot(dx, dy), axis=1)
+        # Append all matching downstream E-type hit times for the requested graph
+        all_dw_e_times.extend(gt[m_e_dw].astype(float).tolist())
 
-            # Isolate specific macro-towers by resolving tower centers
-            tower_x = np.round(x - cap_xy_map[channels, 0], 2)
-            tower_y = np.round(y - cap_xy_map[channels, 1], 2)
+        for eid, ti in zip(ev[m_e_up], gt[m_e_up]):
+            key = (run_tag, int(eid))
+            if key not in up_first or ti < up_first[key]:
+                up_first[key] = float(ti)
+        for eid, ti in zip(ev[m_e_dw], gt[m_e_dw]):
+            key = (run_tag, int(eid))
+            if key not in down_first or ti < down_first[key]:
+                down_first[key] = float(ti)
 
-            near_up = np.abs(z + detected_z_sensor) < 2.5
-            near_dw = np.abs(z - detected_z_sensor) < 2.5
-            is_optical = (pn == "opticalphoton")
+        # ── T-Type timing resolution (LocalTime, quantile) ──────────────────
+        is_t = np.isin(channels, list(t_indices))
+        m_t_up, m_t_dw = is_t & is_optical & near_up, is_t & is_optical & near_dw
 
-            # 1. E-Type Parsing (Fiber-Isolated Lookup)
-            is_e = np.isin(channels, list(e_indices))
-            is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
-            m_e_up, m_e_dw = is_e & is_prompt & near_up, is_e & is_prompt & near_dw
-
-            # Append all matching downstream E-type hit times for the request graph
-            all_dw_e_times.extend(gt[m_e_dw].astype(float).tolist())
-
-            for tx, ty, ch, eid, ti in zip(tower_x[m_e_up], tower_y[m_e_up], channels[m_e_up], ev[m_e_up], gt[m_e_up]):
-                fiber_key = (int(eid), float(tx), float(ty), int(ch))
-                if fiber_key not in up_first or ti < up_first[fiber_key]: 
-                    up_first[fiber_key] = float(ti)
-                    
-            for tx, ty, ch, eid, ti in zip(tower_x[m_e_dw], tower_y[m_e_dw], channels[m_e_dw], ev[m_e_dw], gt[m_e_dw]):
-                fiber_key = (int(eid), float(tx), float(ty), int(ch))
-                if fiber_key not in down_first or ti < down_first[fiber_key]: 
-                    down_first[fiber_key] = float(ti)
-
-            # 2. T-Type Timing Parsing (Fiber-Isolated Lookup)
-            is_t = np.isin(channels, list(t_indices))
-            m_t_up, m_t_dw = is_t & is_optical & near_up, is_t & is_optical & near_dw
-
-            for tx, ty, ch, e, t in zip(tower_x[m_t_up], tower_y[m_t_up], channels[m_t_up], ev[m_t_up], lt[m_t_up] * 1000.0): 
-                fiber_key = (int(e), float(tx), float(ty), int(ch))
-                up_times_by_ev.setdefault(fiber_key, []).append(t)
-                
-            for tx, ty, ch, e, t in zip(tower_x[m_t_dw], tower_y[m_t_dw], channels[m_t_dw], ev[m_t_dw], lt[m_t_dw] * 1000.0): 
-                fiber_key = (int(e), float(tx), float(ty), int(ch))
-                dw_times_by_ev.setdefault(fiber_key, []).append(t)
-
-        if max_ev_in_run >= 0:
-            global_offset = max_ev_in_run + 1
+        for e, t in zip(ev[m_t_up], lt[m_t_up] * 1000.0):
+            up_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
+        for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0):
+            dw_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
 
     common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
-    for fkey in common_t_evs:
-        if len(up_times_by_ev[fkey]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[fkey]) >= MIN_PHOTONS_PER_FACE:
-            t_up_q = np.quantile(up_times_by_ev[fkey], ARRIVAL_QUANTILE)
-            t_dw_q = np.quantile(dw_times_by_ev[fkey], ARRIVAL_QUANTILE)
+    all_bm_raw_ps = []
+    for e in common_t_evs:
+        if len(up_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE:
+            t_up_q = np.quantile(up_times_by_ev[e], ARRIVAL_QUANTILE)
+            t_dw_q = np.quantile(dw_times_by_ev[e], ARRIVAL_QUANTILE)
             all_bm_raw_ps.append((t_dw_q - t_up_q) / 2.0)
 
+    # ── WIDEN THE FILTER: Let the full distribution breathe ──
     clean_bm = clean_around_mode(np.array(all_bm_raw_ps), window_ps=500.0)
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
     common_e_keys = set(up_first) & set(down_first)
     valid_z_emits = []
-    for fk in common_e_keys:
-        z_est = V_EFF_MM_NS * (down_first[fk] - up_first[fk]) / 2.0
-        if -calor_thick_mm/2 - 15.0 <= z_est <= calor_thick_mm/2 + 15.0:
+    for k in common_e_keys:
+        z_est = V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0
+        if -calor_thick_mm / 2 - 15.0 <= z_est <= calor_thick_mm / 2 + 15.0:
             valid_z_emits.append(z_est)
 
     profile_counts = np.zeros(_N_LYSO)
@@ -247,16 +253,26 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
     
     profile_counts = profile_counts[::-1]
 
+    if verbose_label:
+        n_runs = len(set(fp.parent.name for fp in hit_files))
+        print(f"    [{verbose_label}] {n_runs} run dirs, "
+              f"{len(common_t_evs)} T-coincidences, {len(common_e_keys)} E-coincidences "
+              f"(sigma_t={sigma_t_ps:.1f}ps)")
+
     return {
         "sigma_t_ps": sigma_t_ps,
         "raw_bm_data": np.array(all_bm_raw_ps),
         "tof_profile": profile_counts,
         "lyso_thick": lyso_thick,
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
-        "num_coincidences": len(valid_z_emits),
+        "n_t_coincidences": len(common_t_evs),
+        "n_e_coincidences": len(common_e_keys),
         "dw_e_times": np.array(all_dw_e_times)
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
 def main():
     base_dir = Path(__file__).resolve().parent
     modules = ["radi_cal_energy", "radi_cal_triple", "rc_hex", "rc_hex_triple"]
@@ -265,21 +281,22 @@ def main():
     analysis_out = base_dir / "analysis" / f"sweep_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
 
-    print(f"Master processing engine spawned. Targeting tracking metrics...")
-    print(f"Saving output arrays to: {analysis_out.relative_to(base_dir)}\n")
+    print("Master processing engine spawned. Targeting tracking metrics...")
+    print(f"Saving output to: {analysis_out.relative_to(base_dir)}\n")
 
     master_summary = {mod: {} for mod in modules}
 
     for mod in modules:
         mod_path = base_dir / mod / "runs" / mod
         if not mod_path.exists():
-            print(f"  Skipping module target: '{mod}' (Directory path not found)")
+            print(f"  Skipping module '{mod}' (path not found)")
             continue
 
         sweeps = sorted(list(mod_path.glob("sweep_*")), key=lambda p: p.name)
-        if not sweeps: continue
+        if not sweeps:
+            continue
         target_sweep = sweeps[-1]
-        print(f"Processing '{mod}' -> target tracking node: {target_sweep.name}")
+        print(f"Processing '{mod}' -> {target_sweep.name}")
 
         energy_dirs = sorted(list(target_sweep.glob("*GeV")), key=lambda p: extract_numerical_energy(p.name))
         is_hex = "hex" in mod
@@ -287,9 +304,9 @@ def main():
         for edir in energy_dirs:
             energy_label = edir.name
             print(f"    Parsing radiation slice: {energy_label}")
-            res = analyze_energy_batch(edir, is_hex)
+            res = analyze_energy_batch(edir, is_hex, verbose_label=edir.name)
             if res is not None:
-                master_summary[mod][energy_label] = res
+                master_summary[mod][edir.name] = res
 
     mod_colors = {"radi_cal_energy": "#1976d2", "radi_cal_triple": "#388e3c", "rc_hex": "#d32f2f", "rc_hex_triple": "#7b1fa2"}
     mod_markers = {"radi_cal_energy": "s", "radi_cal_triple": "^", "rc_hex": "o", "rc_hex_triple": "D"}
@@ -302,46 +319,77 @@ def main():
 
     for mod in modules:
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
-        if not energy_keys: continue
         
+        if not energy_keys:
+            continue
+
         n_energies = len(energy_keys)
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # 1. TIMING HIERARCHY
+        # ─────────────────────────────────────────────────────────────────────
+        # 1. TIMING HIERARCHY — DYNAMIC PER-PANEL BINNING (FREEDMAN-DIACONIS)
+        # ─────────────────────────────────────────────────────────────────────
+        # ── 1. Timing histograms (4-panel) ─────────────────────────────────
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
             data = master_summary[mod][ekey]["raw_bm_data"]
-            
+
             if len(data) > 0:
                 clean = clean_around_mode(data, window_ps=500.0)
                 lo, hi = float(np.min(clean)), float(np.max(clean))
-                if hi <= lo: hi = lo + 1.0
                 
-                counts, edges, _ = ax.hist(clean, bins=100, range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
-                fit_amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40) 
+                # 1. Dynamically compute range and set a structural minimum bin count
+                # For N ~ 60, we force ~35-45 bins so it matches the high-granularity reference style.
+                total_range = hi - lo
                 
-                fit_bin_width = (hi - lo) / 40.0
-                plot_bin_width = (hi - lo) / 100.0
-                scale_factor = plot_bin_width / fit_bin_width if fit_bin_width > 0 else 1.0
-                amplitude = fit_amp * scale_factor if fit_amp > 0 else counts.max()
+                # Base bin count on a mix of range and standard deviation
+                data_std = np.std(clean) if len(clean) > 1 else 5.0
+                if data_std <= 0: data_std = 1.0
                 
+                # Dynamically target around 5-6 bins per standard deviation for crisp peaks
+                if hi <= lo:
+                    hi = lo + 1.0
+
+                q75, q25 = np.percentile(clean, [75, 25])
+                iqr = q75 - q25
+                if iqr > 0 and len(clean) > 1:
+                    fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
+                else:
+                    fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
+                optimal_width = max(0.5, min(fd_width, 10.0))
+                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
+                actual_plot_width = (hi - lo) / plot_bins
+                
+                # 4. Perform the robust structural fit (40 bins internally remains fine for stable fitting)
+                counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
+                                           color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
+
+                _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
+                
+                # 5. Area Normalization using this specific panel's layout parameters
+                total_events = len(clean)
+                amplitude = (total_events * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
+                
+                # 6. Plot the curve tailored exactly to this panel's height and bins
                 x_fit = np.linspace(lo, hi, 5000)
                 y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
                 
-                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, 
+                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
                         label=f"Gaussian Fit\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps")
                 
-                ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
+                n_ev = master_summary[mod][ekey]["n_t_coincidences"]
+                ax.set_title(f"{ekey}  (N={n_ev} events)", fontsize=11, fontweight="bold")
                 ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
-                ax.set_ylabel("Events / Bin", fontsize=9)
+                ax.set_ylabel(f"Events / {actual_plot_width:.1f} ps", fontsize=9)
                 ax.set_xlim(lo, hi)
                 ax.legend(loc="upper right", fontsize=8, frameon=True)
             else:
                 ax.text(0.5, 0.5, "Empty Dataset", ha='center', va='center')
+                ax.set_title(f"{ekey}", fontsize=11, fontweight="bold")
             ax.grid(True, linestyle=":", alpha=0.5)
 
         for idx in range(n_energies, len(axs_time)):
@@ -352,7 +400,10 @@ def main():
         fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
         plt.close(fig_time)
 
-        # 2. TOF PROFILE PANELS
+        # ─────────────────────────────────────────────────────────────────────
+        # 2. TOF Profile Figures (Restored)
+        # ─────────────────────────────────────────────────────────────────────
+        # ── 2. ToF reconstruction panels (4-panel) ──────────────────────────
         fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_tof = axs_tof.flatten()
 
@@ -362,18 +413,17 @@ def main():
             s_t = master_summary[mod][ekey]["sigma_t_ps"]
             pitch = master_summary[mod][ekey]["pitch_mm"]
             lyso_thick = master_summary[mod][ekey]["lyso_thick"]
-            n_coinc = master_summary[mod][ekey].get("num_coincidences", 0)
-            
+
             sigma_z = V_EFF_MM_NS * (s_t / 1000.0)
             sigma_layer = sigma_z / pitch
 
             total_hits = np.sum(prof)
             norm_prof = prof / total_hits if total_hits > 0 else prof
 
-            target_sweep_dir = sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))[-1].name
-            edir_path = base_dir / mod / "runs" / mod / target_sweep_dir / ekey
-            run_dirs = sorted(list(set(fpath.parent for fpath in edir_path.rglob("detector_hits_*.root"))))
-            
+            sweep_dirs = sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))
+            edir_path = base_dir / mod / "runs" / mod / sweep_dirs[-1].name / ekey
+            run_dirs = sorted(list(set(fp.parent for fp in edir_path.rglob("detector_hits_*.root"))))
+
             truth_curve = None
             if utils and run_dirs:
                 try:
@@ -391,17 +441,20 @@ def main():
                             i1 = max(0, min(int(round(z_offset_end / dz_mm)), len(avg)))
                             layer_edeps.append(float(np.sum(avg[i0:i1])))
                         truth_curve = np.array(layer_edeps)
-                except:
+                except Exception:
                     truth_curve = None
 
             if truth_curve is not None and np.sum(truth_curve) > 0:
                 norm_truth = truth_curve / np.sum(truth_curve)
-                ax.bar(layers, norm_truth, color="#00bcd4", alpha=0.35, edgecolor="#00838f", linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
+                ax.bar(layers, norm_truth, color="#00bcd4", alpha=0.35, edgecolor="#00838f",
+                       linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
-            ax.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod], 
-                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0, label=f"ΔT Coincidence (N={n_coinc})")
+            n_ev = master_summary[mod][ekey]["n_e_coincidences"]
+            ax.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod],
+                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0,
+                        label=f"ΔT Coincidence (N={n_ev})")
             
-            ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
+            ax.set_title(f"{ekey}", fontsize=11, fontweight="bold")
             ax.set_xlabel("LYSO Layer Number", fontsize=9)
             ax.set_ylabel("Normalized Density Fraction", fontsize=9)
             ax.set_xlim(0, _N_LYSO + 1)
@@ -416,7 +469,9 @@ def main():
         fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
         plt.close(fig_tof)
 
-        # 3. NEW GRAPH REQUEST: DOWNSTREAM E-TYPE SIPM HITS VS TIME
+        # ─────────────────────────────────────────────────────────────────────
+        # 3. DOWNSTREAM E-TYPE SIPM HITS VS TIME (New Addition)
+        # ─────────────────────────────────────────────────────────────────────
         fig_dw_hits, axs_dw_hits = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_dw_hits = axs_dw_hits.flatten()
 
@@ -445,67 +500,86 @@ def main():
         fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
         plt.close(fig_dw_hits)
 
+    # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
+    # ─────────────────────────────────────────────────────────────────────
+    # ── 4. Unified performance-vs-energy plot ──────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(9, 6))
+    any_points = False
 
     for mod in modules:
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
-        if not energy_keys: continue
         
+        if not energy_keys:
+            continue
+
         x_energy, y_res, y_err = [], [], []
         for ekey in energy_keys:
-            x_energy.append(extract_numerical_energy(ekey))
             s_t = master_summary[mod][ekey]["sigma_t_ps"]
+            n_ev = master_summary[mod][ekey]["n_t_coincidences"]
+            if n_ev < 8 or s_t <= 0:
+                # Not enough statistics for a meaningful Gaussian fit; skip
+                # rather than plot a near-zero point that misrepresents the module.
+                continue
+            x_energy.append(extract_numerical_energy(ekey))
             y_res.append(s_t)
-            y_err.append(s_t * 0.04 + 1.0)
+            # Statistical error on sigma from a Gaussian fit ~ sigma / sqrt(2N)
+            y_err.append(s_t / np.sqrt(2 * n_ev))
 
-        ax_perf.errorbar(x_energy, y_res, yerr=y_err, marker=mod_markers[mod], color=mod_colors[mod],
-                         linewidth=2, markersize=7, capsize=4, capthick=1.5, linestyle="--", label=mod)
+        if x_energy:
+            any_points = True
+            ax_perf.errorbar(x_energy, y_res, yerr=y_err, marker=mod_markers[mod], color=mod_colors[mod],
+                             linewidth=2, markersize=7, capsize=4, capthick=1.5, linestyle="--", label=mod)
 
     ax_perf.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
-    ax_perf.set_ylabel("BestMinus Timing Resolution $\sigma_t$ (ps)", fontweight="bold")
+    ax_perf.set_ylabel(r"BestMinus Timing Resolution $\sigma_t$ (ps)", fontweight="bold")
     ax_perf.set_title("Unified Performance Horizon — Timing Resolution vs Energy", fontsize=12, fontweight="bold")
     ax_perf.grid(True, linestyle=":", alpha=0.6)
     ax_perf.set_xscale("log")
     ax_perf.set_xticks([25, 50, 100, 200])
     ax_perf.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-    ax_perf.legend(loc="upper right", frameon=True)
+    if any_points:
+        ax_perf.legend(loc="upper right", frameon=True)
+    else:
+        ax_perf.text(0.5, 0.5, "No modules had sufficient statistics", ha='center', va='center', transform=ax_perf.transAxes)
 
     fig_perf.tight_layout()
     fig_perf.savefig(analysis_out / "timing_resolution_vs_energy.png", dpi=220)
     plt.close(fig_perf)
-    
+
+    # ─────────────────────────────────────────────────────────────────────
     # 5. EXPORT MASTER MATRIX TEXT REPORT
+    # ─────────────────────────────────────────────────────────────────────
+    # ── 5. Text report ──────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
-        f.write(f"{'═'*80}\n")
-        f.write(f" RADiCAL SIMULATION UNIFIED HOVERSON RUN SUMMARY SHEET\n")
+        f.write(f"{'='*80}\n")
+        f.write(" RADiCAL SIMULATION UNIFIED RUN SUMMARY SHEET\n")
         f.write(f" Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"{'═'*80}\n\n")
+        f.write(f"{'='*80}\n\n")
 
         for mod in modules:
-            f.write(f"■ TARGET DETECTOR CONFIGURATION MODULE: {mod}\n")
-            f.write(f"{'─'*65}\n")
-            f.write(f"  {'Energy Layer':<15} | {'Timing Resolution (σ_t)':<25} | {'Spatial Error (σ_z)':<15}\n")
-            f.write(f"{'─'*65}\n")
-            
+            f.write(f"MODULE: {mod}\n")
+            f.write(f"{'-'*65}\n")
+            f.write(f"  {'Energy':<12} | {'sigma_t (ps)':<16} | {'sigma_z (mm)':<14} | {'sigma_layer':<12} | {'N events (T/E)':<15}\n")
+            f.write(f"{'-'*65}\n")
+
             energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
             if not energy_keys:
-                f.write(f"  [No valid data records isolated for target matrix configuration]\n")
+                f.write("  [No data found for this module]\n")
             else:
                 for ekey in energy_keys:
-                    s_t = master_summary[mod][ekey]["sigma_t_ps"]
-                    pitch = master_summary[mod][ekey]["pitch_mm"]
+                    r = master_summary[mod][ekey]
+                    s_t = r["sigma_t_ps"]
+                    pitch = r["pitch_mm"]
                     sigma_z = V_EFF_MM_NS * (s_t / 1000.0)
                     sigma_layer = sigma_z / pitch
                     
-                    res_str = f"{s_t:.2f} ps"
-                    err_str = f"± {sigma_layer:.2f} layers ({sigma_z:.2f} mm)"
-                    f.write(f"  {ekey:<15} | {res_str:<25} | {err_str:<15}\n")
-            f.write(f"{'═'*80}\n\n")
+                    f.write(f"  {ekey:<12} | {s_t:<16.2f} | {sigma_z:<14.2f} | {sigma_layer:<12.2f} | "
+                            f"{r['n_t_coincidences']}/{r['n_e_coincidences']}\n")
+            f.write(f"{'='*80}\n\n")
 
-    print(f"\nProcessing execution window sealed successfully.")
-    print(f"Saved master data matrix report → {sheet_path.name}")
+    print(f"\nDone. Saved report -> {sheet_path.name}")
 
 if __name__ == "__main__":
     main()
