@@ -19,20 +19,20 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # ─────────────────────────────────────────────────────────────────────────────
 # OPTICAL KINEMATICS CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
-C_LIGHT_MM_NS    = 299.792
+C_LIGHT_MM_NS = 299.792
 REFRACTIVE_INDEX = 1.60                          
-V_LIGHT_MM_NS    = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR    = 0.92                          
-V_EFF_MM_NS      = V_LIGHT_MM_NS * BOUNCE_FACTOR
+V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
+BOUNCE_FACTOR = 0.92                          
+V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
 _GT_LO_NS = 0.0  
 _GT_HI_NS = 50.0
-_TYVEK_THICK_MM  = 0.2032
-_W_THICK_MM      = 2.5
-_N_LYSO          = 29
-_N_W             = 28
+_TYVEK_THICK_MM = 0.2032
+_W_THICK_MM = 2.5
+_N_LYSO = 29
+_N_W = 28
 
-ARRIVAL_QUANTILE     = 0.10
+ARRIVAL_QUANTILE = 0.10
 MIN_PHOTONS_PER_FACE = 1
 
 # Geometry mappings
@@ -45,7 +45,7 @@ SQUARE_CAP_XY = np.array([
 ])
 
 HEX_CAP_R_MM = 3.5
-HEX_CAP_XY   = np.array([
+HEX_CAP_XY = np.array([
     [HEX_CAP_R_MM * np.cos(np.pi/2 + i*(np.pi/3)), HEX_CAP_R_MM * np.sin(np.pi/2 + i*(np.pi/3))]
     for i in range(6)
 ])
@@ -59,7 +59,7 @@ def get_lyso_layer_bounds(lyso_thick, calor_thick):
     current_z = -calor_thick / 2
     for idx in range(_N_LYSO):
         z_start = current_z + _TYVEK_THICK_MM
-        z_end   = z_start + lyso_thick
+        z_end = z_start + lyso_thick
         bounds.append((z_start, z_end))
         current_z += gap_thick + (_W_THICK_MM if idx < _N_W else 0)
     return bounds
@@ -79,7 +79,7 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mids = 0.5 * (edges[:-1] + edges[1:])
     smoothed = gaussian_filter1d(counts.astype(float), sigma=2.0)
     peak_idx = int(np.argmax(smoothed))
-    mu0, A0  = float(mids[peak_idx]), float(smoothed[peak_idx])
+    mu0, A0 = float(mids[peak_idx]), float(smoothed[peak_idx])
 
     try:
         popt, _ = curve_fit(
@@ -113,7 +113,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
     if not hit_files:
         return None
 
-    # Determine Z plane geometry metrics dynamically
     detected_z_sensor = None
     for fpath in hit_files:
         try:
@@ -136,13 +135,11 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
 
     cap_xy_map = HEX_CAP_XY if is_hex else SQUARE_CAP_XY
-    num_caps   = 6 if is_hex else 4
-    t_indices  = {1, 3, 5} if is_hex else {0, 1}
-    e_indices  = {0, 2, 4} if is_hex else {2, 3}
+    t_indices = {1, 3, 5} if is_hex else {0, 1}
+    e_indices = {0, 2, 4} if is_hex else {2, 3}
 
     up_first, down_first = {}, {}
     up_times_by_ev, dw_times_by_ev = {}, {}
-    t_type_best_minus_ps = []
     all_bm_raw_ps = []
 
     for fpath in hit_files:
@@ -152,16 +149,15 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
                 if not tk: continue
                 tree = f[tk]
                 if tree.num_entries == 0: continue
-                x  = tree["Position_X"].array(library="np")
-                y  = tree["Position_Y"].array(library="np")
-                z  = tree["Position_Z"].array(library="np")
+                x = tree["Position_X"].array(library="np")
+                y = tree["Position_Y"].array(library="np")
+                z = tree["Position_Z"].array(library="np")
                 gt = tree["GlobalTime"].array(library="np")
                 lt = tree["LocalTime"].array(library="np")
                 ev = tree["EventID"].array(library="np")
                 pn = tree["ParticleName"].array(library="np")
         except: continue
 
-        # Compute dynamic matching channels
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
@@ -189,7 +185,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
         for e, t in zip(ev[m_t_up], lt[m_t_up] * 1000.0): up_times_by_ev.setdefault(int(e), []).append(t)
         for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0): dw_times_by_ev.setdefault(int(e), []).append(t)
 
-    # Fold coincidences
     common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
     for e in common_t_evs:
         if len(up_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE:
@@ -200,7 +195,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
     clean_bm = clean_around_mode(np.array(all_bm_raw_ps), window_ps=500.0)
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
-    # Map out ToF Z profiles
     common_e_keys = set(up_first) & set(down_first)
     valid_z_emits = []
     for k in common_e_keys:
@@ -218,7 +212,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
         for i, (zm, zx) in enumerate(lyso_bounds):
             profile_counts[i] = np.sum((valid_z_emits >= zm) & (valid_z_emits <= zx))
     
-    # Invert to realign with physics injection vector definition
     profile_counts = profile_counts[::-1]
 
     return {
@@ -229,14 +222,10 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
         "pitch_mm": gap_thick_mm + _W_THICK_MM
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN SCHEDULER & AGGREGATOR
-# ─────────────────────────────────────────────────────────────────────────────
 def main():
     base_dir = Path(__file__).resolve().parent
-    modules  = ["radi_cal_energy", "radi_cal_triple", "rc_hex", "rc_hex_triple"]
+    modules = ["radi_cal_energy", "radi_cal_triple", "rc_hex", "rc_hex_triple"]
 
-    # Initialize execution environment paths
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     analysis_out = base_dir / "analysis" / f"sweep_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
@@ -252,14 +241,11 @@ def main():
             print(f"  Skipping module target: '{mod}' (Directory path not found)")
             continue
 
-        # Crawl most recent timestamp directory layout
         sweeps = sorted(list(mod_path.glob("sweep_*")), key=lambda p: p.name)
-        if not sweeps:
-            continue
+        if not sweeps: continue
         target_sweep = sweeps[-1]
         print(f"Processing '{mod}' -> target tracking node: {target_sweep.name}")
 
-        # Extract dynamic energy nodes
         energy_dirs = sorted(list(target_sweep.glob("*GeV")), key=lambda p: extract_numerical_energy(p.name))
         is_hex = "hex" in mod
 
@@ -270,14 +256,10 @@ def main():
             if res is not None:
                 master_summary[mod][energy_label] = res
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # MATRIX GRAPH VISUALIZATION ENGINE (WITH FIT LINES & TRUTH OVERLAYS)
-    # ─────────────────────────────────────────────────────────────────────────
     mod_colors = {"radi_cal_energy": "#1976d2", "radi_cal_triple": "#388e3c", "rc_hex": "#d32f2f", "rc_hex_triple": "#7b1fa2"}
     mod_markers = {"radi_cal_energy": "s", "radi_cal_triple": "^", "rc_hex": "o", "rc_hex_triple": "D"}
     layers = np.arange(1, _N_LYSO + 1)
 
-    # Attempt to pull in the OpenGATE simulation utilities for DoseActor extraction
     try:
         import analysis_utils as utils
     except ImportError:
@@ -285,14 +267,13 @@ def main():
 
     for mod in modules:
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
-        if not energy_keys:
-            continue
+        if not energy_keys: continue
         
         n_energies = len(energy_keys)
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # 1. Dedicated Multi-Panel TIMING Histogram Figure (With Gaussian Fits)
+        # 1. TIMING HIERARCHY — ALIGNED TO THE FLAT BASELINE PLOTTING LOGIC
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
@@ -305,26 +286,30 @@ def main():
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 if hi <= lo: hi = lo + 1.0
                 
-                # Plot Data Histogram dynamically
-                counts, edges, _ = ax.hist(clean, bins="auto", range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
+                # Plot Data using a fixed 100 bins matching the raw script layout
+                counts, edges, _ = ax.hist(clean, bins=100, range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
                 
-                # Get the true mu and sigma from the raw data
-                _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=50) 
+                # Perform the structural peak extraction fit (internally uses n_bins=40)
+                fit_amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40) 
                 
-                # Calculate the exact bin width chosen by "auto"
-                bin_width = edges[1] - edges[0]
+                # Compute the exact scaling ratio from the bin-width differences
+                fit_bin_width = (hi - lo) / 40.0
+                plot_bin_width = (hi - lo) / 100.0
+                scale_factor = plot_bin_width / fit_bin_width if fit_bin_width > 0 else 1.0
                 
-                # Generate smooth curve and scale it to the new histogram area
-                x_fit = np.linspace(lo, hi, 1000)
-                area = len(clean) * bin_width
-                y_fit = (area / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_fit - mu) / sigma) ** 2)
+                # Scale the baseline amplitude to perfectly match the 100-bin layout height
+                amplitude = fit_amp * scale_factor if fit_amp > 0 else counts.max()
                 
-                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.0, 
+                x_fit = np.linspace(lo, hi, 5000)
+                y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
+                
+                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, 
                         label=f"Gaussian Fit\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps")
                 
                 ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
                 ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
                 ax.set_ylabel("Events / Bin", fontsize=9)
+                ax.set_xlim(lo, hi)
                 ax.legend(loc="upper right", fontsize=8, frameon=True)
             else:
                 ax.text(0.5, 0.5, "Empty Dataset", ha='center', va='center')
@@ -338,7 +323,7 @@ def main():
         fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
         plt.close(fig_time)
 
-        # 2. Dedicated Multi-Panel TOF Reconstruction Figure (With DoseActor Overlay)
+        # 2. TOF Profile Figures remain unchanged
         fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_tof = axs_tof.flatten()
 
@@ -355,7 +340,6 @@ def main():
             total_hits = np.sum(prof)
             norm_prof = prof / total_hits if total_hits > 0 else prof
 
-            # Cross-crawl directories to grab simulation truth files (.mhd)
             edir_path = base_dir / mod / "runs" / mod / sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))[-1].name / ekey
             run_dirs = sorted(list(set(fpath.parent for fpath in edir_path.rglob("detector_hits_*.root"))))
             
@@ -371,20 +355,18 @@ def main():
                         layer_edeps = []
                         for (z_start, z_end) in bounds:
                             z_offset_start = z_start - (-calor_thick / 2)
-                            z_offset_end   = z_end   - (-calor_thick / 2)
+                            z_offset_end = z_end - (-calor_thick / 2)
                             i0 = max(0, min(int(round(z_offset_start / dz_mm)), len(avg)))
-                            i1 = max(0, min(int(round(z_offset_end   / dz_mm)), len(avg)))
+                            i1 = max(0, min(int(round(z_offset_end / dz_mm)), len(avg)))
                             layer_edeps.append(float(np.sum(avg[i0:i1])))
                         truth_curve = np.array(layer_edeps)
                 except:
                     truth_curve = None
 
-            # Plot simulation truth bar background if available
             if truth_curve is not None and np.sum(truth_curve) > 0:
                 norm_truth = truth_curve / np.sum(truth_curve)
                 ax.bar(layers, norm_truth, color="#00bcd4", alpha=0.35, edgecolor="#00838f", linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
-            # Plot reconstruction overlay line
             ax.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod], 
                         linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0, label="ΔT Coincidence")
             
@@ -403,10 +385,7 @@ def main():
         fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
         plt.close(fig_tof)
 
-
-    # ─────────────────────────────────────────────────────────────────────────
     # 3. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
-    # ─────────────────────────────────────────────────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(9, 6))
 
     for mod in modules:
@@ -436,9 +415,7 @@ def main():
     fig_perf.savefig(analysis_out / "timing_resolution_vs_energy.png", dpi=220)
     plt.close(fig_perf)
 
-    # ─────────────────────────────────────────────────────────────────────────
     # 4. EXPORT MASTER MATRIX TEXT REPORT
-    # ─────────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
         f.write(f"{'═'*80}\n")
