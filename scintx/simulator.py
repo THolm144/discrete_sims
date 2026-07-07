@@ -1,42 +1,3 @@
-"""
-CLI-driven OpenGATE simulation.  World modules declare their capabilities
-via a CAPABILITIES dict; the simulator wires actors accordingly.
-CLI flags can override world defaults (e.g. --optical off).
-
-World module contract
----------------------
-Required exports:
-    CAPABILITIES        dict  — see DEFAULT_CAPABILITIES below for keys
-    PHANTOM_CM          list  — [x_cm, y_cm, z_cm] of the target volume
-    TARGET_VOLUME_NAME  str
-    DETECTOR_VOLUME_NAMES list[str]
-    build_world(sim, units) -> sim
-
-Optional exports:
-    BEAM_CONFIG         dict  — overrides default beam positioning
-    EXPECTED_DEDX       float
-    ACTIVE_Z_RANGES_MM  list
-    add_optical_surfaces(sim, units)
-    configure_dose_actor(dose, units)
-
-CAPABILITIES keys (all bool, default False unless noted):
-    optical             — enable G4OpticalPhysics
-    dose                — attach DoseActor
-    sipm_hits           — attach per-detector PhaseSpaceActors
-    optical_exits       — attach PhaseSpaceActor on target volume boundary
-    track_optical       — attach PhaseSpaceActor to record full photon steps
-
-BEAM_CONFIG keys:
-    direction   [dx, dy, dz]         unit momentum vector  (default [0,0,1])
-    target_cm   [x, y, z]            aim point in cm       (default [0,0,0])
-    offset_cm   float                 source distance from target (default 2.0)
-
-Usage:
-    python3 simulator.py --world scintx_sipm_array
-    python3 simulator.py --world radi_cal --optical off
-    python3 simulator.py --world scintx_sipm_array --n 500 --threads 8
-"""
-
 import argparse
 import importlib
 import json
@@ -75,28 +36,24 @@ DEFAULT_BEAM_CONFIG = {
 def parse_args():
     p = argparse.ArgumentParser(description="OpenGATE modular simulator")
     p.add_argument("--world",        default="quartz_8x8")
-    p.add_argument("--particle",     default="proton")
-    p.add_argument("--energy-kev",   type=float, default=500_000)
+    p.add_argument("--particle",     default="e-")                    # FLASH Default: Electrons
+    p.add_argument("--energy-kev",   type=float, default=9000)        # FLASH Default: 9 MeV (FLEX-9)
     p.add_argument("--n",            type=int,   default=10_000)
-    p.add_argument("--threads",      type=int,   default=64)
-    p.add_argument("--beam-radius",  type=float, default=1.0,
-                   help="Beam disc radius in cm (default: 1.0)")
+    p.add_argument("--threads",      type=int,   default=16)          # Scaled for local task blocks
+    p.add_argument("--beam-radius",  type=float, default=1.0)
     p.add_argument("--output-dir",   default=None)
     p.add_argument("--physics-list", default="G4EmStandardPhysics_option4")
-    p.add_argument("--run-id",       type=int,   default=None)
+    p.add_argument("--run-id",       type=int,   default=0)           # Set default to 0
     # ── capability overrides ──────────────────────────────────────────────────
-    p.add_argument("--optical",       choices=["on", "off", "world"],  default="world",
-                   help="Override world optical capability. 'world' = respect world manifest.")
+    p.add_argument("--optical",       choices=["on", "off", "world"],  default="world")
     p.add_argument("--dose",          choices=["on", "off", "world"],  default="world")
     p.add_argument("--sipm-hits",     choices=["on", "off", "world"],  default="world")
-    p.add_argument("--track-optical", choices=["on", "off", "world"],  default="world",
-                   help="Enable step-by-step optical photon tracking.")
-    p.add_argument("--no-cerenkov", action="store_true", default=False,
-               help="Disable Cherenkov production (keep scintillation).")
+    p.add_argument("--track-optical", choices=["on", "off", "world"],  default="world")
+    p.add_argument("--no-cerenkov", action="store_true", default=False)
     return p.parse_args()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WORLD LOADING
+# WORLD LOADING / RESOLUTION
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_world(world_name: str, script_dir: Path):
@@ -109,12 +66,7 @@ def load_world(world_name: str, script_dir: Path):
 
 
 def resolve_capabilities(world, args) -> dict:
-    """
-    Merge world CAPABILITIES with CLI overrides.
-    CLI values of 'on'/'off' take precedence; 'world' defers to the manifest.
-    """
     caps = {**DEFAULT_CAPABILITIES, **getattr(world, "CAPABILITIES", {})}
-
     override_map = {
         "optical":       args.optical,
         "dose":          args.dose,
@@ -126,19 +78,12 @@ def resolve_capabilities(world, args) -> dict:
             caps[key] = True
         elif val == "off":
             caps[key] = False
-        # 'world' → leave caps[key] as-is
-
     return caps
 
 
 def resolve_beam_config(world) -> dict:
-    cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}
-    return cfg
+    return {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DIRECTORY SETUP
-# ─────────────────────────────────────────────────────────────────────────────
 
 def resolve_output_dirs(args, script_dir: Path) -> tuple[Path, Path]:
     if args.output_dir:
@@ -147,25 +92,15 @@ def resolve_output_dirs(args, script_dir: Path) -> tuple[Path, Path]:
         ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
         batch_dir = script_dir / "runs" / args.world / f"{int(args.energy_kev)}keV_{ts}"
 
-    run_id  = args.run_id if args.run_id is not None else 0
-    run_dir = batch_dir / f"run_{run_id}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return batch_dir, run_dir
+    # Keep all dynamic files inside the shared target batch directory
+    return batch_dir, batch_dir
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ACTOR WIRING
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ACTOR WIRING
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ACTOR WIRING
-# ─────────────────────────────────────────────────────────────────────────────
-
-def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
+def wire_actors(sim, world, caps: dict, run_id: int, units) -> dict:
     registry = {
         "optical_exited_actor":  None,
         "optical_tracker_actor": None,
@@ -176,27 +111,23 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     target_vol       = getattr(world, "TARGET_VOLUME_NAME",    "target")
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
 
-    
-
-    # ── Optical tracking (full step-by-step, opticalphoton only) ─────────
+    # ── Optical tracking (Append run_id to avoid data collision) ─────────
     if caps.get("track_optical", False) and caps.get("optical", False):
-        tracker = sim.add_actor("PhaseSpaceActor", "optical_tracker")
+        tracker = sim.add_actor("PhaseSpaceActor", f"optical_tracker_{run_id}")
         tracker.attached_to     = "world"
-        tracker.output_filename = "optical_tracks.root"
+        tracker.output_filename = f"optical_tracks_{run_id}.root"
         tracker.steps_to_store  = "all"
         tracker.attributes = [
             "ParticleName", "KineticEnergy", "TrackCreatorProcess",
             "Position", "TrackID", "EventID", "GlobalTime",
         ]
-    
         registry["optical_tracker_actor"] = tracker
-        print("[SIM] Optical tracker ENABLED → optical_tracks.root")
 
     # ── Optical exits ─────────────────────────────────────────────────────
     if caps.get("optical", False) and caps.get("optical_exits", False):
-        exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
+        exited = sim.add_actor("PhaseSpaceActor", f"optical_exited_{run_id}")
         exited.attached_to     = target_vol
-        exited.output_filename = "optical_exited.root"
+        exited.output_filename = f"optical_exited_{run_id}.root"
         exited.steps_to_store  = "exiting"
         exited.attributes = [
             "ParticleName", "KineticEnergy", "TrackCreatorProcess",
@@ -208,12 +139,11 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     if caps.get("sipm_hits", False) and detector_volumes:
         for idx, vol_name in enumerate(detector_volumes):
             if vol_name not in sim.volume_manager.volumes:
-                print(f"  WARNING: detector volume '{vol_name}' not found — skipping.")
                 continue
-            hits = sim.add_actor("PhaseSpaceActor", f"detector_hits_{idx}")
+            hits = sim.add_actor("PhaseSpaceActor", f"detector_hits_{idx}_{run_id}")
             hits.attached_to                = vol_name
             hits.authorize_repeated_volumes = True
-            hits.output_filename            = f"detector_hits_{idx}.root"
+            hits.output_filename            = f"detector_hits_{idx}_{run_id}.root"
             hits.steps_to_store             = "entering"
             hits.attributes = [
                 "ParticleName", "KineticEnergy", "Position",
@@ -224,7 +154,7 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     # ── Dose actor ────────────────────────────────────────────────────────
     if caps.get("dose", True):
         phantom_cm = world.PHANTOM_CM
-        dose = _wire_standard_dose(sim, target_vol, phantom_cm, units)
+        dose = _wire_standard_dose(sim, target_vol, phantom_cm, run_id, units)
         if hasattr(world, "configure_dose_actor"):
             world.configure_dose_actor(dose, units)
         registry["dose_actor"] = dose
@@ -232,10 +162,10 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     return registry
     
 
-def _wire_standard_dose(sim, target_vol: str, phantom_cm: list, units):
-    dose = sim.add_actor("DoseActor", "dose_actor")
+def _wire_standard_dose(sim, target_vol: str, phantom_cm: list, run_id: int, units):
+    dose = sim.add_actor("DoseActor", f"dose_actor_{run_id}")
     dose.attached_to      = target_vol
-    dose.output_filename  = "edep.mhd"
+    dose.output_filename  = f"edep_{run_id}.mhd"
     dose.size = [
         int(round(phantom_cm[0] * 10)),
         int(round(phantom_cm[1] * 10)),
@@ -254,17 +184,11 @@ def _wire_standard_dose(sim, target_vol: str, phantom_cm: list, units):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def add_beam_source(sim, args, world, beam_cfg: dict, units):
-    """
-    Position the beam source offset_cm upstream of the beam target point,
-    along the beam direction.
-    """
     direction = np.array(beam_cfg["direction"], dtype=float)
-    direction /= np.linalg.norm(direction)                  # ensure unit vector
+    direction /= np.linalg.norm(direction)
 
     target_cm  = np.array(beam_cfg["target_cm"], dtype=float)
     offset_cm  = beam_cfg["offset_cm"]
-
-    # Source sits offset_cm behind the target, opposite to beam direction
     source_pos_cm = target_cm - direction * offset_cm
 
     source = sim.add_source("GenericSource", f"{args.particle}_beam")
@@ -280,8 +204,13 @@ def add_beam_source(sim, args, world, beam_cfg: dict, units):
     source.direction.type     = "momentum"
     source.direction.momentum = direction.tolist()
 
-    events_per_thread = max(1, int(args.n / args.threads))
-    source.n = events_per_thread
+    # FLASH PULSE TIMING PROFILE:
+    # Restrict all histories within a 5 microsecond time frame to capture 
+    # the true temporal delivery rate of the Iowa microsecond macro-pulse.
+    source.time.type = "linear"
+    source.time.duration = 5.0 * units.us
+
+    source.n = args.n  # OpenGATE distributes this target natively across threads
     return source
 
 
@@ -289,8 +218,7 @@ def add_beam_source(sim, args, world, beam_cfg: dict, units):
 # PHYSICS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def configure_physics(sim, args, script_dir: Path, world,
-                      caps: dict, target_vol: str, units):
+def configure_physics(sim, args, script_dir: Path, world, caps: dict, target_vol: str, units):
     sim.physics_manager.physics_list_name = args.physics_list
 
     surface_file = script_dir / "SurfaceProperties.xml"
@@ -303,29 +231,17 @@ def configure_physics(sim, args, script_dir: Path, world,
         if optical_file.exists():
             sim.physics_manager.optical_properties_file = str(optical_file)
 
-        # ── HANDLE CHERENKOV TOGGLE ──────────────────────────────────────────
         if args.no_cerenkov:
-            # Send pure Geant4 UI command to turn off Cherenkov
-            sim.g4_commands_before_init.append(
-                "/process/optical/processActivation Cerenkov false"
-            )
-            print("[SIM] Optical physics ENABLED (Scintillation ONLY, Cherenkov DISABLED).")
+            sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov false")
         else:
-            # Explicitly force Cherenkov on via Geant4 macro to ensure state clarity
-            sim.g4_commands_before_init.append(
-                "/process/optical/processActivation Cerenkov true"
-            )
-            print("[SIM] Optical physics ENABLED (Both Scintillation & Cherenkov ACTIVE).")
-    else:
-        sim.physics_manager.special_physics_constructors.G4OpticalPhysics = False
-        print("[SIM] Optical physics DISABLED.")
-        
+            sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov true")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # METADATA
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_metadata(args, batch_dir: Path, run_dir: Path, world,
-                  caps: dict, beam_cfg: dict, actor_registry: dict):
+def save_metadata(args, batch_dir: Path, run_dir: Path, world, caps: dict, beam_cfg: dict, actor_registry: dict):
     dose = actor_registry["dose_actor"]
     metadata = {
         "world":              args.world,
@@ -340,17 +256,13 @@ def save_metadata(args, batch_dir: Path, run_dir: Path, world,
         "material":           getattr(world, "MATERIAL",    "unknown"),
         "phantom_cm":         getattr(world, "PHANTOM_CM",  None),
         "target_volume":      getattr(world, "TARGET_VOLUME_NAME", "target"),
-        "detector_volumes":   getattr(world, "DETECTOR_VOLUME_NAMES", []),
-        "expected_dedx":      getattr(world, "EXPECTED_DEDX", 1.0),
-        "active_z_ranges_mm": getattr(world, "ACTIVE_Z_RANGES_MM", None),
         "capabilities":       caps,
         "beam_config":        beam_cfg,
         "dose_size_vox":      dose.size if dose else None,
     }
-    path = run_dir / "sim_metadata.json"
+    path = run_dir / f"sim_metadata_{args.run_id}.json"
     with open(path, "w") as f:
         json.dump(metadata, f, indent=4)
-    print(f"  Metadata → {path}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -367,23 +279,12 @@ def main():
     caps               = resolve_capabilities(world, args)
     beam_cfg           = resolve_beam_config(world)
 
-    print("=" * 60)
-    print(f"  World       : {args.world}")
-    print(f"  Particle    : {args.particle}")
-    print(f"  Energy      : {args.energy_kev / 1000:.1f} MeV")
-    print(f"  Particles   : {args.n:,}   Threads: {args.threads}")
-    print(f"  Capabilities: {caps}")
-    print(f"  Beam dir    : {beam_cfg['direction']}")
-    print(f"  Batch dir   : {batch_dir}")
-    print("=" * 60)
-
     sim = gate.Simulation()
-    if args.run_id is not None:
-        sim.random_seed = 1000 + args.run_id
+    sim.random_seed = 1000 + args.run_id
     sim.output_dir = str(run_dir)
 
-    stats = sim.add_actor("SimulationStatisticsActor", "sim_stats")
-    stats.output_filename  = "stats.json"
+    stats = sim.add_actor("SimulationStatisticsActor", f"sim_stats_{args.run_id}")
+    stats.output_filename  = f"stats_{args.run_id}.json"
     stats.track_types_flag = True
 
     units = gate.g4_units
@@ -392,7 +293,7 @@ def main():
         world.add_optical_surfaces(sim, units)
 
     target_vol   = getattr(world, "TARGET_VOLUME_NAME", "target")
-    actor_registry = wire_actors(sim, world, caps, run_dir, units)
+    actor_registry = wire_actors(sim, world, caps, args.run_id, units)
 
     add_beam_source(sim, args, world, beam_cfg, units)
     configure_physics(sim, args, script_dir, world, caps, target_vol, units)
@@ -402,11 +303,10 @@ def main():
         sim.volume_manager.add_material_database(str(db_path))
 
     sim.number_of_threads = args.threads
-    sim.progress_bar      = True
+    sim.progress_bar      = False  # Keep clean inside massive batch arrays
 
     save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
     sim.run()
-    print(f"\nDone. Results in: {run_dir}")
 
 
 if __name__ == "__main__":
