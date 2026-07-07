@@ -274,12 +274,10 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — AREA NORMALIZED GAUSSIANS
+        # 1. TIMING HIERARCHY — DYNAMIC PER-PANEL BINNING (FREEDMAN-DIACONIS)
         # ─────────────────────────────────────────────────────────────────────
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
-
-        TARGET_PLOT_WIDTH_PS = 2.0   # Fix plot visual width to exactly 5 ps per bin
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
@@ -290,23 +288,35 @@ def main():
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 if hi <= lo: hi = lo + 1.0
                 
-                # 1. Dynamically calculate visual bins for exactly 5ps
-                plot_bins = max(1, int(np.ceil((hi - lo) / TARGET_PLOT_WIDTH_PS)))
+                # 1. Dynamically compute Freedman-Diaconis optimal bin width for THIS specific dataset
+                q75, q25 = np.percentile(clean, [75, 25])
+                iqr = q75 - q25
+                
+                if iqr > 0 and len(clean) > 1:
+                    fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
+                else:
+                    # Fallback to a fraction of standard deviation if IQR collapses
+                    fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
+                
+                # Safeguard: Keep the dynamic width bounded between 0.5 ps and 10.0 ps
+                optimal_width = max(0.5, min(fd_width, 10.0))
+                
+                # 2. Convert the optimal width into an explicit bin count
+                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
                 actual_plot_width = (hi - lo) / plot_bins
                 
-                # 2. Draw Histogram
+                # 3. Draw Histogram with its unique optimal bin count
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi), 
                                            color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
                 
-                # 3. Fit extracting ONLY structural variables (using 40 robust bins internally)
+                # 4. Perform the robust structural fit (40 bins internally remains fine for stable fitting)
                 _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40) 
                 
-                # 4. Strict mathematical area mapping: Area = A * sigma * sqrt(2*pi)
-                # We equate this to the histogram Area = total_counts * bin_width to find perfect Amplitude (A)
+                # 5. Area Normalization using this specific panel's layout parameters
                 total_events = len(clean)
                 amplitude = (total_events * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
                 
-                # 5. Plot normalized curve
+                # 6. Plot the curve tailored exactly to this panel's height and bins
                 x_fit = np.linspace(lo, hi, 5000)
                 y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
                 
@@ -315,20 +325,12 @@ def main():
                 
                 ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
                 ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
-                ax.set_ylabel(f"Events / {actual_plot_width:.1f} ps", fontsize=9)
+                ax.set_ylabel(f"Events / {actual_plot_width:.1f} ps", fontsize=9) # Dynamic axis units label!
                 ax.set_xlim(lo, hi)
                 ax.legend(loc="upper right", fontsize=8, frameon=True)
             else:
                 ax.text(0.5, 0.5, "Empty Dataset", ha='center', va='center')
             ax.grid(True, linestyle=":", alpha=0.5)
-
-        for idx in range(n_energies, len(axs_time)):
-            fig_time.delaxes(axs_time[idx])
-
-        fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
-        fig_time.tight_layout()
-        fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
-        plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
         # 2. TOF Profile Figures (Restored)
