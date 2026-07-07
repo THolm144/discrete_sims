@@ -141,6 +141,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
     up_first, down_first = {}, {}
     up_times_by_ev, dw_times_by_ev = {}, {}
     all_bm_raw_ps = []
+    all_dw_e_times = []  # Array tracker for downstream E-type hits vs time
 
     # Group files by parent run directories to apply a clean global offset sequence
     run_dirs = sorted(list(set(f.parent for f in hit_files)))
@@ -188,6 +189,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
             is_e = np.isin(channels, list(e_indices))
             is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
             m_e_up, m_e_dw = is_e & is_prompt & near_up, is_e & is_prompt & near_dw
+
+            # Append all matching downstream E-type hit times for the request graph
+            all_dw_e_times.extend(gt[m_e_dw].astype(float).tolist())
 
             for tx, ty, ch, eid, ti in zip(tower_x[m_e_up], tower_y[m_e_up], channels[m_e_up], ev[m_e_up], gt[m_e_up]):
                 fiber_key = (int(eid), float(tx), float(ty), int(ch))
@@ -249,7 +253,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool):
         "tof_profile": profile_counts,
         "lyso_thick": lyso_thick,
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
-        "num_coincidences": len(valid_z_emits)
+        "num_coincidences": len(valid_z_emits),
+        "dw_e_times": np.array(all_dw_e_times)
     }
 
 def main():
@@ -303,7 +308,7 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # 1. TIMING HIERARCHY — ALIGNED TO THE FLAT BASELINE PLOTTING LOGIC
+        # 1. TIMING HIERARCHY
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
@@ -316,18 +321,12 @@ def main():
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 if hi <= lo: hi = lo + 1.0
                 
-                # Plot Data using a fixed 100 bins matching the raw script layout
                 counts, edges, _ = ax.hist(clean, bins=100, range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
-                
-                # Perform the structural peak extraction fit (internally uses n_bins=40)
                 fit_amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40) 
                 
-                # Compute the exact scaling ratio from the bin-width differences
                 fit_bin_width = (hi - lo) / 40.0
                 plot_bin_width = (hi - lo) / 100.0
                 scale_factor = plot_bin_width / fit_bin_width if fit_bin_width > 0 else 1.0
-                
-                # Scale the baseline amplitude to perfectly match the 100-bin layout height
                 amplitude = fit_amp * scale_factor if fit_amp > 0 else counts.max()
                 
                 x_fit = np.linspace(lo, hi, 5000)
@@ -353,7 +352,7 @@ def main():
         fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
         plt.close(fig_time)
 
-        # 2. TOF Profile Figures remain unchanged
+        # 2. TOF PROFILE PANELS
         fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_tof = axs_tof.flatten()
 
@@ -371,7 +370,6 @@ def main():
             total_hits = np.sum(prof)
             norm_prof = prof / total_hits if total_hits > 0 else prof
 
-            # Re-locate last sweep directory safely for utils matching
             target_sweep_dir = sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))[-1].name
             edir_path = base_dir / mod / "runs" / mod / target_sweep_dir / ekey
             run_dirs = sorted(list(set(fpath.parent for fpath in edir_path.rglob("detector_hits_*.root"))))
@@ -418,7 +416,36 @@ def main():
         fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
         plt.close(fig_tof)
 
-    # 3. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
+        # 3. NEW GRAPH REQUEST: DOWNSTREAM E-TYPE SIPM HITS VS TIME
+        fig_dw_hits, axs_dw_hits = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_dw_hits = axs_dw_hits.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_dw_hits[idx]
+            dw_times = master_summary[mod][ekey]["dw_e_times"]
+            
+            if len(dw_times) > 0:
+                ax.hist(dw_times, bins=100, range=(_GT_LO_NS, _GT_HI_NS), color=mod_colors[mod], 
+                        alpha=0.7, edgecolor="black", linewidth=0.5, label=f"Downstream E-Hits\nTotal={len(dw_times)}")
+                
+                ax.set_title(f"Downstream Intensity: {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel("Photon Global Time (ns)", fontsize=9)
+                ax.set_ylabel("Hit Count / Bin", fontsize=9)
+                ax.set_xlim(_GT_LO_NS, _GT_HI_NS)
+                ax.legend(loc="upper right", fontsize=8, frameon=True)
+            else:
+                ax.text(0.5, 0.5, "No Downstream Hits", ha='center', va='center')
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        for idx in range(n_energies, len(axs_dw_hits)):
+            fig_dw_hits.delaxes(axs_dw_hits[idx])
+
+        fig_dw_hits.suptitle(f"Downstream E-Type SiPM Intensity Profiles — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_dw_hits.tight_layout()
+        fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
+        plt.close(fig_dw_hits)
+
+    # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
     fig_perf, ax_perf = plt.subplots(figsize=(9, 6))
 
     for mod in modules:
@@ -448,7 +475,7 @@ def main():
     fig_perf.savefig(analysis_out / "timing_resolution_vs_energy.png", dpi=220)
     plt.close(fig_perf)
     
-    # 4. EXPORT MASTER MATRIX TEXT REPORT
+    # 5. EXPORT MASTER MATRIX TEXT REPORT
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
         f.write(f"{'═'*80}\n")
