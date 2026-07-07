@@ -306,7 +306,7 @@ def main():
                 if hi <= lo: hi = lo + 1.0
                 
                 # Plot Data Histogram
-                counts, edges, _ = ax.hist(clean, bins=50, range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
+                counts, edges, _ = ax.hist(clean, bins="auto", color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
                 
                 # Refit and overlay the continuous Gaussian line shape
                 amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=50)
