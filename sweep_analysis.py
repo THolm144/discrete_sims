@@ -273,9 +273,13 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # 1. TIMING HIERARCHY — ALIGNED TO THE FLAT BASELINE PLOTTING LOGIC
+        # ─────────────────────────────────────────────────────────────────────
+        # 1. TIMING HIERARCHY — AREA NORMALIZED GAUSSIANS
+        # ─────────────────────────────────────────────────────────────────────
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
+
+        TARGET_PLOT_WIDTH_PS = 5.0   # Fix plot visual width to exactly 5 ps per bin
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
@@ -286,20 +290,23 @@ def main():
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 if hi <= lo: hi = lo + 1.0
                 
-                # Plot Data using a fixed 100 bins matching the raw script layout
-                counts, edges, _ = ax.hist(clean, bins=100, range=(lo, hi), color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
+                # 1. Dynamically calculate visual bins for exactly 5ps
+                plot_bins = max(1, int(np.ceil((hi - lo) / TARGET_PLOT_WIDTH_PS)))
+                actual_plot_width = (hi - lo) / plot_bins
                 
-                # Perform the structural peak extraction fit (internally uses n_bins=40)
-                fit_amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40) 
+                # 2. Draw Histogram
+                counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi), 
+                                           color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
                 
-                # Compute the exact scaling ratio from the bin-width differences
-                fit_bin_width = (hi - lo) / 40.0
-                plot_bin_width = (hi - lo) / 100.0
-                scale_factor = plot_bin_width / fit_bin_width if fit_bin_width > 0 else 1.0
+                # 3. Fit extracting ONLY structural variables (using 40 robust bins internally)
+                _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40) 
                 
-                # Scale the baseline amplitude to perfectly match the 100-bin layout height
-                amplitude = fit_amp * scale_factor if fit_amp > 0 else counts.max()
+                # 4. Strict mathematical area mapping: Area = A * sigma * sqrt(2*pi)
+                # We equate this to the histogram Area = total_counts * bin_width to find perfect Amplitude (A)
+                total_events = len(clean)
+                amplitude = (total_events * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
                 
+                # 5. Plot normalized curve
                 x_fit = np.linspace(lo, hi, 5000)
                 y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
                 
@@ -308,7 +315,7 @@ def main():
                 
                 ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
                 ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
-                ax.set_ylabel("Events / Bin", fontsize=9)
+                ax.set_ylabel(f"Events / {actual_plot_width:.1f} ps", fontsize=9)
                 ax.set_xlim(lo, hi)
                 ax.legend(loc="upper right", fontsize=8, frameon=True)
             else:
@@ -323,54 +330,61 @@ def main():
         fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
         plt.close(fig_time)
 
-        # 2. TOF Profile Figures remain unchanged
+        # ─────────────────────────────────────────────────────────────────────
+        # 2. TOF Profile Figures (Restored)
+        # ─────────────────────────────────────────────────────────────────────
         fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_tof = axs_tof.flatten()
 
-        # 1. Define your rigid physical bin widths in picoseconds
-    TARGET_PLOT_WIDTH_PS = 5.0   # Exactly 5 ps per histogram bin
-    TARGET_FIT_WIDTH_PS  = 15.0  # Exactly 15 ps per fitting bin
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_tof[idx]
+            prof = master_summary[mod][ekey]["tof_profile"]
+            s_t = master_summary[mod][ekey]["sigma_t_ps"]
+            pitch = master_summary[mod][ekey]["pitch_mm"]
+            lyso_thick = master_summary[mod][ekey]["lyso_thick"]
+            
+            sigma_z = V_EFF_MM_NS * (s_t / 1000.0)
+            sigma_layer = sigma_z / pitch
 
-    for idx, ekey in enumerate(energy_keys):
-        ax = axs_time[idx]
-        data = master_summary[mod][ekey]["raw_bm_data"]
-        
-        if len(data) > 0:
-            clean = clean_around_mode(data, window_ps=500.0)
-            lo, hi = float(np.min(clean)), float(np.max(clean))
-            if hi <= lo: hi = lo + 1.0
+            total_hits = np.sum(prof)
+            norm_prof = prof / total_hits if total_hits > 0 else prof
+
+            edir_path = base_dir / mod / "runs" / mod / sorted(list((base_dir / mod / "runs" / mod).glob("sweep_*")))[-1].name / ekey
+            run_dirs = sorted(list(set(fpath.parent for fpath in edir_path.rglob("detector_hits_*.root"))))
             
-            # 2. Dynamically calculate the ideal number of bins to satisfy the fixed widths
-            plot_bins = max(1, int(np.ceil((hi - lo) / TARGET_PLOT_WIDTH_PS)))
-            fit_bins  = max(1, int(np.ceil((hi - lo) / TARGET_FIT_WIDTH_PS)))
-            
-            # 3. Re-calculate the actual exact widths used by numpy's edge placement
-            actual_plot_width = (hi - lo) / plot_bins
-            actual_fit_width  = (hi - lo) / fit_bins
-            
-            # 4. Plot data histogram using the dynamic bin count
-            counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi), 
-                                    color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
-            
-            # 5. Extract peak variables using the optimized fitting bin scale
-            fit_amp, mu, sigma = fit_gaussian_to_peak(clean, n_bins=fit_bins) 
-            
-            # 6. Apply the clean physical scaling ratio 
-            scale_factor = actual_plot_width / actual_fit_width if actual_fit_width > 0 else 1.0
-            amplitude = fit_amp * scale_factor if fit_amp > 0 else counts.max()
-            
-            # 7. Generate smooth curve
-            x_fit = np.linspace(lo, hi, 5000)
-            y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
-            
-            ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, 
-                    label=f"Gaussian Fit\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps")
+            truth_curve = None
+            if utils and run_dirs:
+                try:
+                    gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+                    calor_thick = (_N_LYSO * gap_thick) + (_N_W * _W_THICK_MM)
+                    bounds = get_lyso_layer_bounds(lyso_thick, calor_thick)
+                    long_arr, _ = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
+                    if long_arr is not None:
+                        dz_mm, avg = 0.1, long_arr / max(len(run_dirs), 1)
+                        layer_edeps = []
+                        for (z_start, z_end) in bounds:
+                            z_offset_start = z_start - (-calor_thick / 2)
+                            z_offset_end = z_end - (-calor_thick / 2)
+                            i0 = max(0, min(int(round(z_offset_start / dz_mm)), len(avg)))
+                            i1 = max(0, min(int(round(z_offset_end / dz_mm)), len(avg)))
+                            layer_edeps.append(float(np.sum(avg[i0:i1])))
+                        truth_curve = np.array(layer_edeps)
+                except:
+                    truth_curve = None
+
+            if truth_curve is not None and np.sum(truth_curve) > 0:
+                norm_truth = truth_curve / np.sum(truth_curve)
+                ax.bar(layers, norm_truth, color="#00bcd4", alpha=0.35, edgecolor="#00838f", linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
+
+            ax.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod], 
+                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0, label="ΔT Coincidence")
             
             ax.set_title(f"Energy Sweep Slice: {ekey}", fontsize=11, fontweight="bold")
-            ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
-            ax.set_ylabel(f"Events / {actual_plot_width:.1f} ps", fontsize=9) # Clear Y-axis unit labels
-            ax.set_xlim(lo, hi)
-            ax.legend(loc="upper right", fontsize=8, frameon=True)
+            ax.set_xlabel("LYSO Layer Number", fontsize=9)
+            ax.set_ylabel("Normalized Density Fraction", fontsize=9)
+            ax.set_xlim(0, _N_LYSO + 1)
+            ax.grid(True, linestyle=":", alpha=0.5)
+            ax.legend(loc="upper right", fontsize=8)
 
         for idx in range(n_energies, len(axs_tof)):
             fig_tof.delaxes(axs_tof[idx])
@@ -378,10 +392,11 @@ def main():
         fig_tof.suptitle(f"Continuous E-Type ToF Reconstructions — {mod}", fontsize=14, fontweight="bold", y=0.98)
         fig_tof.tight_layout()
         fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
-        print(f"Saved ToF panels to {analysis_out}")
         plt.close(fig_tof)
 
+    # ─────────────────────────────────────────────────────────────────────
     # 3. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
+    # ─────────────────────────────────────────────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(9, 6))
 
     for mod in modules:
@@ -411,7 +426,9 @@ def main():
     fig_perf.savefig(analysis_out / "timing_resolution_vs_energy.png", dpi=220)
     plt.close(fig_perf)
 
+    # ─────────────────────────────────────────────────────────────────────
     # 4. EXPORT MASTER MATRIX TEXT REPORT
+    # ─────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
         f.write(f"{'═'*80}\n")
