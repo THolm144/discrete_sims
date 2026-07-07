@@ -267,7 +267,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, verbose_label: str = "")
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
         "n_t_coincidences": len(common_t_evs),
         "n_e_coincidences": len(common_e_keys),
-        "dw_e_times": np.array(all_dw_e_times)
+        "dw_e_times": np.array(all_dw_e_times),
+        "dw_first_times": np.array(list(down_first.values()))  # <--- ADD THIS LINE
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -499,7 +500,45 @@ def main():
         fig_dw_hits.tight_layout()
         fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
         plt.close(fig_dw_hits)
+    # ─────────────────────────────────────────────────────────────────────
+        # 3.5. DOWNSTREAM FIRST-PHOTON ARRIVAL (Shower-Max Zoom)
+        # ─────────────────────────────────────────────────────────────────────
+        fig_first, axs_first = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_first = axs_first.flatten()
 
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_first[idx]
+            first_times = master_summary[mod][ekey]["dw_first_times"]
+            
+            if len(first_times) > 0:
+                # Zoom in on the 0 to 5 ns range, using 100 bins (50 ps per bin)
+                ax.hist(first_times, bins=100, range=(0.0, 5.0), color="#ff9800", 
+                        alpha=0.8, edgecolor="black", linewidth=0.5, 
+                        label=f"1st Photon\nN={len(first_times)}")
+                
+                # Dynamically calculate the mode to label the peak shift
+                counts, edges = np.histogram(first_times, bins=100, range=(0.0, 5.0))
+                peak_time = edges[np.argmax(counts)] + 0.025  # Center of the 50ps bin
+                ax.axvline(peak_time, color="red", linestyle="--", linewidth=1.5, 
+                           label=f"Peak: {peak_time:.2f} ns")
+
+                ax.set_title(f"Prompt Arrival (Shower Max): {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel("First Photon Global Time (ns)", fontsize=9)
+                ax.set_ylabel("Events / 50 ps bin", fontsize=9)
+                ax.set_xlim(0.0, 5.0)
+                ax.legend(loc="upper right", fontsize=8, frameon=True)
+            else:
+                ax.text(0.5, 0.5, "No Data", ha='center', va='center')
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        for idx in range(n_energies, len(axs_first)):
+            fig_first.delaxes(axs_first[idx])
+
+        fig_first.suptitle(f"Downstream First-Photon Arrival Profiles (Shower-Max Proxy) — {mod}", 
+                           fontsize=14, fontweight="bold", y=0.98)
+        fig_first.tight_layout()
+        fig_first.savefig(analysis_out / f"{mod}_dw_first_photon_time.png", dpi=200)
+        plt.close(fig_first)
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
     # ─────────────────────────────────────────────────────────────────────
