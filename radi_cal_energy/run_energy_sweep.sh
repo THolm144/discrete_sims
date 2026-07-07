@@ -17,7 +17,7 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 N_PARTICLES_PER_RUN=60
 N_RUNS_PER_ENERGY=50
 THREADS_PER_RUN=1      # 1 thread eliminates multi-threading lock contention
-MAX_CONCURRENT_SIMS=115 # Utilize all 200 physical cores
+MAX_CONCURRENT_SIMS=70 # Utilize all 200 physical cores
 
 # Define target sweep energies in keV (25 GeV, 50 GeV, 100 GeV, 200 GeV)
 ENERGIES_KEV=(25000000 50000000 100000000 200000000)
