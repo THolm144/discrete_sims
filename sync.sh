@@ -22,6 +22,7 @@ rsync -avz --delete \
     --exclude='*.mhd' \
     --exclude='*.raw' \
     --exclude='*.npy' \
-    ./ uakgun@172.16.17.251:/home/uakgun/gate_sims/discrete_sims/
+    ./ uakgun@172.16.17.251:/home/uakgun/env/THOMAS/discrete_sims/
+    
 
-echo "Sync complete! Server code updated, data folders safely preserved."
+echo "Sync complete! Server code updated in uakgun/env, data folders safely preserved."
