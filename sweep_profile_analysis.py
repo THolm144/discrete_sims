@@ -488,15 +488,16 @@ def main():
                 # --- EXPERIMENTAL HARDWARE CALIBRATION ---
                 # Forward-scattering bias pushes light downstream, causing a ~21mm systematic depth error.
                 # In a real run, this constant is derived by calibrating against known beam energies.
-                z_optical_offset_mm = 21.0 
+                # --- ROBUST EVENT-BY-EVENT HARDWARE RECONSTRUCTION ---
+                # Use the median of individual event log-ratios instead of the skewed global sum
+                if len(res["z_cg_dist"]) > 0:
+                    z_cg_raw_center = np.median(res["z_cg_dist"])
+                else:
+                    z_cg_raw_center = 0.0
                 
-                # 1. Calculate Center of Gravity purely from hardware readouts
-                z_cg_raw_center = - (_LAMBDA_EFF_MM / 2.0) * np.log(t_up / t_dw)
-                
-                # Shift coordinates to the face and apply the experimental optical correction
+                # Apply the static optical forward-scattering calibration offset
+                z_optical_offset_mm = 21.0
                 z_cg_face = z_cg_raw_center + (calor_thick / 2.0) - z_optical_offset_mm
-                
-                # Prevent mathematical instability if the offset pushes it negative
                 z_cg_face = max(z_cg_face, 1.0)
                 
                 # 2. Extract hardware anchors
