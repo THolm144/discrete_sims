@@ -14,6 +14,15 @@ from scipy.stats import gaussian_kde
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
+from scipy.optimize import minimize
+from scipy.stats import gamma
+import scipy.special as sp
+
+# Add these alongside your other constants
+_SHOWER_FIRST = 9  # T-type active region start (LYSO layer 9)
+_SHOWER_LAST = 13  # T-type active region end (LYSO layer 13)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # OPTICAL KINEMATICS & FIBER CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +75,42 @@ TARGET_SWEEPS = {
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+def gamma_profile(z, E0, a, b):
+    """
+    Standard parameterization of EM shower longitudinal profile.
+    dE/dz = E0 * (b * (b*z)**(a-1) * e**(-b*z)) / Gamma(a)
+    """
+    z = np.clip(z, 1e-6, None) # Prevent log(0) instability
+    return E0 * (b * (b * z)**(a - 1) * np.exp(-b * z)) / sp.gamma(a)
+
+def fit_gamma_to_observables(Z_cg_meas, Q_T_frac, z_T_start, z_T_end):
+    """
+    Solves for Gamma parameters (a, b) that match the measured center 
+    of gravity and the fractional light contained in the T-type region.
+    """
+    def loss_function(params):
+        a, b = params
+        if a <= 1.0 or b <= 0.0:
+            return 1e9  # Heavily penalize unphysical parameters
+
+        # 1. Match Center of Gravity (Mean = a/b)
+        cg_theory = a / b
+        cg_penalty = (cg_theory - Z_cg_meas)**2
+
+        # 2. Match T-type hardware depth fraction
+        integral_theory = gamma.cdf(z_T_end, a, scale=1.0/b) - gamma.cdf(z_T_start, a, scale=1.0/b)
+        t_frac_penalty = ((integral_theory - Q_T_frac) * 1000)**2
+
+        return cg_penalty + t_frac_penalty
+
+    # Initial physics guesses for an EM shower
+    a_guess = 3.0
+    b_guess = a_guess / max(Z_cg_meas, 1.0)
+    
+    res = minimize(loss_function, [a_guess, b_guess], method='Nelder-Mead')
+    return res.x[0], res.x[1]
+
+
 def get_lyso_layer_bounds(lyso_thick, calor_thick):
     gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
     bounds = []
@@ -246,7 +291,30 @@ def extract_profile_data(batch_dir: Path, is_hex: bool):
             # Q_up > Q_down, so ln() > 0. We negate to match detector coordinates.
             z = - (_LAMBDA_EFF_MM / 2.0) * np.log(q_u / q_d)
             z_cg_arr.append(z)
-
+    # Calculate aggregate hits for macroscopic fitting
+    total_e_up = np.sum(list(q_up_by_ev.values()))
+    total_e_dw = np.sum(list(q_dw_by_ev.values()))
+    
+    # We also need the total hits on the T-type depth markers
+    total_t_hits = 0
+    for fpath in hit_files:
+        try:
+            with uproot.open(fpath) as f:
+                tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
+                if not tk: continue
+                tree = f[tk]
+                if tree.num_entries == 0: continue
+                x, y = tree["Position_X"].array(library="np"), tree["Position_Y"].array(library="np")
+                pn = tree["ParticleName"].array(library="np")
+                
+                dx = x[:, np.newaxis] - cap_xy_map[:, 0]
+                dy = y[:, np.newaxis] - cap_xy_map[:, 1]
+                channels = np.argmin(np.hypot(dx, dy), axis=1)
+                
+                is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
+                is_t = np.isin(channels, list(t_indices))
+                total_t_hits += np.sum(is_t & is_optical)
+        except Exception: continue
     return {
         "tof_profile": profile_counts,
         "n_e_coincidences": len(common_e_keys),
@@ -302,6 +370,10 @@ def main():
         
         fig_dist, axs_dist = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_dist = axs_dist.flatten()
+
+        # New Figure for Parametric Reconstruction
+        fig_gamma, axs_gamma = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_gamma = axs_gamma.flatten()
 
         # New Figure for Asymmetry Z_cg
         fig_cg, axs_cg = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
@@ -398,6 +470,49 @@ def main():
             else:
                 ax_c.text(0.5, 0.5, "No Asymmetry Data", ha='center', va='center')
 
+            ax_g = axs_gamma[idx]
+            
+            # --- PARAMETRIC GAMMA RECONSTRUCTION ---
+            t_up, t_dw, t_hits = res["total_e_up"], res["total_e_dw"], res["total_t_hits"]
+            bounds = res["lyso_bounds"]
+            
+            if t_up > 0 and t_dw > 0:
+                # 1. Shift coordinate system so Face = 0 mm
+                z_cg_center = - (_LAMBDA_EFF_MM / 2.0) * np.log(t_up / t_dw)
+                z_cg_face = z_cg_center + (calor_thick / 2.0)
+                
+                # 2. Extract hardware anchors
+                q_tot_e = t_up + t_dw
+                q_t_frac = t_hits / q_tot_e if q_tot_e > 0 else 0
+                
+                # Get the Z boundaries of the T-type region relative to the face
+                z_t_start = bounds[_SHOWER_FIRST - 1][0] + (calor_thick / 2.0)
+                z_t_end = bounds[_SHOWER_LAST - 1][1] + (calor_thick / 2.0)
+                
+                # 3. Fit
+                a_opt, b_opt = fit_gamma_to_observables(z_cg_face, q_t_frac, z_t_start, z_t_end)
+                
+                # 4. Plot
+                z_plot = np.linspace(0, calor_thick, 200)
+                norm_E0 = np.sum(truth_curve) if truth_curve is not None else 1.0
+                recon_curve = gamma_profile(z_plot, norm_E0, a_opt, b_opt)
+                
+                if truth_curve is not None:
+                    truth_centers = [(zs + ze)/2.0 + (calor_thick/2.0) for (zs, ze) in bounds]
+                    ax_g.bar(truth_centers, truth_curve, width=(bounds[0][1]-bounds[0][0]), 
+                             color="#00bcd4", alpha=0.5, edgecolor="#00838f", label="MC Truth")
+                
+                ax_g.plot(z_plot, recon_curve, color="#d32f2f", linewidth=2.5, 
+                          label=f"Reconstructed Fit\n$a={a_opt:.2f}, b={b_opt:.3f}$")
+                ax_g.axvline(z_cg_face, color="black", linestyle="--", label=f"$Z_{{cg}} = {z_cg_face:.1f}$ mm")
+                ax_g.axvspan(z_t_start, z_t_end, color="#ffeb3b", alpha=0.2, label="Hardware Depth Marker")
+                
+                ax_g.set_title(f"Parametric Profile: {ekey}", fontsize=11, fontweight="bold")
+                ax_g.set_xlabel("Depth from Calorimeter Face (mm)", fontsize=9)
+                ax_g.set_xlim(0, calor_thick)
+                ax_g.legend(loc="upper right", fontsize=8)
+                ax_g.grid(True, linestyle=":", alpha=0.5)
+
 
         for idx in range(n_energies, len(axs_tof)):
             fig_tof.delaxes(axs_tof[idx])
@@ -418,6 +533,11 @@ def main():
         fig_cg.tight_layout()
         fig_cg.savefig(analysis_out / f"{mod}_asymmetry_cg.png", dpi=200)
         plt.close(fig_cg)
+
+        fig_gamma.suptitle(f"Continuous Parametric Gamma Fit — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_gamma.tight_layout()
+        fig_gamma.savefig(analysis_out / f"{mod}_parametric_reconstruction.png", dpi=200)
+        plt.close(fig_gamma)
 
 if __name__ == "__main__":
     main()
