@@ -371,36 +371,45 @@ def main():
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
                                            color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
 
-                from scipy.stats import crystalball
-                
+                # ─────────────────────────────────────────────────────────────────────
+                # BIFURCATED GAUSSIAN FIT (Handles Low-Side Tails Safely)
+                # ─────────────────────────────────────────────────────────────────────
+                from scipy.optimize import curve_fit
+
+                # Define the asymmetric twin-width Gaussian
+                def bifurcated_gaussian(x, amp, mu, sigma_left, sigma_right):
+                    return np.where(x < mu,
+                                    amp * np.exp(-0.5 * ((x - mu) / sigma_left)**2),
+                                    amp * np.exp(-0.5 * ((x - mu) / sigma_right)**2))
+
+                # Extract the bin centers from your actual plot histogram
+                bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 x_fit = np.linspace(lo, hi, 5000)
+
+                # Bulletproof initial guesses: [amplitude, peak position, left width, right width]
+                p0 = [float(counts.max()), float(np.median(clean)), float(np.std(clean)), float(np.std(clean)) * 0.8]
                 
+                # Strict bounds to ensure the fit cannot run away or flatten out
+                bounds = ([0.0, lo, 0.1, 0.1], [counts.max() * 5.0, hi, (hi - lo), (hi - lo)])
+
                 try:
-                    # Fit directly to raw calorimeter data
-                    beta_f, m_f, loc_f, scale_f = crystalball.fit(clean)
+                    # Run chi-squared minimization on the histogram bins
+                    popt, _ = curve_fit(bifurcated_gaussian, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
+                    amp_f, mu_f, sig_l_f, sig_r_f = popt
                     
-                    # Normalize the continuous PDF to match the histogram bin area
-                    y_fit = (len(clean) * actual_plot_width) * crystalball.pdf(x_fit, beta_f, m_f, loc=loc_f, scale=scale_f)
-                    label_text = f"Crystal Ball Fit\n$\\mu$ = {loc_f:.1f} ps\n$\\sigma_{{core}}$ = {scale_f:.1f} ps"
+                    y_fit = bifurcated_gaussian(x_fit, amp_f, mu_f, sig_l_f, sig_r_f)
+                    label_text = (f"Bifurcated Gauss\n"
+                                  f"$\\mu$ = {mu_f:.1f} ps\n"
+                                  f"$\\sigma_L$ = {sig_l_f:.1f} ps\n"
+                                  f"$\\sigma_R$ = {sig_r_f:.1f} ps")
                 except Exception:
-                    # Fallback to your original Gaussian helper functions if the fit struggles to converge
+                    # Revert back to your trusted fallback functions if optimization runs into trouble
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
                     amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
                     y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
                     label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
-                
+
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
-                
-                n_ev = master_summary[mod][ekey]["n_t_coincidences"]
-                ax.set_title(f"{ekey}  (N={n_ev} events)", fontsize=11, fontweight="bold")
-                ax.set_xlabel("BestMinus LocalTime (ps)", fontsize=9)
-                ax.set_ylabel(f"Events / {actual_plot_width:.1f} ps", fontsize=9)
-                ax.set_xlim(lo, hi)
-                ax.legend(loc="upper right", fontsize=8, frameon=True)
-            else:
-                ax.text(0.5, 0.5, "Empty Dataset", ha='center', va='center')
-                ax.set_title(f"{ekey}", fontsize=11, fontweight="bold")
-            ax.grid(True, linestyle=":", alpha=0.5)
 
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])

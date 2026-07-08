@@ -17,7 +17,55 @@
       </propertyvector>
     </propertiestable>
   </material>
-
+  <material name="LuAg_Ce_WLS">
+    <propertiestable>
+      <!-- Decays at 70ns based on the Ce3+ transition lifetime -->
+      <property name="WLSTIMECONSTANT" value="70" unit="ns"/>
+      
+      <!-- Refractive index flat across the emission spectrum at 1.84 -->
+      <propertyvector name="RINDEX" energyunit="eV">
+        <ve energy="1.55" value="1.84"/>
+        <ve energy="2.00" value="1.84"/>
+        <ve energy="2.31" value="1.84"/>
+        <ve energy="2.61" value="1.84"/>
+        <ve energy="3.10" value="1.84"/>
+        <ve energy="6.20" value="1.84"/>
+      </propertyvector>
+      
+      <!-- Bulk material absorption length: clear path length for shifted green light -->
+      <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">
+        <ve energy="1.55" value="5.0"/>
+        <ve energy="2.31" value="5.0"/>
+        <ve energy="6.20" value="5.0"/>
+      </propertyvector>
+      
+      <!-- WLS Absorption Length: Low value (high absorption) near 450nm (2.75 eV). 
+           High value (transparent) at low energies where it emits light (~2.31 eV) -->
+      <propertyvector name="WLSABSLENGTH" unit="m" energyunit="eV">
+        <ve energy="1.55" value="1000.0"/>
+        <ve energy="2.31" value="1000.0"/> <!-- Transparent to its own shifted light -->
+        <ve energy="2.48" value="1.000"/>  <!-- Edge of absorption band (500nm) -->
+        <ve energy="2.64" value="0.005"/>  <!-- High absorption (470nm) -->
+        <ve energy="2.75" value="0.002"/>  <!-- Maximum absorption peak (450nm) -->
+        <ve energy="2.90" value="0.005"/>  <!-- Absorption falling off (427nm) -->
+        <ve energy="3.54" value="1000.0"/> <!-- Secondary clear window -->
+        <ve energy="6.20" value="1000.0"/>
+      </propertyvector>
+      
+      <!-- WLS Re-emission Spectrum: Normalised intensity values mapping 
+           the 475nm - 800nm bandwidth peaking directly at 535nm (2.31 eV) -->
+      <propertyvector name="WLSCOMPONENT" energyunit="eV">
+        <ve energy="1.55" value="0.00"/>  <!-- 800nm (Cutoff) -->
+        <ve energy="1.77" value="0.15"/>  <!-- 700nm -->
+        <ve energy="2.07" value="0.60"/>  <!-- 600nm -->
+        <ve energy="2.31" value="1.00"/>  <!-- 535nm (Peak Emission) -->
+        <ve energy="2.48" value="0.45"/>  <!-- 500nm -->
+        <ve energy="2.61" value="0.00"/>  <!-- 475nm (Cutoff) -->
+        <ve energy="6.20" value="0.00"/>
+      </propertyvector>
+    </propertiestable>
+  </material>
+  
   <material name="LYSO">
     <propertiestable>
       <property name="SCINTILLATIONYIELD"         value="320"/>
