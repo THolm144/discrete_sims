@@ -1,473 +1,423 @@
-"""
-worlds/rc_hex.py
-=========================
-RADiCAL Shashlik calorimeter — hexagonal energy-measurement variant.
-
-Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
-        LYSO | W | LYSO | W | … | W | LYSO   (125.29 mm total)
-
-Capillaries (6, alternating):
-    Regular Hexagon (7mm side). Capillaries placed on the apothem of each face, 
-    at a radial distance of 3.5mm from the center.
-    
-    E-type (indices 0, 2, 4) — Top face is index 0:
-        Quartz sleeve (Ø1.15 mm outer) with a continuous BCF-92 WLS 
-        filament (Ø0.90 mm inner) running the full length.
-
-    T-type (indices 1, 3, 5):
-        Quartz rod (Ø1.15 mm, 183 mm) with a short bore at shower-max
-        (LYSO layers 8–11) holding a BCF-92 WLS filament (Ø0.90 mm, ~15 mm).
-
-SiPMs:  12 active silicon tiles (6 front, 6 back) + 2 hexagonal FR4 readout cards.
-"""
-
+#!/usr/bin/env python3
+import os
+import sys
+import datetime
+import warnings
+from pathlib import Path
 import numpy as np
-import opengate.geometry.volumes as vol_module
+import uproot
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+from scipy.ndimage import gaussian_filter1d
+from scipy.stats import gaussian_kde
+
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SIMULATOR CONTRACT
+# OPTICAL KINEMATICS & FIBER CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
+C_LIGHT_MM_NS = 299.792
+REFRACTIVE_INDEX = 1.60
+V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
+BOUNCE_FACTOR = 0.92
+V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
-CAPABILITIES = {
-    "optical":          True,
-    "dose":             True,
-    "sipm_hits":        True,
-    "optical_exits":    True,
-    "calorimeter_mode": True,
+# Assumed effective attenuation length of the BCF-92 WLS fiber inside the calorimeter
+# (Can be tuned or calibrated against Monte Carlo truth)
+_LAMBDA_EFF_MM = 3500.0  
+
+_GT_LO_NS = 0.0
+_GT_HI_NS = 50.0
+_TYVEK_THICK_MM = 0.2032
+_W_THICK_MM = 2.5
+_N_LYSO = 29
+_N_W = 28
+
+ARRIVAL_QUANTILE = 0.10
+MIN_PHOTONS_PER_FACE = 1
+
+_SQUARE_HOLE_OFFSET = 3.7032
+SQUARE_CAP_XY = np.array([
+    [ _SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET],  
+    [-_SQUARE_HOLE_OFFSET, -_SQUARE_HOLE_OFFSET],  
+    [-_SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET],  
+    [ _SQUARE_HOLE_OFFSET, -_SQUARE_HOLE_OFFSET],  
+])
+
+HEX_CAP_R_MM = 3.5
+HEX_CAP_XY = np.array([
+    [HEX_CAP_R_MM * np.cos(np.pi/2 + i*(np.pi/3)), HEX_CAP_R_MM * np.sin(np.pi/2 + i*(np.pi/3))]
+    for i in range(6)
+])
+
+_KNOWN_Z_PLANES = {91.65: 1.5, 135.15: 4.5}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TARGET DIRECTORIES
+# ─────────────────────────────────────────────────────────────────────────────
+TARGET_SWEEPS = {
+    "radi_cal_energy": Path("/home/uakgun/env/THOMAS/discrete_sims/radi_cal_energy/runs/radi_cal_energy/sweep_20260707_170533"),
+    "radi_cal_triple": Path("/home/uakgun/env/THOMAS/discrete_sims/radi_cal_triple/runs/radi_cal_triple/sweep_20260706_171040"),
+    "rc_hex": Path("/home/uakgun/env/THOMAS/discrete_sims/rc_hex/runs/rc_hex/sweep_20260706_171127"),
+    "rc_hex_triple": Path("/home/uakgun/env/THOMAS/discrete_sims/rc_hex_triple/runs/rc_hex_triple/sweep_20260706_171101")
 }
 
-TARGET_VOLUME_NAME = "calorimeter"
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+def get_lyso_layer_bounds(lyso_thick, calor_thick):
+    gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+    bounds = []
+    current_z = -calor_thick / 2
+    for idx in range(_N_LYSO):
+        z_start = current_z + _TYVEK_THICK_MM
+        z_end = z_start + lyso_thick
+        bounds.append((z_start, z_end))
+        current_z += gap_thick + (_W_THICK_MM if idx < _N_W else 0)
+    return bounds
+
+def standard_gaussian(x, A, mu, sigma):
+    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+def fit_gaussian_to_peak(data, n_bins=40):
+    if len(data) < 8:
+        return 0.0, float(np.median(data)) if len(data) else 0.0, float(np.std(data)) if len(data) else 0.0
+    center = np.median(data)
+    spread = max(np.std(data), 1.0)
+    lo, hi = float(np.min(data)), float(np.max(data))
+    if hi <= lo: hi = lo + 1.0
+
+    counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
+    mids = 0.5 * (edges[:-1] + edges[1:])
+    smoothed = gaussian_filter1d(counts.astype(float), sigma=2.0)
+    peak_idx = int(np.argmax(smoothed))
+    mu0, A0 = float(mids[peak_idx]), float(smoothed[peak_idx])
+
+    try:
+        popt, _ = curve_fit(standard_gaussian, mids, counts, p0=[A0, mu0, spread],
+                            bounds=([0.0, lo, 1e-6], [A0 * 10.0 + 1.0, hi, (hi - lo)]), maxfev=10000)
+        return float(popt[0]), float(popt[1]), float(popt[2])
+    except Exception:
+        return A0, mu0, spread
+
+def clean_around_mode(arr, window_ps=500.0):
+    if len(arr) == 0: return arr
+    counts, edges = np.histogram(arr, bins=40)
+    peak_bin = np.argmax(gaussian_filter1d(counts.astype(float), sigma=2.0))
+    mode_center = 0.5 * (edges[peak_bin] + edges[peak_bin + 1])
+    return arr[np.abs(arr - mode_center) < window_ps]
+
+def extract_numerical_energy(label: str) -> float:
+    try:
+        return float(''.join(c for c in label if c.isdigit() or c == '.'))
+    except ValueError:
+        return 0.0
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY CONSTANTS
+# DATA PARSING
 # ─────────────────────────────────────────────────────────────────────────────
+def extract_profile_data(batch_dir: Path, is_hex: bool):
+    hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
+    if not hit_files: return None
 
-_HEX_SIDE_MM     = 7.0
-_LYSO_THICK_MM   = 1.5
-_TYVEK_THICK_MM  = 0.008 * 25.4           # 0.2032 mm
-_W_THICK_MM      = 2.5
-_N_LYSO          = 29
-_N_W             = 28
+    detected_z_sensor = None
+    for fpath in hit_files:
+        try:
+            with uproot.open(fpath) as f:
+                tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
+                if not tk: continue
+                z_arr = f[tk]["Position_Z"].array(library="np")
+                if len(z_arr) > 0:
+                    abs_z = np.abs(z_arr)
+                    detected_z_sensor = float(np.median(abs_z[abs_z > (np.max(abs_z) - 5.0)]))
+                    break
+        except Exception: continue
 
-_GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   # 1.9064 mm
-_CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 125.2856 mm
+    if detected_z_sensor is None: return None
 
-# Hexagon Math
-_APOTHEM_MM      = _HEX_SIDE_MM * np.sqrt(3) / 2  # ~6.062 mm
-_CAP_R_MM        = 3.5                            # Safe radial distance from center
+    lyso_thick = min(_KNOWN_Z_PLANES.items(), key=lambda kv: abs(kv[0] - detected_z_sensor))[1]
+    gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
+    calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
+    lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
 
-_CAP_OUTER_MM    = 1.150 / 2              # 0.575 mm  — quartz rod outer radius
-_CAP_INNER_MM    = 0.950 / 2              # 0.475 mm  — inner bore radius
-_CAP_LENGTH_MM   = 183.0
+    cap_xy_map = HEX_CAP_XY if is_hex else SQUARE_CAP_XY
+    t_indices = {1, 3, 5} if is_hex else {0, 1}
+    e_indices = {0, 2, 4} if is_hex else {2, 3}
 
-_FILAMENT_R_MM   = 0.900 / 2              # 0.45 mm   — BCF-92 filament radius
+    up_first, down_first = {}, {}
+    up_times_by_ev, dw_times_by_ev = {}, {}
+    q_up_by_ev, q_dw_by_ev = {}, {}
 
-# ── Capillary Positions (6 faces) ─────────────────────────────────────────────
-_CAP_POSITIONS_MM = []
-for i in range(6):
-    angle = np.pi / 2 + i * (np.pi / 3)
-    cx = _CAP_R_MM * np.cos(angle)
-    cy = _CAP_R_MM * np.sin(angle)
-    _CAP_POSITIONS_MM.append([cx, cy])
+    for fpath in hit_files:
+        run_tag = fpath.parent.name
+        try:
+            with uproot.open(fpath) as f:
+                tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
+                if not tk: continue
+                tree = f[tk]
+                if tree.num_entries == 0: continue
+                x = tree["Position_X"].array(library="np")
+                y = tree["Position_Y"].array(library="np")
+                z = tree["Position_Z"].array(library="np")
+                gt = tree["GlobalTime"].array(library="np")
+                lt = tree["LocalTime"].array(library="np")
+                ev = tree["EventID"].array(library="np")
+                pn = tree["ParticleName"].array(library="np")
+        except Exception: continue
 
-_E_TYPE_INDICES  = {0, 2, 4} # 0 is Top
-_T_TYPE_INDICES  = {1, 3, 5}
+        dx = x[:, np.newaxis] - cap_xy_map[:, 0]
+        dy = y[:, np.newaxis] - cap_xy_map[:, 1]
+        channels = np.argmin(np.hypot(dx, dy), axis=1)
 
-# ── Shower-max band (T-type bore region) ──────────────────────────────────────
-_SHOWER_FIRST    = 9                     
-_SHOWER_LAST     = 13                     
-_LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
-_FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
-_LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
-_BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
-_BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
-_FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             
-_FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5*(_BAND_FRONT_MM + _BAND_BACK_MM)
+        near_up = np.abs(z + detected_z_sensor) < 2.5
+        near_dw = np.abs(z - detected_z_sensor) < 2.5
+        is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
+        is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
 
-# ── SiPM / card geometry ─────────────────────────────────────────────────────
-_SIPM_XY_MM      = 1.2
-_SIPM_THICK_MM   = 0.3
-_CARD_THICK_MM   = 1.6
-_CARD_HOLE_R_MM  = 2.0
-_SIPM_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM/2
-_CARD_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM + 0.1 + _CARD_THICK_MM/2
+        is_e = np.isin(channels, list(e_indices))
+        m_e_up, m_e_dw = is_e & is_prompt & near_up, is_e & is_prompt & near_dw
 
-_WORLD_XY_MM     = 3.0 * _HEX_SIDE_MM
-_WORLD_Z_MM      = 1.5 * max(_CAP_LENGTH_MM, _CALOR_THICK_MM)
+        # ToF Reconstructions
+        for eid, ti in zip(ev[m_e_up], gt[m_e_up]):
+            key = (run_tag, int(eid))
+            if key not in up_first or ti < up_first[key]: up_first[key] = float(ti)
+        for eid, ti in zip(ev[m_e_dw], gt[m_e_dw]):
+            key = (run_tag, int(eid))
+            if key not in down_first or ti < down_first[key]: down_first[key] = float(ti)
 
-# ── Simulator metadata ────────────────────────────────────────────────────────
-PHANTOM_CM       = [_HEX_SIDE_MM/10, _HEX_SIDE_MM/10, _CALOR_THICK_MM/10]
-EXPECTED_DEDX    = 1.0
-ACTIVATE_CALORIMETER_SETTINGS = True
-CALORIMETER_Z_RES_MM  = 0.1
-ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
-TIMING_TRIGGER_THRESHOLD = 1
-
-DETECTOR_VOLUME_NAMES = [
-    f"sipm_front_{i}" for i in range(6)
-] + [
-    f"sipm_back_{i}" for i in range(6)
-]
-
-BEAM_CONFIG = {
-    "direction": [0, 0, 1],
-    "target_cm": [0, 0, 0],
-    "offset_cm": _SIPM_Z_MM/10 + 2.0,
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
-    bore_dz = (half_dz_mm + 0.1) * mm
-    result  = base_vol
-    for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-        bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
-        bore.rmin = 0.0
-        # Stagger the drill clearance so nested daughter volumes don't share identical boundaries
-        bore.rmax = (_CAP_OUTER_MM + clearance) * mm  
-        bore.dz   = bore_dz
-        result    = vol_module.subtract_volumes(
-            result, bore,
-            translation=[cx * mm, cy * mm, 0],
-            new_name=f"{name}_sub{i}",
-        )
-    return result
-
-def _make_gap(name, mm):
-    base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
-    base.height = _GAP_THICK_MM * mm  
-    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.012)
-
-def _make_lyso(name, mm):
-    base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.radius = _HEX_SIDE_MM * mm  
-    base.height = _LYSO_THICK_MM * mm
-    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.014)
-
-def _make_abso(name, mm):
-    base = vol_module.HexagonVolume(name=f"{name}_hex")
-    base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM) * mm
-    base.height = _W_THICK_MM * mm
-    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.012)
-
-def _build_capillaries(sim, mm):
-    half_cap   = _CAP_LENGTH_MM / 2 * mm
-    half_calor = _CALOR_THICK_MM / 2 * mm
-
-    for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-        if i in _E_TYPE_INDICES:
-            # Active Quartz Cladding Sleeve (Mothered to world to prevent overlap with drilled calorimeter)
-            sleeve = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
-            sleeve.mother      = "world"
-            sleeve.rmin        = _FILAMENT_R_MM * mm
-            sleeve.rmax        = _CAP_OUTER_MM * mm     
-            sleeve.dz          = half_calor             
-            sleeve.translation = [cx * mm, cy * mm, 0]
-            sleeve.material    = "G4_SILICON_DIOXIDE"
-
-            # Continuous active core filament
-            core = sim.add_volume("Tubs", f"cap_{i}_active_core")
-            core.mother        = "world"
-            core.rmin          = 0.0
-            core.rmax          = _FILAMENT_R_MM * mm
-            core.dz            = half_calor
-            core.translation   = [cx * mm, cy * mm, 0]
-            core.material      = "BCF92"
-
-            # Upstream/Downstream Passive Quartz Extensions
-            tail_len_z       = (half_cap - half_calor)
-            z_pos_front      = -(half_calor + tail_len_z / 2)
-            tail_f             = sim.add_volume("Tubs", f"cap_{i}_tail_front")
-            tail_f.mother      = "world"
-            tail_f.rmin        = 0.0
-            tail_f.rmax        = _CAP_OUTER_MM * mm
-            tail_f.dz          = tail_len_z / 2
-            tail_f.translation = [cx * mm, cy * mm, z_pos_front]
-            tail_f.material    = "G4_SILICON_DIOXIDE"
-
-            z_pos_back       = (half_calor + tail_len_z / 2)
-            tail_b             = sim.add_volume("Tubs", f"cap_{i}_tail_back")
-            tail_b.mother      = "world"
-            tail_b.rmin        = 0.0
-            tail_b.rmax        = _CAP_OUTER_MM * mm
-            tail_b.dz          = tail_len_z / 2
-            tail_b.translation = [cx * mm, cy * mm, z_pos_back]
-            tail_b.material    = "G4_SILICON_DIOXIDE"
-
-        else:
-            # ── T-TYPE ──
-            rod_base      = vol_module.TubsVolume(name=f"cap_{i}_rod")
-            rod_base.rmin = 0.0
-            rod_base.rmax = _CAP_OUTER_MM * mm
-            rod_base.dz   = half_cap
-
-            bore          = vol_module.TubsVolume(name=f"cap_{i}_bore")
-            bore.rmin     = 0.0
-            bore.rmax     = (_CAP_INNER_MM + 0.05) * mm
-            bore.dz       = (_FILAMENT_LEN_MM / 2 + 0.01) * mm
-
-            quartz_vol    = vol_module.subtract_volumes(
-                rod_base, bore,
-                translation=[0, 0, _FILAMENT_Z_MM * mm],
-                new_name=f"cap_{i}",
-            )
-            quartz_vol.name        = f"cap_{i}"
-            quartz_vol.mother      = "world"
-            quartz_vol.material    = "G4_SILICON_DIOXIDE"
-            quartz_vol.translation = [cx * mm, cy * mm, 0]
-            sim.add_volume(quartz_vol)
-
-            filament             = sim.add_volume("Tubs", f"cap_{i}_filament")
-            filament.mother      = "world"
-            filament.rmin        = 0.0
-            filament.rmax        = _FILAMENT_R_MM * mm
-            filament.dz          = (_FILAMENT_LEN_MM / 2) * mm
-            filament.translation = [cx * mm, cy * mm, _FILAMENT_Z_MM * mm]
-            filament.material    = "BCF92"
-
-def _build_sipms(sim, mm):
-    for end_name, sgn in [("front", -1), ("back", +1)]:
-        z_sipm = sgn * _SIPM_Z_MM * mm
-        z_card = sgn * _CARD_Z_MM * mm
-
-        card_base      = vol_module.HexagonVolume(name=f"card_{end_name}_base")
-        card_base.radius = _HEX_SIDE_MM * mm
-        card_base.height   = (_CARD_THICK_MM / 2) * mm
+        # Asymmetry Reconstructions (Charge Integration)
+        ev_up, counts_up = np.unique(ev[m_e_up & is_optical], return_counts=True)
+        ev_dw, counts_dw = np.unique(ev[m_e_dw & is_optical], return_counts=True)
         
-        card_hole      = vol_module.TubsVolume(name=f"card_{end_name}_hole")
-        card_hole.rmin = 0.0
-        card_hole.rmax = _CARD_HOLE_R_MM * mm
-        card_hole.dz   = (_CARD_THICK_MM + 0.1) * mm
+        for eid, count in zip(ev_up, counts_up):
+            q_up_by_ev[(run_tag, int(eid))] = q_up_by_ev.get((run_tag, int(eid)), 0) + count
+        for eid, count in zip(ev_dw, counts_dw):
+            q_dw_by_ev[(run_tag, int(eid))] = q_dw_by_ev.get((run_tag, int(eid)), 0) + count
+
+        # Timing Resolution
+        is_t = np.isin(channels, list(t_indices))
+        m_t_up, m_t_dw = is_t & is_optical & near_up, is_t & is_optical & near_dw
         
-        card_vol        = vol_module.subtract_volumes(
-            card_base, card_hole, new_name=f"card_{end_name}"
-        )
-        card_vol.name        = f"card_{end_name}"
-        card_vol.mother      = "world"
-        card_vol.material    = "G4_SILICON_DIOXIDE"
-        card_vol.translation = [0, 0, z_card]
-        sim.add_volume(card_vol)
+        for e, t in zip(ev[m_t_up], lt[m_t_up] * 1000.0):
+            up_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
+        for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0):
+            dw_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
 
-        for cap_idx, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-            sipm             = sim.add_volume("Box", f"sipm_{end_name}_{cap_idx}")
-            sipm.mother      = "world"
-            sipm.size        = [_SIPM_XY_MM * mm, _SIPM_XY_MM * mm, _SIPM_THICK_MM * mm]
-            sipm.material    = "G4_Si"
-            sipm.translation = [cx * mm, cy * mm, z_sipm]
+    # 1. Delta-T ToF Layer Extraction
+    common_e_keys = set(up_first) & set(down_first)
+    valid_z_emits = []
+    for k in common_e_keys:
+        z_est = V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0
+        if -calor_thick_mm / 2 - 15.0 <= z_est <= calor_thick_mm / 2 + 15.0:
+            valid_z_emits.append(z_est)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# WORLD CONSTRUCTION
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_world(sim, units):
-    mm = units.mm
-
-    world          = sim.world
-    world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
-    world.material = "G4_AIR"
-
-    calor_base = vol_module.HexagonVolume(name="calorimeter_base")
-    calor_base.radius = (_HEX_SIDE_MM + _TYVEK_THICK_MM + 0.010) * mm
-    calor_base.height = (_CALOR_THICK_MM + 0.020) * mm
+    profile_counts = np.zeros(_N_LYSO)
+    valid_z_emits = np.array(valid_z_emits)
+    if len(valid_z_emits) >= 5:
+        kde = gaussian_kde(valid_z_emits, bw_method=0.15)
+        for i, (zm, zx) in enumerate(lyso_bounds):
+            profile_counts[i] = kde.evaluate((zm + zx) / 2.0)[0]
+    else:
+        for i, (zm, zx) in enumerate(lyso_bounds):
+            profile_counts[i] = np.sum((valid_z_emits >= zm) & (valid_z_emits <= zx))
     
-    # Change calor_base.dz/mm to (calor_base.height / 2) / mm
-    calor_vol = _drill_holes(calor_base, "calorimeter", (calor_base.height / 2) / mm, mm, clearance=0.010)
-    calor_vol.name        = TARGET_VOLUME_NAME
-    calor_vol.mother      = "world"
-    calor_vol.material    = "G4_AIR"
-    calor_vol.translation = [0, 0, 0]
-    sim.add_volume(calor_vol)
+    profile_counts = profile_counts[::-1]
 
-    _build_capillaries(sim, mm)
-    _build_sipms(sim, mm)
+    # 2. Timing Resolution Calculation
+    common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
+    all_bm_raw_ps = []
+    for e in common_t_evs:
+        if len(up_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE and len(dw_times_by_ev[e]) >= MIN_PHOTONS_PER_FACE:
+            t_up_q = np.quantile(up_times_by_ev[e], ARRIVAL_QUANTILE)
+            t_dw_q = np.quantile(dw_times_by_ev[e], ARRIVAL_QUANTILE)
+            all_bm_raw_ps.append((t_dw_q - t_up_q) / 2.0)
 
-    z_pos = -_CALOR_THICK_MM / 2
+    clean_bm = clean_around_mode(np.array(all_bm_raw_ps), window_ps=500.0)
+    _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
-    for i in range(_N_LYSO):
-        z_pos   += _GAP_THICK_MM / 2
-        gap_vol  = _make_gap(f"gap_{i}", mm)
-        gap_vol.name        = f"gap_{i}"
-        gap_vol.mother      = TARGET_VOLUME_NAME
-        gap_vol.material    = "Tyvek"
-        gap_vol.translation = [0, 0, z_pos * mm]
-        sim.add_volume(gap_vol)
-
-        lyso_vol             = _make_lyso(f"lyso_{i}", mm)
-        lyso_vol.name        = f"lyso_{i}"
-        lyso_vol.mother      = f"gap_{i}"
-        lyso_vol.material    = "LYSO"
-        lyso_vol.translation = [0, 0, 0]
-        sim.add_volume(lyso_vol)
-
-        z_pos += _GAP_THICK_MM / 2
-
-        if i < _N_W:
-            z_pos   += _W_THICK_MM / 2
-            abso_vol = _make_abso(f"abso_{i}", mm)
-            abso_vol.name        = f"abso_{i}"
-            abso_vol.mother      = TARGET_VOLUME_NAME
-            abso_vol.material    = "Tungsten"
-            abso_vol.translation = [0, 0, z_pos * mm]
-            sim.add_volume(abso_vol)
-            z_pos += _W_THICK_MM / 2
-
-    return sim
-
-# ─────────────────────────────────────────────────────────────────────────────
-# OPTICAL SURFACES
-# ─────────────────────────────────────────────────────────────────────────────
-
-def add_optical_surfaces(sim, units):
-    vols = sim.volume_manager.volumes
-
-    for i in range(_N_LYSO):
-        lyso_name = f"lyso_{i}"
-        gap_name  = f"gap_{i}"
-        if lyso_name in vols and gap_name in vols:
-            sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
-            sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
-
-    for cap_idx in _E_TYPE_INDICES:
-        core_name   = f"cap_{cap_idx}_active_core"
-        sleeve_name = f"cap_{cap_idx}_active_sleeve"
-        tail_b_name = f"cap_{cap_idx}_tail_back"
-        tail_f_name = f"cap_{cap_idx}_tail_front"
-
-        if core_name in vols and sleeve_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, sleeve_name, "Polished")
-        if core_name in vols and tail_b_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
-        if core_name in vols and tail_f_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
-
-    for cap_idx in _T_TYPE_INDICES:
-        rod_name  = f"cap_{cap_idx}"
-        plug_name = f"cap_{cap_idx}_filament"
-        if rod_name in vols and plug_name in vols:
-            sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS HOOKS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def analyze(batch_dir, run_dirs, meta, utils):
-    import matplotlib.pyplot as plt
-
-    hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
-    exits_files = [d / "optical_exited.root" for d in run_dirs]
-
-    hits       = utils.analyse_hits(hits_files) if hits_files else {}
-    exits      = utils.analyse_exits(exits_files) if exits_files else {}
-    timing_res = (utils.extract_timing_resolution(
-                  hits_files, threshold_photon=TIMING_TRIGGER_THRESHOLD)
-                  if hits_files else 0.0)
-
-    long_arr, trans_arr = utils.load_calorimeter_mhd(
-        run_dirs,
-        long_glob="run_Dose_edep.mhd",
-        trans_glob="transverse_shower_max_edep.mhd",
-    )
-    _aggregate_batch(batch_dir, run_dirs, meta, utils)
-
-    plots_saved = []
-
-    if long_arr is not None:
-        dz_mm = meta.get("dose_spacing_mm", 0.1)
-        avg   = long_arr / max(len(run_dirs), 1)
-
-        layer_edeps = []
-        current_z   = 0.0   
-
-        for idx in range(_N_LYSO):
-            z_start = current_z + _TYVEK_THICK_MM
-            z_end   = z_start   + _LYSO_THICK_MM
-            i0 = max(0, min(int(round(z_start / dz_mm)), len(avg)))
-            i1 = max(0, min(int(round(z_end   / dz_mm)), len(avg)))
-            layer_edeps.append(float(np.sum(avg[i0:i1])))
-            current_z += _GAP_THICK_MM + (_W_THICK_MM if idx < _N_W else 0)
-
-        fig, ax = plt.subplots(figsize=(10, 4.5))
-        ax.bar(range(1, _N_LYSO + 1), layer_edeps,
-               color="#00bcd4", alpha=0.7, edgecolor="#00838f",
-               linewidth=1.2, width=0.8)
-        ax.set_xlabel("LYSO Layer Number")
-        ax.set_ylabel("Energy Deposition (MeV)")
-        ax.set_title("RADiCAL Energy — Hexagonal Longitudinal Shower Profile")
-        fig.tight_layout()
-        out = batch_dir / "radical_energy_longitudinal.png"
-        fig.savefig(out, dpi=200)
-        plt.close(fig)
-        plots_saved.append(out.name)
-
-    up_hits = sum(hits.get(k, 0) for k in hits if "sipm_front" in k)
-    dn_hits = sum(hits.get(k, 0) for k in hits if "sipm_back"  in k)
-    extra_lines = [
-        f"  Upstream SiPM hits:   {up_hits:,}",
-        f"  Downstream SiPM hits: {dn_hits:,}",
-    ]
+    # 3. Asymmetry Z_cg Calculation
+    common_q_evs = set(q_up_by_ev.keys()) & set(q_dw_by_ev.keys())
+    z_cg_arr = []
+    for k in common_q_evs:
+        q_u, q_d = q_up_by_ev[k], q_dw_by_ev[k]
+        if q_u > 0 and q_d > 0:
+            # Reconstruct Z relative to center. If shower is upstream (negative Z), 
+            # Q_up > Q_down, so ln() > 0. We negate to match detector coordinates.
+            z = - (_LAMBDA_EFF_MM / 2.0) * np.log(q_u / q_d)
+            z_cg_arr.append(z)
 
     return {
-        "hits":          hits,
-        "exits":         exits,
-        "timing_res_ps": timing_res,
-        "extra_lines":   extra_lines,
-        "plots_saved":   plots_saved,
+        "tof_profile": profile_counts,
+        "n_e_coincidences": len(common_e_keys),
+        "sigma_t_ps": sigma_t_ps,
+        "pitch_mm": gap_thick_mm + _W_THICK_MM,
+        "lyso_thick": lyso_thick,
+        "dw_first_times": np.array(list(down_first.values())),
+        "z_cg_dist": np.array(z_cg_arr),
+        "calor_thick": calor_thick_mm
     }
 
-def _aggregate_batch(batch_dir, run_dirs, meta, utils):
-    dz_mm         = meta.get("dose_spacing_mm", 0.1)
-    active_ranges = meta.get("active_z_ranges", None)
-    long_acc, n   = None, 0
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+def main():
+    base_dir = Path(__file__).resolve().parent
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    analysis_out = base_dir / "profile_analysis" / f"profile_summary_{timestamp}"
+    analysis_out.mkdir(parents=True, exist_ok=True)
 
-    for run_dir in run_dirs:
-        dose_txt = batch_dir / f"run_{run_dir.name.split('_')[-1]}_Dose.txt"
-        if dose_txt.exists():
-            try:
-                _, energy = np.loadtxt(dose_txt, unpack=True, usecols=(0, 1))
-                long_acc  = (energy.astype(float) if long_acc is None
-                             else long_acc + energy)
-                n += 1
-            except Exception:
-                pass
+    print("Spawning Longitudinal Profile Extractor...")
+    print(f"Targeting outputs to: {analysis_out.relative_to(base_dir)}\n")
 
-    if n > 0 and long_acc is not None:
-        avg = long_acc / n
-        out = batch_dir / "analyzed_longitudinal.txt"
-        if active_ranges:
-            energies = [
-                np.sum(avg[int(round(zs/dz_mm)):int(round(ze/dz_mm))])
-                for zs, ze in active_ranges
-            ]
-            np.savetxt(str(out),
-                       np.c_[np.arange(len(energies))+1, energies],
-                       fmt="%d %.6e")
-        else:
-            np.savetxt(str(out),
-                       np.c_[np.arange(len(avg)), avg],
-                       fmt="%d %.6e")
+    try:
+        import analysis_utils as utils
+    except ImportError:
+        utils = None
+        print("[Warning] analysis_utils not found. Sim truth overlays will be disabled.")
 
-def get_geometry_primitives() -> list[dict]:
-    prims = [{
-        "type":   "hexagon",
-        "center": [0.0, 0.0, 0.0],
-        "side":   _HEX_SIDE_MM/10,
-        "height": _CALOR_THICK_MM/10,
-        "color":  "#00ffcc",
-        "alpha":  0.15,
-    }]
-    for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
-        color = "#ff9900" if i in _E_TYPE_INDICES else "#00cfff"
-        prims.append({
-            "type":   "tube",
-            "center": [cx/10, cy/10, 0.0],
-            "rmax":   _CAP_OUTER_MM/10,
-            "height": _CAP_LENGTH_MM/10,
-            "color":  color,   
-            "alpha":  0.35,
-        })
+    mod_colors = {"radi_cal_energy": "#1976d2", "radi_cal_triple": "#388e3c", "rc_hex": "#d32f2f", "rc_hex_triple": "#7b1fa2"}
+    layers = np.arange(1, _N_LYSO + 1)
+    WLS_LAYERS = {8, 9, 10, 11}
 
-    return prims
+    for mod, target_sweep in TARGET_SWEEPS.items():
+        if not target_sweep.exists():
+            print(f"  Skipping '{mod}' - Target sweep not found: {target_sweep}")
+            continue
+
+        print(f"Processing Profile Data for '{mod}'...")
+        is_hex = "hex" in mod
+        energy_dirs = sorted([d for d in target_sweep.iterdir() if d.is_dir() and "GeV" in d.name], 
+                             key=lambda p: extract_numerical_energy(p.name))
+        
+        if not energy_dirs:
+            continue
+
+        n_energies = len(energy_dirs)
+        ncols = 2 if n_energies >= 2 else 1
+        nrows = int(np.ceil(n_energies / ncols))
+
+        fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_tof = axs_tof.flatten()
+        
+        fig_dist, axs_dist = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_dist = axs_dist.flatten()
+
+        # New Figure for Asymmetry Z_cg
+        fig_cg, axs_cg = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_cg = axs_cg.flatten()
+
+        for idx, edir in enumerate(energy_dirs):
+            ekey = edir.name
+            print(f"    Extracting {ekey}")
+            res = extract_profile_data(edir, is_hex)
+            if res is None: continue
+
+            ax_t = axs_tof[idx]
+            ax_d = axs_dist[idx]
+            ax_c = axs_cg[idx]
+            
+            prof, s_t, pitch = res["tof_profile"], res["sigma_t_ps"], res["pitch_mm"]
+            lyso_thick, calor_thick = res["lyso_thick"], res["calor_thick"]
+            z_cg_dist = res["z_cg_dist"]
+
+            sigma_z = V_EFF_MM_NS * (s_t / 1000.0)
+            sigma_layer = sigma_z / pitch
+            total_hits = np.sum(prof)
+            norm_prof = prof / total_hits if total_hits > 0 else prof
+
+            run_dirs = sorted(list(set(fp.parent for fp in edir.rglob("detector_hits_*.root"))))
+            truth_curve, bounds = None, None
+
+            if utils and run_dirs:
+                try:
+                    gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+                    calor_thick = (_N_LYSO * gap_thick) + (_N_W * _W_THICK_MM)
+                    bounds = get_lyso_layer_bounds(lyso_thick, calor_thick)
+                    long_arr, _ = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
+                    if long_arr is not None:
+                        dz_mm, avg = 0.1, long_arr / max(len(run_dirs), 1)
+                        layer_edeps = []
+                        for (z_start, z_end) in bounds:
+                            z_offset_start = z_start - (-calor_thick / 2)
+                            z_offset_end = z_end - (-calor_thick / 2)
+                            i0 = max(0, min(int(round(z_offset_start / dz_mm)), len(avg)))
+                            i1 = max(0, min(int(round(z_offset_end / dz_mm)), len(avg)))
+                            layer_edeps.append(float(np.sum(avg[i0:i1])))
+                        truth_curve = np.array(layer_edeps)
+                except Exception:
+                    truth_curve = None
+
+            # 1. TOF PROFILE PANELS
+            if truth_curve is not None and np.sum(truth_curve) > 0:
+                norm_truth = truth_curve / np.sum(truth_curve)
+                ax_t.bar(layers, norm_truth, color="#00bcd4", alpha=0.35, edgecolor="#00838f",
+                       linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
+
+            ax_t.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod],
+                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0,
+                        label=f"ΔT Coincidence (N={res['n_e_coincidences']})")
+            ax_t.set_title(f"{ekey}", fontsize=11, fontweight="bold")
+            ax_t.set_xlabel("LYSO Layer Number", fontsize=9)
+            ax_t.set_ylabel("Normalized Density Fraction", fontsize=9)
+            ax_t.set_xlim(0, _N_LYSO + 1)
+            ax_t.grid(True, linestyle=":", alpha=0.5)
+            ax_t.legend(loc="upper right", fontsize=8)
+
+            # 2. DOWNSTREAM PROMPT STRIKES PANELS
+            first_times = res["dw_first_times"]
+            if len(first_times) > 0:
+                distances_mm = first_times * V_EFF_MM_NS
+                ax_d.hist(distances_mm, bins=80, range=(120.0, 350.0), color="#ff9800", 
+                          alpha=0.6, edgecolor="black", linewidth=0.5, label=f"Prompt Strikes")
+                ax_d.set_title(f"Prompt Strikes vs Distance: {ekey}", fontsize=11, fontweight="bold")
+                ax_d.set_xlabel(f"Kinematic Pseudo-Distance (mm)", fontsize=9)
+            else:
+                ax_d.text(0.5, 0.5, "No Data", ha='center', va='center')
+
+            # 3. ASYMMETRY Z_CG PANELS
+            if len(z_cg_dist) > 0:
+                ax_c.hist(z_cg_dist, bins=50, range=(-calor_thick/2 - 10, calor_thick/2 + 10), 
+                          color="#9c27b0", alpha=0.7, edgecolor="black", linewidth=0.8, 
+                          label=f"Experimental Z_cg (N={len(z_cg_dist)})")
+                
+                cg_mean = np.mean(z_cg_dist)
+                ax_c.axvline(cg_mean, color="black", linestyle="--", linewidth=1.5, label=f"Mean Z_cg: {cg_mean:.1f} mm")
+
+                if truth_curve is not None and bounds is not None:
+                    # Calculate Sim Truth Center of Gravity for context
+                    layer_centers = [(z_start + z_end)/2.0 for (z_start, z_end) in bounds]
+                    truth_cg = np.average(layer_centers, weights=truth_curve)
+                    ax_c.axvline(truth_cg, color="#00bcd4", linestyle="-", linewidth=2.0, label=f"True Z_cg: {truth_cg:.1f} mm")
+
+                ax_c.set_title(f"Signal Asymmetry Z_cg: {ekey}", fontsize=11, fontweight="bold")
+                ax_c.set_xlabel("Reconstructed Depth Z (mm)", fontsize=9)
+                ax_c.set_ylabel("Events", fontsize=9)
+                ax_c.legend(loc="upper right", fontsize=8)
+                ax_c.grid(True, linestyle=":", alpha=0.5)
+            else:
+                ax_c.text(0.5, 0.5, "No Asymmetry Data", ha='center', va='center')
+
+
+        for idx in range(n_energies, len(axs_tof)):
+            fig_tof.delaxes(axs_tof[idx])
+            fig_dist.delaxes(axs_dist[idx])
+            fig_cg.delaxes(axs_cg[idx])
+
+        fig_tof.suptitle(f"Continuous E-Type ToF Reconstructions — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_tof.tight_layout()
+        fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
+        plt.close(fig_tof)
+
+        fig_dist.suptitle(f"Downstream Prompt Strikes vs Distance (Cropped) — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_dist.tight_layout()
+        fig_dist.savefig(analysis_out / f"{mod}_dw_prompt_distance_cropped.png", dpi=200)
+        plt.close(fig_dist)
+
+        fig_cg.suptitle(f"E-Type Signal Asymmetry Center of Gravity — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_cg.tight_layout()
+        fig_cg.savefig(analysis_out / f"{mod}_asymmetry_cg.png", dpi=200)
+        plt.close(fig_cg)
+
+if __name__ == "__main__":
+    main()
