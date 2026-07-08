@@ -475,7 +475,7 @@ def main():
 
         global_time_cut.filter = (
             (F.ParticleName == "opticalphoton") &
-            (F.GlobalTime > 50.0 * units.ns)
+            (F.GlobalTime > 1.5 * units.ns)
         )
     # ───────────────────────────────────────────────────────────────────────
 
