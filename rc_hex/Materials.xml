@@ -65,7 +65,7 @@
       </propertyvector>
     </propertiestable>
   </material>
-
+  
   <material name="LYSO">
     <propertiestable>
       <property name="SCINTILLATIONYIELD"         value="320"/>
