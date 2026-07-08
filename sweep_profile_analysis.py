@@ -485,9 +485,7 @@ def main():
             bounds = res["lyso_bounds"]
             
             if t_up > 0 and t_dw > 0:
-                # --- EXPERIMENTAL HARDWARE CALIBRATION ---
-                # Forward-scattering bias pushes light downstream, causing a ~21mm systematic depth error.
-                # In a real run, this constant is derived by calibrating against known beam energies.
+               
                 # --- ROBUST EVENT-BY-EVENT HARDWARE RECONSTRUCTION ---
                 # Use the median of individual event log-ratios instead of the skewed global sum
                 if len(res["z_cg_dist"]) > 0:

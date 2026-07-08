@@ -92,7 +92,7 @@ def resolve_output_dirs(args, script_dir: Path) -> tuple[Path, Path]:
         ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
         batch_dir = script_dir / "runs" / args.world / f"{int(args.energy_kev)}keV_{ts}"
 
-    # Keep all dynamic files inside the shared target batch directory
+    batch_dir.mkdir(parents=True, exist_ok=True)   # ← ADD THIS
     return batch_dir, batch_dir
 
 
@@ -301,7 +301,7 @@ def main():
     sim.number_of_threads = args.threads
     sim.progress_bar      = False  # Keep clean inside massive batch arrays
 
-    save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
+   
     # Find this section at the bottom of your main() function in simulator.py:
     sim.number_of_threads = args.threads
     sim.progress_bar      = False 
@@ -311,6 +311,7 @@ def main():
     # ────────────────────────────────────
 
     sim.run()
+    save_metadata(args, batch_dir, run_dir, world, caps, beam_cfg, actor_registry)
 
 
 if __name__ == "__main__":
