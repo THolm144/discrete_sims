@@ -503,14 +503,16 @@ def main():
                 # 4. Plot
                 z_plot = np.linspace(0, calor_thick, 200)
                 norm_E0 = np.sum(truth_curve) if truth_curve is not None else 1.0
-                recon_curve = gamma_profile(z_plot, norm_E0, a_opt, b_opt)
+                
+                # Scale the continuous PDF by the layer thickness so it matches the binned bars
+                recon_curve = gamma_profile(z_plot, norm_E0 * res["pitch_mm"], a_opt, b_opt)
                 
                 if truth_curve is not None:
                     truth_centers = [(zs + ze)/2.0 + (calor_thick/2.0) for (zs, ze) in bounds]
                     ax_g.bar(truth_centers, truth_curve, width=(bounds[0][1]-bounds[0][0]), 
                              color="#00bcd4", alpha=0.5, edgecolor="#00838f", label="MC Truth")
-                y_fit = gamma_profile(z_grid, E0 * res["pitch_mm"], a_opt, b_opt)
-                ax_g.plot(z_plot, y_fit, color="#d32f2f", linewidth=2.5, 
+                
+                ax_g.plot(z_plot, recon_curve, color="#d32f2f", linewidth=2.5, 
                           label=f"Reconstructed Fit\n$a={a_opt:.2f}, b={b_opt:.3f}$")
                 ax_g.axvline(z_cg_face, color="black", linestyle="--", label=f"$Z_{{cg}} = {z_cg_face:.1f}$ mm")
                 ax_g.axvspan(z_t_start, z_t_end, color="#ffeb3b", alpha=0.2, label="Hardware Depth Marker")
