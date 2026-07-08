@@ -78,21 +78,19 @@ TARGET_SWEEPS = {
 def gamma_profile(z, E0, a, b):
     """
     Standard parameterization of EM shower longitudinal profile.
-    dE/dz = E0 * (b * (b*z)**(a-1) * e**(-b*z)) / Gamma(a)
+    Uses scipy.stats.gamma.pdf for numerical stability against overflow.
     """
-    z = np.clip(z, 1e-6, None) # Prevent log(0) instability
-    return E0 * (b * (b * z)**(a - 1) * np.exp(-b * z)) / sp.gamma(a)
+    # SciPy's gamma.pdf is exactly our formula when scale = 1/b.
+    # It calculates the curve safely without overflowing at high values.
+    return E0 * gamma.pdf(z, a, scale=1.0/b)
 
 def fit_gamma_to_observables(Z_cg_meas, Q_T_frac, z_T_start, z_T_end):
     """
-    Solves for Gamma parameters (a, b) that match the measured center 
-    of gravity and the fractional light contained in the T-type region.
+    Solves for Gamma parameters (a, b) with strict physical boundaries.
     """
     def loss_function(params):
         a, b = params
-        if a <= 1.0 or b <= 0.0:
-            return 1e9  # Heavily penalize unphysical parameters
-
+        
         # 1. Match Center of Gravity (Mean = a/b)
         cg_theory = a / b
         cg_penalty = (cg_theory - Z_cg_meas)**2
@@ -103,11 +101,17 @@ def fit_gamma_to_observables(Z_cg_meas, Q_T_frac, z_T_start, z_T_end):
 
         return cg_penalty + t_frac_penalty
 
-    # Initial physics guesses for an EM shower
-    a_guess = 3.0
-    b_guess = a_guess / max(Z_cg_meas, 1.0)
+    # Set strict physical bounds for an EM shower
+    # 'a' (shape) typically between 2 and 20. 'b' (scale) typically between 0.1 and 1.0
+    bounds = [(1.1, 30.0), (0.01, 5.0)] 
     
-    res = minimize(loss_function, [a_guess, b_guess], method='Nelder-Mead')
+    # Keep the initial guesses sane and within bounds
+    a_guess = 3.0
+    b_guess = max(0.01, min(a_guess / max(Z_cg_meas, 1.0), 4.9))
+    
+    # Use L-BFGS-B to enforce the boundaries
+    res = minimize(loss_function, [a_guess, b_guess], bounds=bounds, method='L-BFGS-B')
+    
     return res.x[0], res.x[1]
 
 
