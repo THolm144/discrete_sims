@@ -371,15 +371,25 @@ def main():
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
                                            color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
 
-                _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
-                total_events = len(clean)
-                amplitude = (total_events * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
+                from scipy.stats import crystalball
                 
                 x_fit = np.linspace(lo, hi, 5000)
-                y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
                 
-                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5,
-                        label=f"Gaussian Fit\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps")
+                try:
+                    # Fit directly to raw calorimeter data
+                    beta_f, m_f, loc_f, scale_f = crystalball.fit(clean)
+                    
+                    # Normalize the continuous PDF to match the histogram bin area
+                    y_fit = (len(clean) * actual_plot_width) * crystalball.pdf(x_fit, beta_f, m_f, loc=loc_f, scale=scale_f)
+                    label_text = f"Crystal Ball Fit\n$\\mu$ = {loc_f:.1f} ps\n$\\sigma_{{core}}$ = {scale_f:.1f} ps"
+                except Exception:
+                    # Fallback to your original Gaussian helper functions if the fit struggles to converge
+                    _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
+                    amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
+                    y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
+                    label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
+                
+                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 
                 n_ev = master_summary[mod][ekey]["n_t_coincidences"]
                 ax.set_title(f"{ekey}  (N={n_ev} events)", fontsize=11, fontweight="bold")
