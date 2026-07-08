@@ -402,17 +402,25 @@ def main():
                     popt, _ = curve_fit(crystal_ball_binned, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
                     amp_f, mu_f, sigma_f, alpha_f, n_f = popt
                     
+                    # ─────────────────────────────────────────────────────────────
+                    #  Overwrite the old sigma with our clean sigma_core
+                    # so Sections 2, 4, and 5 use the proper resolution!
+                    # ─────────────────────────────────────────────────────────────
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+                    
                     y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
                     label_text = (f"Crystal Ball\n"
                                   f"$\\mu$ = {mu_f:.1f} ps\n"
                                   f"$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
                 except Exception:
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
+                    
+                    # Overwrite it here too, just in case the CB fit fails
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma
+                    
                     amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
                     y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
                     label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
-
-                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
 
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
