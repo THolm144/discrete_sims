@@ -363,8 +363,9 @@ def main():
                     fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
                 else:
                     fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
-                optimal_width = max(0.5, min(fd_width, 10.0))
-                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))/2 #divided by two to cut down on bin numbers
+                min_width = max(1.0, total_range / 50.0)   # never more than 50 bins from range alone
+                optimal_width = max(min_width, min(fd_width, 10.0))
+                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
                 actual_plot_width = (hi - lo) / plot_bins
                 
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
