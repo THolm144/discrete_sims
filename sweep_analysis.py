@@ -372,40 +372,40 @@ def main():
                                            color=mod_colors[mod], alpha=0.6, edgecolor="black", label="Data")
 
                 # ─────────────────────────────────────────────────────────────────────
-                # BIFURCATED GAUSSIAN WITH RANGE RESTRICTION
+                # BINNED CRYSTAL BALL FIT VIA CURVE_FIT
                 # ─────────────────────────────────────────────────────────────────────
                 from scipy.optimize import curve_fit
 
-                def bifurcated_gaussian(x, amp, mu, sigma_left, sigma_right):
-                    return np.where(x < mu,
-                                    amp * np.exp(-0.5 * ((x - mu) / sigma_left)**2),
-                                    amp * np.exp(-0.5 * ((x - mu) / sigma_right)**2))
+                # Explicitly defining a low-side tail Crystal Ball function
+                def crystal_ball_binned(x, amp, mu, sigma, alpha, n):
+                    z = (x - mu) / sigma
+                    # Gaussian core
+                    gauss = amp * np.exp(-0.5 * z**2)
+                    # Power-law tail parameters
+                    a = (n / alpha)**n * np.exp(-0.5 * alpha**2)
+                    b = n / alpha - alpha
+                    tail = amp * a * (b - z)**(-n)
+                    return np.where(z > -alpha, gauss, tail)
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 x_fit = np.linspace(lo, hi, 5000)
 
-                # 1. Establish initial guesses based on the true peak location
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
                 std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
-                p0 = [float(counts.max()), mu_guess, std_guess, std_guess * 0.8]
-                bounds = ([0.0, lo, 0.1, 0.1], [counts.max() * 5.0, hi, (hi - lo), (hi - lo)])
+                
+                # p0: [amp, mu, sigma, alpha (tail threshold), n (tail power)]
+                p0 = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
+                bounds = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
 
                 try:
-                    # 2. DYNAMIC MASK: Ignore the extreme far tails during the fit
-                    # Focuses on the core peak structure where the physics matters most
-                    fit_mask = (bin_centers > mu_guess - 1.5 * std_guess) & (bin_centers < mu_guess + 2.5 * std_guess)
+                    popt, _ = curve_fit(crystal_ball_binned, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
+                    amp_f, mu_f, sigma_f, alpha_f, n_f = popt
                     
-                    # Run the fit only on the masked region
-                    popt, _ = curve_fit(bifurcated_gaussian, bin_centers[fit_mask], counts[fit_mask], p0=p0, bounds=bounds, maxfev=10000)
-                    amp_f, mu_f, sig_l_f, sig_r_f = popt
-                    
-                    # Evaluate across the full range (lo to hi) for plotting
-                    y_fit = bifurcated_gaussian(x_fit, amp_f, mu_f, sig_l_f, sig_r_f)
-                    label_text = (f"Asymm Fit\n"
+                    y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
+                    label_text = (f"Crystal Ball\n"
                                   f"$\\mu$ = {mu_f:.1f} ps\n"
-                                  f"$\\sigma_L$ = {sig_l_f:.1f} ps\n"
-                                  f"$\\sigma_R$ = {sig_r_f:.1f} ps")
+                                  f"$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
                 except Exception:
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
                     amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
