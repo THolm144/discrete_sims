@@ -509,8 +509,8 @@ def main():
                     truth_centers = [(zs + ze)/2.0 + (calor_thick/2.0) for (zs, ze) in bounds]
                     ax_g.bar(truth_centers, truth_curve, width=(bounds[0][1]-bounds[0][0]), 
                              color="#00bcd4", alpha=0.5, edgecolor="#00838f", label="MC Truth")
-                
-                ax_g.plot(z_plot, recon_curve, color="#d32f2f", linewidth=2.5, 
+                y_fit = gamma_profile(z_grid, E0 * res["pitch_mm"], a_opt, b_opt)
+                ax_g.plot(z_plot, y_fit, color="#d32f2f", linewidth=2.5, 
                           label=f"Reconstructed Fit\n$a={a_opt:.2f}, b={b_opt:.3f}$")
                 ax_g.axvline(z_cg_face, color="black", linestyle="--", label=f"$Z_{{cg}} = {z_cg_face:.1f}$ mm")
                 ax_g.axvspan(z_t_start, z_t_end, color="#ffeb3b", alpha=0.2, label="Hardware Depth Marker")
