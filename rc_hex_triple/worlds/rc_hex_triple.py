@@ -87,7 +87,14 @@ PHANTOM_CM       = [_HEX_SIDE_MM/10, _HEX_SIDE_MM/10, _CALOR_THICK_MM/10]
 EXPECTED_DEDX    = 1.0
 ACTIVATE_CALORIMETER_SETTINGS = True
 CALORIMETER_Z_RES_MM  = 0.1
-ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
+# Dynamically calculate precise LYSO boundaries for the simulation scorers
+ACTIVE_Z_RANGES_MM = []
+_z_cursor = 0.0
+for _i in range(_N_LYSO):
+    _z_start = _z_cursor + _TYVEK_THICK_MM
+    _z_end   = _z_start + _LYSO_THICK_MM
+    ACTIVE_Z_RANGES_MM.append([_z_start, _z_end])
+    _z_cursor += _GAP_THICK_MM + (_W_THICK_MM if _i < _N_W else 0)
 TIMING_TRIGGER_THRESHOLD = 1
 
 DETECTOR_VOLUME_NAMES = [
