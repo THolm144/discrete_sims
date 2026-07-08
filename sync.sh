@@ -17,6 +17,8 @@ rsync -avz --delete \
     --exclude='runs/' \
     --exclude='analysis/' \
     --exclude='**/analysis/' \
+    --exclude='profile_analysis/' \
+    --exclude='**/profile_analysis/' \
     --exclude='*.root' \
     --exclude='*.json' \
     --exclude='*.mhd' \
