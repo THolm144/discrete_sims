@@ -324,6 +324,7 @@ def extract_profile_data(batch_dir: Path, is_hex: bool):
         "dw_first_times": np.array(list(down_first.values())),
         "z_cg_dist": np.array(z_cg_arr),
         "calor_thick": calor_thick_mm,
+        "lyso_bounds": lyso_bounds,
         "total_e_up": total_e_up,
         "total_e_dw": total_e_dw,
         "total_t_hits": total_t_hits
