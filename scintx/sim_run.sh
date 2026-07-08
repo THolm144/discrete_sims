@@ -17,7 +17,7 @@ N_RUNS=25              # Total jobs (25 jobs means 1 fully saturated wave)
 N_PARTICLES_PER_RUN=500000 
 
 OPTICAL="on"
-TRACK_OPTICAL="on"
+TRACK_OPTICAL="off"
 PHYSICS_LIST="QGSP_BERT_EMV"
 NO_CERENKOV="off"
 
