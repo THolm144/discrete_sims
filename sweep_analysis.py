@@ -745,6 +745,74 @@ def main():
                 n_e = master_summary[mod][ekey]["n_e_coincidences"]
                 f.write(f"  {ekey:<12} | {s_t:<16.1f} | {s_z:<14.2f} | {s_layer:<12.2f} | {n_t}/{n_e}\n")
             f.write("\n")
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # 6. PERCENT TIMING RESOLUTION IMPROVEMENT COMPARISON
+        # ─────────────────────────────────────────────────────────────────────
+        f.write(f"{'='*80}\n")
+        f.write(" PERCENTAGE TIMING RESOLUTION IMPROVEMENT COMPARISON\n")
+        f.write(f"{'='*80}\n\n")
+
+        pair_stats = {}
+        sorted_energies = sorted(list(all_energies), key=extract_numerical_energy)
+        
+        for ekey in sorted_energies:
+            f.write(f"--- ENERGY: {ekey} ---\n")
+            
+            # Find all modules that have valid timing resolution for this energy
+            mods_with_energy = [m for m in modules if ekey in master_summary[m] and master_summary[m][ekey]["sigma_t_ps"] > 0]
+            
+            if len(mods_with_energy) < 2:
+                f.write("  Not enough modules with valid data at this energy for comparison.\n\n")
+                continue
+            
+            # Compare every pair
+            for modA, modB in itertools.combinations(mods_with_energy, 2):
+                sigA = master_summary[modA][ekey]["sigma_t_ps"]
+                sigB = master_summary[modB][ekey]["sigma_t_ps"]
+                
+                # Improvement of B relative to A (positive means B is lower/better)
+                impB_over_A = ((sigA - sigB) / sigA) * 100.0
+                
+                # Track for average calculation later
+                pair = (modA, modB)
+                if pair not in pair_stats:
+                    pair_stats[pair] = []
+                pair_stats[pair].append(impB_over_A)
+                
+                if impB_over_A > 0:
+                    text_result = f"{modB} is {impB_over_A:.1f}% BETTER than {modA}"
+                elif impB_over_A < 0:
+                    text_result = f"{modB} is {abs(impB_over_A):.1f}% WORSE than {modA}"
+                else:
+                    text_result = f"Equal timing resolution"
+                    
+                f.write(f"  {modA:<18} ({sigA:5.1f} ps) vs {modB:<18} ({sigB:5.1f} ps) -> {text_result}\n")
+            
+            f.write("\n")
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 7. AVERAGE IMPROVEMENT ACROSS ALL ENERGIES
+        # ─────────────────────────────────────────────────────────────────────
+        f.write(f"{'='*80}\n")
+        f.write(" AVERAGE TIMING RESOLUTION IMPROVEMENT (ACROSS ALL ENERGIES)\n")
+        f.write(f"{'='*80}\n\n")
+
+        if not pair_stats:
+            f.write("  No overlapping energy data available to average.\n")
+        else:
+            for (modA, modB), improvements in pair_stats.items():
+                avg_imp = sum(improvements) / len(improvements)
+                
+                if avg_imp > 0:
+                    text_result = f"On average, {modB} is {avg_imp:.1f}% BETTER than {modA}"
+                elif avg_imp < 0:
+                    text_result = f"On average, {modB} is {abs(avg_imp):.1f}% WORSE than {modA}"
+                else:
+                    text_result = f"On average, they have equal timing resolution"
+                    
+                f.write(f"  {modA:<18} vs {modB:<18} -> {text_result} (across {len(improvements)} energies)\n")
+            f.write("\n")
 
 if __name__ == "__main__":
     main()

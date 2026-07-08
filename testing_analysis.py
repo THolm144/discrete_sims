@@ -469,6 +469,94 @@ def main():
         fig_tof.tight_layout()
         fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
         plt.close(fig_tof)
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # 2.5 ENERGY LINEARITY AND RESOLUTION PANELS 
+        # ─────────────────────────────────────────────────────────────────────
+        energies_gev = []
+        mu_e_list = []
+        res_e_list = []
+        mu_e_err = []
+        res_e_err = []
+
+        for ekey in energy_keys:
+            E_val = extract_numerical_energy(ekey)
+            if E_val <= 0: continue
+
+            e_totals = master_summary[mod][ekey]["dw_e_total"]
+            if len(e_totals) < 5:
+                continue
+
+            # Pass the total hit arrays through your robust Gaussian peak fitter
+            # This ignores low-energy leakage tails and grabs the core mu and sigma
+            _, mu_val, sigma_val = fit_gaussian_to_peak(e_totals, n_bins=40)
+
+            if mu_val > 0:
+                energies_gev.append(E_val)
+                mu_e_list.append(mu_val)
+                res_e_list.append(sigma_val / mu_val)
+                
+                # Simple Poisson-like errors for plot weighting
+                mu_e_err.append(sigma_val / np.sqrt(len(e_totals)))
+                res_e_err.append((sigma_val / mu_val) * (1.0 / np.sqrt(len(e_totals))))
+
+        if len(energies_gev) >= 3:
+            energies_gev = np.array(energies_gev)
+            mu_e_list = np.array(mu_e_list)
+            res_e_list = np.array(res_e_list)
+
+            fig_er, (ax_lin, ax_res) = plt.subplots(1, 2, figsize=(14, 6))
+
+            # --- LEFT PLOT: Energy Linearity ---
+            def linear_func(x, m, b): return m * x + b
+            popt_lin, _ = curve_fit(linear_func, energies_gev, mu_e_list)
+            
+            ax_lin.errorbar(energies_gev, mu_e_list, yerr=mu_e_err, fmt=mod_markers.get(mod, 'o'), 
+                            color=mod_colors.get(mod, 'black'), label=f"Simulated Data ({mod})")
+            
+            x_lin_smooth = np.linspace(0, max(energies_gev)*1.1, 100)
+            ax_lin.plot(x_lin_smooth, linear_func(x_lin_smooth, *popt_lin), 
+                        color="black", linestyle="--", label=f"Fit: {popt_lin[0]:.1f} photons/GeV")
+            
+            ax_lin.set_xlabel("Beam Energy (GeV)", fontsize=11)
+            ax_lin.set_ylabel("Sum Amplitude (Downstream E-Type Photons)", fontsize=11)
+            ax_lin.set_title("Energy Linearity", fontsize=13, fontweight="bold")
+            ax_lin.grid(True, linestyle=":", alpha=0.6)
+            ax_lin.legend(fontsize=10)
+
+            # --- RIGHT PLOT: Energy Resolution ---
+            def resolution_func(E, c, s, n):
+                return np.sqrt(c**2 + (s/np.sqrt(E))**2 + (n/E)**2)
+            
+            # Fit bounds: Keep terms positive. Guess: 5% const, 50% stoch, 10% noise
+            try:
+                popt_res, _ = curve_fit(resolution_func, energies_gev, res_e_list, 
+                                        p0=[0.05, 0.5, 0.1], bounds=(0, [1.0, 5.0, 5.0]))
+                c_f, s_f, n_f = popt_res
+                fit_label = f"Fit: {c_f*100:.1f}% $\\oplus$ {s_f*100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f*100:.1f}%/E"
+            except Exception:
+                popt_res = [0.0, 0.0, 0.0]
+                fit_label = "Fit failed"
+
+            ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'), 
+                            color=mod_colors.get(mod, 'black'), label="Simulated Resolution")
+            
+            x_res_smooth = np.linspace(min(energies_gev)*0.8, max(energies_gev)*1.1, 100)
+            ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res), 
+                        color="black", linestyle="--", label=fit_label)
+            
+            ax_res.set_xlabel("Beam Energy (GeV)", fontsize=11)
+            ax_res.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
+            ax_res.set_title("Energy Resolution", fontsize=13, fontweight="bold")
+            ax_res.grid(True, linestyle=":", alpha=0.6)
+            ax_res.legend(fontsize=10)
+
+            fig_er.suptitle(f"Calorimeter Energy Performance — {mod}", fontsize=15, fontweight="bold")
+            fig_er.tight_layout()
+            fig_er.savefig(analysis_out / f"{mod}_energy_performance.png", dpi=200)
+            plt.close(fig_er)
+        else:
+            print(f"  Not enough energy points in {mod} to fit linearity/resolution.")
 
         # ─────────────────────────────────────────────────────────────────────
         # 3. DOWNSTREAM E-TYPE SIPM HITS VS TIME 
