@@ -196,6 +196,8 @@ def _grouped(chunks, how):
 def analyze_energy_batch(batch_dir: Path, is_hex: bool,  module_name: str, verbose_label: str = ""):
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"))
     if not hit_files:
+        if verbose_label:
+            print(f"    [{verbose_label}] SKIPPED — no detector_hits_*.root files found in {batch_dir}")
         return None
 
     # ── locate the sensor plane z position from the first readable file ──
@@ -214,6 +216,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool,  module_name: str, verbo
         except Exception:
             continue
     if detected_z_sensor is None:
+        if verbose_label:
+            print(f"    [{verbose_label}] SKIPPED — could not detect sensor z-plane "
+                  f"(all {len(hit_files)} hit files empty or unreadable)")
         return None
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
@@ -351,7 +356,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool,  module_name: str, verbo
 def _run_job(args):
     """Top-level wrapper so it's picklable for ProcessPoolExecutor."""
     mod, ekey, edir, is_hex = args
-    res = analyze_energy_batch(edir, is_hex, mod, verbose_label=ekey)
+    res = analyze_energy_batch(edir, is_hex, mod, verbose_label=f"{mod}:{ekey}")
     return mod, ekey, res
 
 
@@ -410,6 +415,17 @@ def main():
                 mod, ekey, res = fut.result()
                 if res is not None:
                     master_summary[mod][ekey] = res
+
+        # ── reconcile: flag any (module, energy) that produced no result ──
+        expected = {(mod, ekey) for mod, ekey, _, _ in jobs}
+        succeeded = {(mod, ekey) for mod, energies in master_summary.items() for ekey in energies}
+        missing = sorted(expected - succeeded)
+        if missing:
+            print(f"\n⚠️  {len(missing)} of {len(jobs)} jobs produced no data:")
+            for mod, ekey in missing:
+                print(f"    {mod} / {ekey}")
+        else:
+            print(f"\nAll {len(jobs)} jobs succeeded.")
 
         cache_path = analysis_out / f"master_summary_{timestamp}.pkl"
         with open(cache_path, "wb") as fh:
