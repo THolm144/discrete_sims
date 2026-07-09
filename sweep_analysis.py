@@ -535,20 +535,24 @@ def main():
         prof_out_dir = analysis_out / "profiles"
         prof_out_dir.mkdir(exist_ok=True)
 
+        print(f"\n[Debug] Processing profiles for module: {mod}")
         for ekey in energy_keys:
             summ = master_summary[mod][ekey]
-            raw_profile = summ["tof_profile"]
+            raw_profile = np.atleast_1d(summ["tof_profile"]) # Protect against 0D scalar arrays
             sigma_t_ps = summ["sigma_t_ps"]
             pitch_mm = summ["pitch_mm"]
             lyso_thick = summ["lyso_thick"]
             run_dirs = summ.get("run_dirs", [])
             
-            # Skip empty profile arrays
-            if np.sum(raw_profile) == 0:
+            profile_sum = np.sum(raw_profile)
+            print(f"  -> Energy {ekey}: Raw profile sum = {profile_sum}, E-coincidences = {summ.get('n_e_coincidences', 0)}")
+            
+            if profile_sum == 0:
+                print(f"  [!] Skipping {mod} {ekey} because profile array is empty.")
                 continue
 
             # Normalize the raw profile for display
-            raw_norm_disp = raw_profile / np.sum(raw_profile)
+            raw_norm_disp = raw_profile / profile_sum
             
             # Calculate the blurring extent (sigma_layer)
             s_z = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
