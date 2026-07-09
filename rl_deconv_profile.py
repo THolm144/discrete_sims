@@ -451,9 +451,12 @@ def main():
             ax_ratio.set_xlim(0, _N_LYSO + 1)
             ax_ratio.grid(True, linestyle=":", alpha=0.4)
 
-        for dummy_idx in range(n_energies, len(gs) // 2):
-            # Clean up missing panels if any
-            fig.add_subplot(dummy_idx).axis('off')
+        # TO THIS:
+        for dummy_idx in range(n_energies, nrows * ncols):
+            r_coord = dummy_idx // ncols
+            c_coord = dummy_idx % ncols
+            fig.add_subplot(gs[2 * r_coord, c_coord]).axis('off')
+            fig.add_subplot(gs[2 * r_coord + 1, c_coord]).axis('off')
 
         fig.suptitle(f"Richardson-Lucy Unfolded Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
         out_path = analysis_out / f"{mod}_unfolded_profile.png"
