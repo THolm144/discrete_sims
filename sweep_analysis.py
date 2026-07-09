@@ -313,8 +313,11 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool,  module_name: str, verbo
     common_e_keys = set(up_first) & set(down_first)
     z_lo, z_hi = -calor_thick_mm / 2 - 15.0, calor_thick_mm / 2 + 15.0
     
-    # Apply the calibration offset to the time difference
-    t_offset_ns = -0.16
+    # Dynamic calibration offset based on module type
+    if "triple" in module_name:
+        t_offset_ns = 0.0  # Triple modules don't need the same shift as single modules
+    else:
+        t_offset_ns = -0.16  # Keep the calibration for standard/single-layer variants
     
     valid_z_emits = np.array([
         z_est for z_est in (
