@@ -396,16 +396,19 @@ def main():
     run_dir   = run_dirs[0]
 
     meta       = load_run_metadata(run_dir)
-    world_name = args.world or meta.get("world", "unknown")
+    world_name = args.world or meta.get("world", "scintx_sipm_array")
     world      = load_world(world_name, script_dir)
-    phantom_cm = (world.PHANTOM_CM if world
-                  else meta.get("phantom_cm", [10, 10, 0.6]))
+    
+    # Safely extract geometry array with fallbacks
+    phantom_cm = (world.PHANTOM_CM if world and hasattr(world, 'PHANTOM_CM')
+                  else meta.get("phantom_cm", [10.0, 10.0, 0.6]))
     beam_cfg   = meta.get("beam_config", {})
 
     # ── HARDCODED OVERRIDE FOR PHANTOM_CM ────────────────────────────────
     if world_name == "scintx_sipm_array":
         print("  [Override] Forcing PHANTOM_CM dimensions to: [10.0, 10.0, 0.6]")
         phantom_cm = [10.0, 10.0, 0.6]
+        meta["phantom_cm"] = [10.0, 10.0, 0.6] # Sync back to dict just in case
     # ─────────────────────────────────────────────────────────────────────
 
     print(f"  Batch dir   : {batch_dir}")
