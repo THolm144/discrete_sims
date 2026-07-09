@@ -68,6 +68,13 @@ _N_W = 28
 ARRIVAL_QUANTILE = 0.10
 MIN_PHOTONS_PER_FACE = 1
 
+_KNOWN_MODULE_LYSO_THICK = {
+    "radi_cal_energy": 1.5,
+    "radi_cal_triple": 4.5,
+    "rc_hex":          1.5,
+    "rc_hex_triple":   4.5,
+}
+
 _SQUARE_HOLE_OFFSET = 3.7032
 SQUARE_CAP_XY = np.array([
     [ _SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET],
@@ -219,7 +226,7 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iteration
 # DATA EXTRACTION (same source files/branches as profile_analysis.py, but
 # returns raw per-event z_emit values instead of a pre-smoothed KDE profile)
 # ─────────────────────────────────────────────────────────────────────────────
-def extract_profile_data_unfold(batch_dir: Path, is_hex: bool):
+def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str):
     hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
     if not hit_files: return None
 
@@ -238,7 +245,8 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool):
 
     if detected_z_sensor is None: return None
 
-    lyso_thick = min(_KNOWN_Z_PLANES.items(), key=lambda kv: abs(kv[0] - detected_z_sensor))[1]
+    lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
+    
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
@@ -374,7 +382,7 @@ def main():
         for idx, edir in enumerate(energy_dirs):
             ekey = edir.name
             print(f"    Extracting + unfolding {ekey}")
-            res = extract_profile_data_unfold(edir, is_hex)
+            res = extract_profile_data_unfold(edir, is_hex, mod)
             ax = axs[idx]
             if res is None or len(res["raw_z_emits"]) < 5:
                 ax.text(0.5, 0.5, "Insufficient Data", ha="center", va="center")
