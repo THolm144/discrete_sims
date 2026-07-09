@@ -170,7 +170,7 @@ def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_
             
     return x
 
-def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iterations=40, seed=0, pad_layers=5):
+def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iterations=40, seed=0, pad_layers=5, smoothing_sigma=0.35):
     """
     Poisson-bootstrap wrapper utilizing the extended response matrix and 
     stripping virtual pads post-unfolding.
@@ -194,12 +194,10 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iteration
         sample = raw_z_emits[sample_idx]
         counts, _ = np.histogram(sample, bins=edges)
         raw_reps.append(counts.astype(float))
-        jittered_sigma = sigma_layer * rng.normal(1.0, 0.05)
-        R_syst = extended_response_matrix(n_bins, pad_layers, jittered_sigma)
         
-        # Unfold into extended virtual space
+        # FIX HERE: Pass the parameter down to the deconvolution function
         x_unf_ext = richardson_lucy_deconvolve(
-            counts.astype(float),R_syst, R_sliced, iterations=iterations, smoothing_sigma=0.35
+            counts.astype(float), R_sliced, iterations=iterations, smoothing_sigma=smoothing_sigma
         )
         # Strip padding layers to isolate physical target region
         unfolded_reps.append(x_unf_ext[pad_layers : pad_layers + n_bins])
