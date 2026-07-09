@@ -383,8 +383,16 @@ def main():
 
             lyso_bounds = res["lyso_bounds"]
             sigma_layer = res["sigma_layer"]
+            # NOTE: iterations kept low (~20) deliberately. Richardson-Lucy converges
+            # toward an unregularized MLE solution as iterations -> large, which means
+            # it starts fitting per-bin Poisson noise rather than the underlying shape
+            # once run too long -- that shows up as a spiky curve riding on top of the
+            # raw profile instead of a genuinely deblurred one. If the unfolded curve
+            # still tracks the raw curve too closely (or is too jagged) after this fix,
+            # try iterations in the 5-15 range, or switch to Tikhonov-regularized
+            # inversion instead of RL.
             unfolded_mean, unfolded_std, raw_mean, R = bootstrap_unfold(
-                res["raw_z_emits"], lyso_bounds, sigma_layer, n_boot=40, iterations=150
+                res["raw_z_emits"], lyso_bounds, sigma_layer, n_boot=40, iterations=20
             )
 
             # Normalize for display (shape comparison, not absolute yield)
@@ -423,7 +431,13 @@ def main():
             unf_err_disp = unf_err_norm[::-1]
 
             if truth_curve is not None and np.sum(truth_curve) > 0:
-                truth_norm_disp = (truth_curve / np.sum(truth_curve))[::-1]
+                # NOTE: truth_curve is built directly from `lyso_bounds` (upstream-first
+                # order) and is the correct physical reference -- it is NOT reversed.
+                # Only the ΔT-derived reco arrays get flipped (see raw_norm_disp /
+                # unf_norm_disp below), matching the convention used in
+                # unified_sweep_analysis_optimized.py, where the reco profile is
+                # reversed once at extraction and truth is plotted as-is.
+                truth_norm_disp = truth_curve / np.sum(truth_curve)
                 ax.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.30, edgecolor="#00838f",
                        linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
