@@ -30,6 +30,8 @@ V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 BOUNCE_FACTOR = 0.92
 V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
+T0_OFFSET_NS = 0.32  
+
 _GT_LO_NS = 0.0
 _GT_HI_NS = 50.0
 _TYVEK_THICK_MM = 0.2032
@@ -289,7 +291,10 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     common_e_keys = set(up_first) & set(down_first)
     raw_z_emits = []
     for k in common_e_keys:
-        z_est = V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0
+        
+
+        delta_t_corrected = (down_first[k] - up_first[k]) - T0_OFFSET_NS
+        z_est = V_EFF_MM_NS * delta_t_corrected / 2.0
         if -calor_thick_mm / 2 - 15.0 <= z_est <= calor_thick_mm / 2 + 15.0:
             raw_z_emits.append(z_est)
     raw_z_emits = np.array(raw_z_emits)
