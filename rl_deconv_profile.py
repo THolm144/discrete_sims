@@ -209,6 +209,7 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iteration
     raw_reps = np.array(raw_reps)
     return unfolded_reps.mean(axis=0), unfolded_reps.std(axis=0), raw_reps.mean(axis=0), R_sliced
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA EXTRACTION 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -394,6 +395,9 @@ def main():
                 n_boot=40, iterations=dynamic_iterations, pad_layers=5, 
                 smoothing_sigma=dynamic_smoothing
             )
+
+            
+    
             def safe_norm(v):
                 s = np.sum(v)
                 return v / s if s > 0 else v
@@ -430,6 +434,21 @@ def main():
                 ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
                        linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
+                # ─────────────────────────────────────────────────────────────
+                # NEW: Calculate Fit Metrics using the correct display variables
+                # ─────────────────────────────────────────────────────────────
+                # Use a small epsilon where unfolded uncertainty is 0 to avoid dividing by zero
+                sigma_bins = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
+                chi2 = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins) ** 2)
+                ndf = len(unf_norm_disp)
+                reduced_chi2 = chi2 / ndf
+                
+                mae = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
+                
+                # Dynamic string addition if truth is available
+                fit_stats_label = f" (χ²/ndf={reduced_chi2:.2f}, MAE={mae:.1f}%)"
+                # ─────────────────────────────────────────────────────────────
+
                 # UPGRADE 4 (Cont.): Compute and populate the Unfolded / Truth ratio subpanel
                 with np.errstate(divide='ignore', invalid='ignore'):
                     ratio = unf_norm_disp / truth_norm_disp
@@ -443,6 +462,7 @@ def main():
             else:
                 ax_ratio.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_ratio.transAxes)
                 ax_ratio.set_ylim(0, 2)
+                fit_stats_label = "" # Empty if truth curve isn't loaded
 
             ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
                     marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
