@@ -193,7 +193,7 @@ def _grouped(chunks, how):
     return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
 
 
-def analyze_energy_batch(batch_dir: Path, is_hex: bool, verbose_label: str = ""):
+def analyze_energy_batch(batch_dir: Path, is_hex: bool,  module_name: str, verbose_label: str = ""):
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"))
     if not hit_files:
         return None
@@ -351,7 +351,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, verbose_label: str = "")
 def _run_job(args):
     """Top-level wrapper so it's picklable for ProcessPoolExecutor."""
     mod, ekey, edir, is_hex = args
-    res = analyze_energy_batch(edir, is_hex, verbose_label=ekey)
+    res = analyze_energy_batch(edir, is_hex, mod, verbose_label=ekey)
     return mod, ekey, res
 
 
