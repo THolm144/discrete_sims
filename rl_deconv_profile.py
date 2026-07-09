@@ -153,7 +153,8 @@ def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_
     
     # UPGRADE 3: Broad Physical Prior (Standard broad EM-shower Gamma-like profile)
     t = np.arange(n_true)
-    prior = (t + 1) ** 2.0 * np.exp(-0.15 * t)
+    # A sharper initial power allows the front face of the shower to resolve faster
+    prior = (t + 1) ** 3.0 * np.exp(-0.25 * t)
     x = (prior / np.sum(prior)) * total
     
     Rt = R.T
@@ -382,12 +383,12 @@ def main():
            
             # If resolution is sharp (small sigma_layer), reduce inner-loop smoothing
             dynamic_smoothing = max(0.05, 0.20 * (sigma_layer / 1.5))
-
+            dynamic_iterations = int(max(30, min(80, 50 * (1.5 / sigma_layer))))
             unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
                 res["raw_z_emits"], lyso_bounds, sigma_layer, 
-                n_boot=40, iterations=35, smoothing_sigma=dynamic_smoothing
+                n_boot=40, iterations=dynamic_iterations, pad_layers=5, 
+                smoothing_sigma=dynamic_smoothing
             )
-
             def safe_norm(v):
                 s = np.sum(v)
                 return v / s if s > 0 else v
