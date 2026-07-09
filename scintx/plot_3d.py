@@ -386,7 +386,13 @@ def main():
     os.chdir(script_dir)
 
     batch_dir = utils.find_batch_dir(script_dir, args.world, args.batch_dir)
-    run_dirs  = utils.find_runs(batch_dir)
+    
+    # Grabs run folders if they exist; falls back to the batch folder itself if they don't
+    try:
+        run_dirs = utils.find_runs(batch_dir)
+    except FileNotFoundError:
+        print("  WARNING: No run_* subfolders found. Using batch directory as single run.")
+        run_dirs = [batch_dir]
     run_dir   = run_dirs[0]
 
     meta       = load_run_metadata(run_dir)
@@ -395,6 +401,12 @@ def main():
     phantom_cm = (world.PHANTOM_CM if world
                   else meta.get("phantom_cm", [10, 10, 0.6]))
     beam_cfg   = meta.get("beam_config", {})
+
+    # ── HARDCODED OVERRIDE FOR PHANTOM_CM ────────────────────────────────
+    if world_name == "scintx_sipm_array":
+        print("  [Override] Forcing PHANTOM_CM dimensions to: [10.0, 10.0, 0.6]")
+        phantom_cm = [10.0, 10.0, 0.6]
+    # ─────────────────────────────────────────────────────────────────────
 
     print(f"  Batch dir   : {batch_dir}")
     print(f"  World       : {world_name}")

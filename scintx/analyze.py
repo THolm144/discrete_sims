@@ -8,29 +8,6 @@ analyze.py owns formatting; worlds own data extraction logic.
 World analyze() contract
 ------------------------
     def analyze(batch_dir, run_dirs, meta, utils) -> dict
-
-    Parameters
-    ----------
-    batch_dir   Path to the <energy>keV_<timestamp> directory
-    run_dirs    List of Path objects for each run_N subdirectory
-    meta        Dict returned by utils.load_batch_metadata()
-    utils       The analysis_utils module (passed to avoid circular imports)
-
-    Returns
-    -------
-    A dict with any subset of these keys:
-        hits          dict  {process: count}  — photons reaching detectors
-        exits         dict  {process: count}  — photons leaving target volume
-        dose_centers  np.ndarray | None       — depth bin centers in cm
-        dose_edep     np.ndarray | None       — deposited energy per bin (MeV)
-        timing_res_ps float                   — timing resolution in ps (0 = N/A)
-        extra_lines   list[str]               — world-specific report lines
-        plots_saved   list[str]               — filenames of any extra plots saved
-
-Usage:
-    python3 analyze.py
-    python3 analyze.py --world scintx_sipm_array
-    python3 analyze.py --batch-dir runs/scintx_sipm_array/500000keV_20250101_120000
 """
 
 import argparse
@@ -151,6 +128,12 @@ def main():
     meta       = utils.load_batch_metadata(run_dirs, args.world)
     world_name = meta["world"]
     world      = load_world(world_name, script_dir)
+
+    # ── HARDCODED OVERRIDE FOR PHANTOM_CM ────────────────────────────────
+    if world_name == "scintx_sipm_array":
+        print("  [Override] Forcing PHANTOM_CM dimensions to: [10.0, 10.0, 0.6]")
+        meta["phantom_cm"] = [10.0, 10.0, 0.6]
+    # ─────────────────────────────────────────────────────────────────────
 
     # ── Dispatch to world analyze() hook ─────────────────────────────────
     if world and hasattr(world, "analyze"):
