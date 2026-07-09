@@ -13,8 +13,9 @@ THREADS_PER_RUN=16     # Sweet spot for Geant4 scaling
 MAX_PARALLEL_JOBS=25   # 16 threads * 25 jobs = 400 Cores active simultaneously
 N_RUNS=25              # Total jobs (25 jobs means 1 fully saturated wave)
 
-# FLASH requires high statistical counts for smooth analysis
-N_PARTICLES_PER_RUN=500000 
+# MODIFIED: Scaled down from 500k to 10k to achieve a ~1-3 hour runtime 
+# with 400 active cores under heavy optical tracking overhead.
+N_PARTICLES_PER_RUN=10000 
 
 OPTICAL="on"
 TRACK_OPTICAL="off"
@@ -27,7 +28,7 @@ OUT_DIR="runs/${WORLD}/${ENERGY_KEV}keV_${TIMESTAMP}"
 CERENKOV_FLAG=$( [ "$NO_CERENKOV" = "on" ] && echo "--no-cerenkov" )
 
 mkdir -p "$OUT_DIR"
-echo "================================────────────────=========="
+echo "=========================================================="
 echo " Launching OpenGATE Array on 400 Cores"
 echo " Target Directory : $OUT_DIR"
 echo " Architecture     : ${MAX_PARALLEL_JOBS} concurrent jobs x ${THREADS_PER_RUN} threads"
