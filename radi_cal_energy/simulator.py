@@ -210,6 +210,14 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
                 "ParticleName", "Position", "EventID", "GlobalTime", "LocalTime",
             ]
             registry["hit_actors"].append(hits)
+            if caps.get("optical", False):
+                killer = sim.add_actor("KillActor", f"sensor_killer_{idx}")
+                killer.attached_to = vol_name
+                if hit_filter is not None:
+                    killer.filter = hit_filter
+                else:
+                    F = GateFilterBuilder()
+                    killer.filter = (F.ParticleName == "opticalphoton")
 
     # ── Dose actor ────────────────────────────────────────────────────────
     if caps["dose"]:
