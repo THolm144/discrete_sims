@@ -325,7 +325,7 @@ def main():
     ]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    analysis_out = base_dir / "analysis" / f"sweep_summary_{timestamp}"
+    analysis_out = base_dir / "12_sweep_analysis" / f"sweep_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
 
     master_summary = {mod: {} for mod in modules}
