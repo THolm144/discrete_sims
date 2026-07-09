@@ -53,8 +53,8 @@ _HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 _FILAMENT_R_MM   = 0.900 / 2             
 
 # ── Shower-max band (T-type bore region) ──────────────────────────────────────
-_SHOWER_FIRST    = 8                      
-_SHOWER_LAST     = 11                     
+_SHOWER_FIRST    = 7                    
+_SHOWER_LAST     = 9                    
 _LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
 _FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
 _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
@@ -62,7 +62,7 @@ _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
 _BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
 _BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
 
-_FILAMENT_LEN_MM = 14.0             
+_FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             
 _FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5 * (_BAND_FRONT_MM + _BAND_BACK_MM)
 
 # ── SiPM / card geometry ──────────────────────────────────────────────────────

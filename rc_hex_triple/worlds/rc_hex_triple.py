@@ -60,8 +60,8 @@ _E_TYPE_INDICES  = {0, 2, 4}
 _T_TYPE_INDICES  = {1, 3, 5}
 
 # ── Shower-max band (T-type bore region) ──────────────────────────────────────
-_SHOWER_FIRST    = 8                      
-_SHOWER_LAST     = 11                     
+_SHOWER_FIRST    = 7                     
+_SHOWER_LAST     = 9                    
 _LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
 _FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
 _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
