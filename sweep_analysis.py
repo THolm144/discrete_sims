@@ -268,8 +268,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool,  module_name: str, verbo
 
         is_e = np.isin(channels, e_indices)
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
-        m_e_up = is_e & is_prompt & near_up
-        m_e_dw = is_e & is_prompt & near_dw
+        m_e_up = is_e & is_prompt & near_up & is_optical
+        m_e_dw = is_e & is_prompt & near_dw & is_optical
 
         if m_e_dw.any():
             all_dw_e_times.append(gt[m_e_dw].astype(float))
