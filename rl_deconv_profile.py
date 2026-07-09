@@ -2,37 +2,8 @@
 """
 unfold_profile_analysis.py
 ===========================
-Alternative longitudinal shower-profile reconstruction using Richardson-Lucy
-deconvolution instead of a 2-parameter Gamma fit.
-
-Motivation
-----------
-The original profile_analysis pipeline (see extract_profile_data / gamma fit)
-tries to recover the shower shape from only two scalar constraints
-(Z_cg asymmetry + one hardware depth-fraction window). That's essentially a
-fully-determined 2-parameter fit with zero redundancy, so noise in either
-input pushes the recovered shape around with no goodness-of-fit to check
-against.
-
-This script instead treats the problem as classic unfolding:
-
-    reco_profile(z) = R * true_profile(z)
-
-where R is a Gaussian blur matrix built directly from the *measured* ToF
-resolution (sigma_t_ps -> sigma_z -> sigma_layer) that the existing pipeline
-already computes via the BestMinus timing method. Since that resolution is
-measured per energy point from real per-event data, R does not require any
-extra truth-level tracking info -- it's derived from the same observables
-you already have.
-
-We then invert R via Richardson-Lucy deconvolution (positivity-preserving,
-standard in HEP/astro unfolding) to recover the true longitudinal profile
-from the raw (unsmoothed) binned z_emit histogram. Uncertainty bands come
-from a Poisson bootstrap over the raw per-event z_emit list.
-
-Pulls data from the exact same TARGET_SWEEPS / detector_hits_*.root files as
-profile_analysis.py. Output goes to a new folder so nothing overwrites the
-original pipeline's results.
+Alternative longitudinal shower-profile reconstruction using Regularized Richardson-Lucy
+deconvolution with virtual boundary padding and ratio subpanels.
 """
 
 import os
@@ -43,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import uproot
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 
@@ -50,7 +22,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONSTANTS (identical to profile_analysis.py, so extraction stays consistent)
+# CONSTANTS 
 # ─────────────────────────────────────────────────────────────────────────────
 C_LIGHT_MM_NS = 299.792
 REFRACTIVE_INDEX = 1.60
@@ -89,8 +61,6 @@ HEX_CAP_XY = np.array([
     for i in range(6)
 ])
 
-_KNOWN_Z_PLANES = {91.65: 1.5, 135.15: 4.5}
-
 TARGET_SWEEPS = {
     "radi_cal_energy": Path("/home/uakgun/env/THOMAS/discrete_sims/radi_cal_energy/runs/radi_cal_energy/sweep_20260707_170533"),
     "radi_cal_triple": Path("/home/uakgun/env/THOMAS/discrete_sims/radi_cal_triple/runs/radi_cal_triple/sweep_20260706_171040"),
@@ -99,7 +69,7 @@ TARGET_SWEEPS = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SHARED HELPERS (unchanged logic from profile_analysis.py)
+# SHARED HELPERS 
 # ─────────────────────────────────────────────────────────────────────────────
 def get_lyso_layer_bounds(lyso_thick, calor_thick):
     gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
@@ -150,58 +120,66 @@ def extract_numerical_energy(label: str) -> float:
         return 0.0
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UNFOLDING MACHINERY (new)
+# UNFOLDING MACHINERY (Upgraded with Regularization & Padding)
 # ─────────────────────────────────────────────────────────────────────────────
-def gaussian_response_matrix(n_bins, sigma_bins):
+def extended_response_matrix(n_reco, pad_layers, sigma_bins):
     """
-    Build an n_bins x n_bins Gaussian blur (point-spread) matrix.
-    R[i, j] = probability that a true photon originating in true-bin j is
-    reconstructed in reco-bin i, given a Gaussian smearing kernel of width
-    sigma_bins (in units of bin/layer index).
-
-    Columns are normalized to sum to 1 (flux conservation: every true photon
-    ends up somewhere in the reco histogram).
+    UPGRADE 2: Build a non-square response matrix of shape (n_reco, n_true)
+    where n_true = n_reco + 2 * pad_layers. This accounts for boundary leakage
+    where photons from edge layers spill outside the active volume.
     """
-    sigma_bins = max(float(sigma_bins), 1e-3)  # avoid singular (delta-function) kernel
-    idx = np.arange(n_bins)
-    # R[i, j] = kernel centered at j, evaluated at i
+    sigma_bins = max(float(sigma_bins), 1e-3)
+    n_true = n_reco + 2 * pad_layers
+    idx = np.arange(n_true)
     diff = idx[:, None] - idx[None, :]
-    R = np.exp(-0.5 * (diff / sigma_bins) ** 2)
-    col_sums = R.sum(axis=0, keepdims=True)
+    
+    R_full = np.exp(-0.5 * (diff / sigma_bins) ** 2)
+    col_sums = R_full.sum(axis=0, keepdims=True)
     col_sums[col_sums == 0] = 1.0
-    R = R / col_sums
-    return R
+    R_full /= col_sums
+    
+    # Slice the rows to retain only the physical reconstruction bins
+    return R_full[pad_layers : pad_layers + n_reco, :]
 
-def richardson_lucy_deconvolve(observed, R, iterations=150, eps=1e-12):
+def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_sigma=0.35):
     """
-    Classic Richardson-Lucy update for y = R x, x,y >= 0.
-    Positivity-preserving, standard unfolding method in HEP/astro.
-
-        x_{k+1} = x_k * ( R^T ( y / (R x_k + eps) ) )
-
-    (No extra normalization needed since R's columns already sum to 1,
-    so R^T @ ones = ones.)
+    UPGRADE 1 & 3: Regularized Richardson-Lucy with a physical Gamma prior.
+    Accepts non-square matrix R to correctly handle spatial boundary limits.
     """
-    n = R.shape[1]
+    n_reco, n_true = R.shape
     total = np.sum(observed)
     if total <= 0:
-        return np.zeros(n)
-    x = np.full(n, total / n, dtype=float)  # flat prior
+        return np.zeros(n_true)
+    
+    # UPGRADE 3: Broad Physical Prior (Standard broad EM-shower Gamma-like profile)
+    t = np.arange(n_true)
+    prior = (t + 1) ** 2.0 * np.exp(-0.15 * t)
+    x = (prior / np.sum(prior)) * total
+    
     Rt = R.T
+    eff = Rt @ np.ones(n_reco)  # Efficiency mapping for missing edge tracking
+    eff[eff == 0] = 1.0
+    
     for _ in range(iterations):
         denom = R @ x + eps
-        x = x * (Rt @ (observed / denom))
+        x = x * (Rt @ (observed / denom)) / eff
+        
+        # UPGRADE 1: High-frequency noise smoothing step inside iteration loop
+        if smoothing_sigma > 0:
+            x = gaussian_filter1d(x, sigma=smoothing_sigma)
+            
     return x
 
-def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iterations=150, seed=0):
+def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iterations=40, seed=0, pad_layers=5):
     """
-    Poisson-bootstrap the raw per-event z_emit list, rebin + deconvolve each
-    replicate, and return (mean_unfolded, std_unfolded, mean_raw_binned).
+    Poisson-bootstrap wrapper utilizing the extended response matrix and 
+    stripping virtual pads post-unfolding.
     """
     n_bins = len(lyso_bounds)
     edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
     raw_z_emits = np.asarray(raw_z_emits)
-    R = gaussian_response_matrix(n_bins, sigma_layer)
+    
+    R_sliced = extended_response_matrix(n_bins, pad_layers, sigma_layer)
 
     rng = np.random.default_rng(seed)
     n_events = len(raw_z_emits)
@@ -209,22 +187,27 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iteration
     raw_reps = []
 
     if n_events == 0:
-        return np.zeros(n_bins), np.zeros(n_bins), np.zeros(n_bins), R
+        return np.zeros(n_bins), np.zeros(n_bins), np.zeros(n_bins), R_sliced
 
     for _ in range(n_boot):
-        sample_idx = rng.integers(0, n_events, size=n_events)  # resample w/ replacement
+        sample_idx = rng.integers(0, n_events, size=n_events)
         sample = raw_z_emits[sample_idx]
         counts, _ = np.histogram(sample, bins=edges)
         raw_reps.append(counts.astype(float))
-        unfolded_reps.append(richardson_lucy_deconvolve(counts.astype(float), R, iterations=iterations))
+        
+        # Unfold into extended virtual space
+        x_unf_ext = richardson_lucy_deconvolve(
+            counts.astype(float), R_sliced, iterations=iterations, smoothing_sigma=0.35
+        )
+        # Strip padding layers to isolate physical target region
+        unfolded_reps.append(x_unf_ext[pad_layers : pad_layers + n_bins])
 
     unfolded_reps = np.array(unfolded_reps)
     raw_reps = np.array(raw_reps)
-    return unfolded_reps.mean(axis=0), unfolded_reps.std(axis=0), raw_reps.mean(axis=0), R
+    return unfolded_reps.mean(axis=0), unfolded_reps.std(axis=0), raw_reps.mean(axis=0), R_sliced
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DATA EXTRACTION (same source files/branches as profile_analysis.py, but
-# returns raw per-event z_emit values instead of a pre-smoothed KDE profile)
+# DATA EXTRACTION 
 # ─────────────────────────────────────────────────────────────────────────────
 def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str):
     hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
@@ -302,8 +285,6 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
         for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0):
             dw_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
 
-    # Raw per-event ToF depth estimator (no KDE smoothing -- deconvolution needs
-    # actual counts, and pre-smoothing here would double-blur the profile)
     common_e_keys = set(up_first) & set(down_first)
     raw_z_emits = []
     for k in common_e_keys:
@@ -312,7 +293,6 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
             raw_z_emits.append(z_est)
     raw_z_emits = np.array(raw_z_emits)
 
-    # Timing resolution -> this is the measured PSF width for the response matrix
     common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
     all_bm_raw_ps = []
     for e in common_t_evs:
@@ -348,7 +328,7 @@ def main():
     analysis_out = base_dir / "unfolded_profile_analysis" / f"unfolded_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
 
-    print("Spawning Unfolded Longitudinal Profile Extractor...")
+    print("Spawning Regularized Unfolded Profile Extractor...")
     print(f"Targeting outputs to: {analysis_out.relative_to(base_dir)}\n")
 
     try:
@@ -376,34 +356,34 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        fig, axs = plt.subplots(nrows, ncols, figsize=(6.5 * ncols, 4.8 * nrows), squeeze=False)
-        axs = axs.flatten()
+        # UPGRADE 4: Replaced simple subplots with a complex GridSpec for Ratio attachments
+        fig = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
+        gs = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
 
         for idx, edir in enumerate(energy_dirs):
             ekey = edir.name
             print(f"    Extracting + unfolding {ekey}")
             res = extract_profile_data_unfold(edir, is_hex, mod)
-            ax = axs[idx]
+            
+            r_coord = idx // ncols
+            c_coord = idx % ncols
+            ax_main = fig.add_subplot(gs[2 * r_coord, c_coord])
+            ax_ratio = fig.add_subplot(gs[2 * r_coord + 1, c_coord], sharex=ax_main)
+
             if res is None or len(res["raw_z_emits"]) < 5:
-                ax.text(0.5, 0.5, "Insufficient Data", ha="center", va="center")
-                ax.set_title(ekey, fontsize=11, fontweight="bold")
+                ax_main.text(0.5, 0.5, "Insufficient Data", ha="center", va="center")
+                ax_main.set_title(ekey, fontsize=11, fontweight="bold")
+                ax_ratio.axis('off')
                 continue
 
             lyso_bounds = res["lyso_bounds"]
             sigma_layer = res["sigma_layer"]
-            # NOTE: iterations kept low (~20) deliberately. Richardson-Lucy converges
-            # toward an unregularized MLE solution as iterations -> large, which means
-            # it starts fitting per-bin Poisson noise rather than the underlying shape
-            # once run too long -- that shows up as a spiky curve riding on top of the
-            # raw profile instead of a genuinely deblurred one. If the unfolded curve
-            # still tracks the raw curve too closely (or is too jagged) after this fix,
-            # try iterations in the 5-15 range, or switch to Tikhonov-regularized
-            # inversion instead of RL.
-            unfolded_mean, unfolded_std, raw_mean, R = bootstrap_unfold(
-                res["raw_z_emits"], lyso_bounds, sigma_layer, n_boot=40, iterations=20
+            
+            # Boosted iterations to 35 safely because regularization stops noise propagation
+            unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
+                res["raw_z_emits"], lyso_bounds, sigma_layer, n_boot=40, iterations=35, pad_layers=5
             )
 
-            # Normalize for display (shape comparison, not absolute yield)
             def safe_norm(v):
                 s = np.sum(v)
                 return v / s if s > 0 else v
@@ -412,10 +392,8 @@ def main():
             unf_norm = safe_norm(unfolded_mean)
             unf_err_norm = unfolded_std / np.sum(unfolded_mean) if np.sum(unfolded_mean) > 0 else unfolded_std
 
-            # Optional truth overlay (same source as original pipeline)
             truth_curve = None
             calor_thick = res["calor_thick"]
-            lyso_thick = res["lyso_thick"]
             run_dirs = sorted(list(set(fp.parent for fp in edir.rglob("detector_hits_*.root"))))
             if utils and run_dirs:
                 try:
@@ -433,42 +411,53 @@ def main():
                 except Exception:
                     truth_curve = None
 
-            # Layer axis: reverse to match original pipeline's display convention
             raw_norm_disp = raw_norm[::-1]
             unf_norm_disp = unf_norm[::-1]
             unf_err_disp = unf_err_norm[::-1]
 
             if truth_curve is not None and np.sum(truth_curve) > 0:
-                # NOTE: truth_curve is built directly from `lyso_bounds` (upstream-first
-                # order) and is the correct physical reference -- it is NOT reversed.
-                # Only the ΔT-derived reco arrays get flipped (see raw_norm_disp /
-                # unf_norm_disp below), matching the convention used in
-                # unified_sweep_analysis_optimized.py, where the reco profile is
-                # reversed once at extraction and truth is plotted as-is.
                 truth_norm_disp = truth_curve / np.sum(truth_curve)
-                ax.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.30, edgecolor="#00838f",
+                ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
                        linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
-            ax.plot(layers, raw_norm_disp, color="gray", linewidth=1.4, linestyle=":",
-                    marker=".", markersize=4, alpha=0.8, label="Raw ΔT Profile (blurred)")
-            ax.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
-                        linewidth=2.2, marker="o", markersize=4.5, capsize=3, capthick=1.0,
+                # UPGRADE 4 (Cont.): Compute and populate the Unfolded / Truth ratio subpanel
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    ratio = unf_norm_disp / truth_norm_disp
+                    ratio_err = unf_err_disp / truth_norm_disp
+                
+                ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors[mod],
+                                  fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
+                ax_ratio.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
+                ax_ratio.set_ylabel("Unf / Truth", fontsize=8)
+                ax_ratio.set_ylim(0.4, 1.6)
+            else:
+                ax_ratio.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_ratio.transAxes)
+                ax_ratio.set_ylim(0, 2)
+
+            ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
+                    marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
+            ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
+                        linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
                         label=f"RL-Unfolded (σ_layer={sigma_layer:.2f})")
 
-            ax.set_title(f"{ekey}  (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
-            ax.set_xlabel("LYSO Layer Number", fontsize=9)
-            ax.set_ylabel("Normalized Density Fraction", fontsize=9)
-            ax.set_xlim(0, _N_LYSO + 1)
-            ax.grid(True, linestyle=":", alpha=0.5)
-            ax.legend(loc="upper right", fontsize=7.5)
+            ax_main.set_title(f"{ekey}  (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
+            ax_main.set_ylabel("Normalized Fraction", fontsize=9)
+            ax_main.set_xlim(0, _N_LYSO + 1)
+            ax_main.tick_params(labelbottom=False)
+            ax_main.grid(True, linestyle=":", alpha=0.4)
+            ax_main.legend(loc="upper right", fontsize=7.2)
 
-        for idx in range(n_energies, len(axs)):
-            fig.delaxes(axs[idx])
+            ax_ratio.set_xlabel("LYSO Layer Number", fontsize=9)
+            ax_ratio.set_xlim(0, _N_LYSO + 1)
+            ax_ratio.grid(True, linestyle=":", alpha=0.4)
 
-        fig.suptitle(f"Richardson-Lucy Unfolded Longitudinal Profile — {mod}", fontsize=14, fontweight="bold", y=0.995)
-        fig.tight_layout()
+        for dummy_idx in range(n_energies, len(gs) // 2):
+            # Clean up missing panels if any
+            fig.add_subplot(dummy_idx).axis('off')
+
+        fig.suptitle(f"Richardson-Lucy Unfolded Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
         out_path = analysis_out / f"{mod}_unfolded_profile.png"
-        fig.savefig(out_path, dpi=200)
+        fig.savefig(out_path, dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f"    Saved: {out_path.name}")
 
