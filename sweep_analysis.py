@@ -29,7 +29,7 @@ Fun Facts / Notes
 
 Outputs (in analysis/sweep_summary_<timestamp>/):
     {module}_timing_panels.png
-    {module}_tof_panels.png
+    profiles/{module}_{ekey}_profile.png  <-- New Individual Unfolded Profiles
     {module}_dw_e_hits_time.png
     {module}_dw_prompt_distance_cropped.png
     {module}_intensity_ratio.png
@@ -312,9 +312,13 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool,  module_name: str, verbo
     # ── E-type ToF z_emit reconstruction ──
     common_e_keys = set(up_first) & set(down_first)
     z_lo, z_hi = -calor_thick_mm / 2 - 15.0, calor_thick_mm / 2 + 15.0
+    
+    # Apply the calibration offset to the time difference
+    t_offset_ns = -0.16
+    
     valid_z_emits = np.array([
         z_est for z_est in (
-            V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0 for k in common_e_keys
+            V_EFF_MM_NS * (down_first[k] - up_first[k] - t_offset_ns) / 2.0 for k in common_e_keys
         ) if z_lo <= z_est <= z_hi
     ])
 
@@ -526,26 +530,36 @@ def main():
         plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 2. TOF Profile Figures
+        # 2. TOF PROFILE RECONSTRUCTION & RL-UNFOLDING
         # ─────────────────────────────────────────────────────────────────────
-        fig_tof, axs_tof = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
-        axs_tof = axs_tof.flatten()
+        prof_out_dir = analysis_out / "profiles"
+        prof_out_dir.mkdir(exist_ok=True)
 
-        for idx, ekey in enumerate(energy_keys):
-            ax = axs_tof[idx]
+        for ekey in energy_keys:
             summ = master_summary[mod][ekey]
-            prof = summ["tof_profile"]
-            s_t = summ["sigma_t_ps"]
-            pitch = summ["pitch_mm"]
+            raw_profile = summ["tof_profile"]
+            sigma_t_ps = summ["sigma_t_ps"]
+            pitch_mm = summ["pitch_mm"]
             lyso_thick = summ["lyso_thick"]
+            run_dirs = summ.get("run_dirs", [])
+            
+            # Skip empty profile arrays
+            if np.sum(raw_profile) == 0:
+                continue
 
-            sigma_z = V_EFF_MM_NS * (s_t / 1000.0)
-            sigma_layer = sigma_z / pitch
+            # Normalize the raw profile for display
+            raw_norm_disp = raw_profile / np.sum(raw_profile)
+            
+            # Calculate the blurring extent (sigma_layer)
+            s_z = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
+            sigma_layer = s_z / pitch_mm if pitch_mm > 0 else 1.0
 
-            total_hits = np.sum(prof)
-            norm_prof = prof / total_hits if total_hits > 0 else prof
-
-            run_dirs = summ.get("run_dirs", [])  # cached, no re-glob
+            # ── 1. Unfold and Load Truth ──
+            if utils is not None and hasattr(utils, 'rl_unfold'):
+                unf_norm_disp, unf_err_disp = utils.rl_unfold(raw_norm_disp, sigma_layer)
+            else:
+                unf_norm_disp = raw_norm_disp
+                unf_err_disp = np.zeros_like(raw_norm_disp)
 
             truth_curve = None
             if utils and run_dirs:
@@ -567,30 +581,64 @@ def main():
                 except Exception:
                     truth_curve = None
 
+            # ── 2. Setup Figure & Subpanels ──
+            fig_prof, (ax_main, ax_ratio) = plt.subplots(
+                2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [3, 1]}, sharex=True
+            )
+
+            # ── 3. Apply the fixed RL-Unfolding Plot Logic ──
             if truth_curve is not None and np.sum(truth_curve) > 0:
-                norm_truth = truth_curve / np.sum(truth_curve)
-                ax.bar(layers, norm_truth, color="#00bcd4", alpha=0.35, edgecolor="#00838f",
+                truth_norm_disp = truth_curve / np.sum(truth_curve)
+                ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
                        linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
-            n_ev = summ["n_e_coincidences"]
-            ax.errorbar(layers, norm_prof, xerr=sigma_layer, color=mod_colors[mod],
-                        linewidth=2, marker="o", markersize=4, capsize=3, capthick=1.0,
-                        label=f"ΔT Coincidence (N={n_ev})")
+                # Calculate Fit Metrics using the correct display variables
+                sigma_bins = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
+                chi2 = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins) ** 2)
+                ndf = len(unf_norm_disp)
+                reduced_chi2 = chi2 / ndf
+                
+                mae = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
+                
+                fit_stats_label = f" (χ²/ndf={reduced_chi2:.2f}, MAE={mae:.1f}%)"
 
-            ax.set_title(f"{ekey}", fontsize=11, fontweight="bold")
-            ax.set_xlabel("LYSO Layer Number", fontsize=9)
-            ax.set_ylabel("Normalized Density Fraction", fontsize=9)
-            ax.set_xlim(0, _N_LYSO + 1)
-            ax.grid(True, linestyle=":", alpha=0.5)
-            ax.legend(loc="upper right", fontsize=8)
+                # Compute and populate the Unfolded / Truth ratio subpanel
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    ratio = unf_norm_disp / truth_norm_disp
+                    ratio_err = unf_err_disp / truth_norm_disp
+                
+                ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors[mod],
+                                  fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
+                ax_ratio.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
+                ax_ratio.set_ylabel("Unf / Truth", fontsize=8)
+                ax_ratio.set_ylim(0.4, 1.6)
+            else:
+                ax_ratio.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_ratio.transAxes)
+                ax_ratio.set_ylim(0, 2)
+                fit_stats_label = ""
 
-        for idx in range(n_energies, len(axs_tof)):
-            fig_tof.delaxes(axs_tof[idx])
+            # Plot Raw Profile
+            ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
+                    marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
+            
+            # Plot Unfolded Profile
+            ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
+                        linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
+                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
 
-        fig_tof.suptitle(f"Continuous E-Type ToF Reconstructions — {mod}", fontsize=14, fontweight="bold", y=0.98)
-        fig_tof.tight_layout()
-        fig_tof.savefig(analysis_out / f"{mod}_tof_panels.png", dpi=200)
-        plt.close(fig_tof)
+            # ── 4. Formatting & Export ──
+            ax_main.set_ylabel("Normalized Intensity", fontsize=10)
+            ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12, fontweight="bold")
+            ax_main.grid(True, linestyle=":", alpha=0.6)
+            ax_main.legend(fontsize=9)
+            
+            ax_ratio.set_xlabel("Layer Number", fontsize=10)
+            ax_ratio.set_xticks(layers[::2])
+            ax_ratio.grid(True, linestyle=":", alpha=0.6)
+            
+            fig_prof.tight_layout()
+            fig_prof.savefig(prof_out_dir / f"{mod}_{ekey}_profile.png", dpi=200)
+            plt.close(fig_prof)
 
         # ─────────────────────────────────────────────────────────────────────
         # 3. DOWNSTREAM E-TYPE SIPM HITS VS TIME

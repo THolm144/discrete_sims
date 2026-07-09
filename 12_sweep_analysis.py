@@ -395,9 +395,102 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # [Skipping intermediate per-module plot generation here for brevity - standard logic applies as in original]
-        # (Timing panels, TOF panels, downstream hits, distance cropped, and intensity ratios remain functionally identical)
+       
+        # ─────────────────────────────────────────────────────────────────────
+        # 3.5. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
+        # ─────────────────────────────────────────────────────────────────────
+        prof_out_dir = analysis_out / "profiles"
+        prof_out_dir.mkdir(exist_ok=True)
 
+        for ekey in energy_keys:
+            raw_profile = master_summary[mod][ekey]["tof_profile"]
+            sigma_t_ps = master_summary[mod][ekey]["sigma_t_ps"]
+            pitch_mm = master_summary[mod][ekey]["pitch_mm"]
+            
+            # Skip empty profile arrays
+            if np.sum(raw_profile) == 0:
+                continue
+
+            # Normalize the raw profile for display
+            raw_norm_disp = raw_profile / np.sum(raw_profile)
+            
+            # Calculate the blurring extent (sigma_layer)
+            s_z = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
+            sigma_layer = s_z / pitch_mm if pitch_mm > 0 else 1.0
+
+            # ── 1. Unfold and Load Truth ──
+            # (Assuming you are using your analysis_utils for the actual math and data loading)
+            if utils is not None and hasattr(utils, 'rl_unfold'):
+                unf_norm_disp, unf_err_disp = utils.rl_unfold(raw_norm_disp, sigma_layer)
+            else:
+                unf_norm_disp = raw_norm_disp
+                unf_err_disp = np.zeros_like(raw_norm_disp)
+
+            if utils is not None and hasattr(utils, 'load_truth_curve'):
+                truth_curve = utils.load_truth_curve(mod, ekey)
+            else:
+                truth_curve = None
+
+            # ── 2. Setup Figure & Subpanels ──
+            fig_prof, (ax_main, ax_ratio) = plt.subplots(
+                2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [3, 1]}, sharex=True
+            )
+
+            # ── 3. Apply the fixed RL-Unfolding Plot Logic ──
+            if truth_curve is not None and np.sum(truth_curve) > 0:
+                truth_norm_disp = truth_curve / np.sum(truth_curve)
+                ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
+                       linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
+
+                # Calculate Fit Metrics using the correct display variables
+                # Use a small epsilon where unfolded uncertainty is 0 to avoid dividing by zero
+                sigma_bins = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
+                chi2 = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins) ** 2)
+                ndf = len(unf_norm_disp)
+                reduced_chi2 = chi2 / ndf
+                
+                mae = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
+                
+                # Dynamic string addition if truth is available
+                fit_stats_label = f" (χ²/ndf={reduced_chi2:.2f}, MAE={mae:.1f}%)"
+
+                # Compute and populate the Unfolded / Truth ratio subpanel
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    ratio = unf_norm_disp / truth_norm_disp
+                    ratio_err = unf_err_disp / truth_norm_disp
+                
+                ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors[mod],
+                                  fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
+                ax_ratio.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
+                ax_ratio.set_ylabel("Unf / Truth", fontsize=8)
+                ax_ratio.set_ylim(0.4, 1.6)
+            else:
+                ax_ratio.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_ratio.transAxes)
+                ax_ratio.set_ylim(0, 2)
+                fit_stats_label = "" # Empty if truth curve isn't loaded
+
+            # Plot Raw Profile
+            ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
+                    marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
+            
+            # Plot Unfolded Profile
+            ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
+                        linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
+                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
+
+            # ── 4. Formatting & Export ──
+            ax_main.set_ylabel("Normalized Intensity", fontsize=10)
+            ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12, fontweight="bold")
+            ax_main.grid(True, linestyle=":", alpha=0.6)
+            ax_main.legend(fontsize=9)
+            
+            ax_ratio.set_xlabel("Layer Number", fontsize=10)
+            ax_ratio.set_xticks(layers[::2])
+            ax_ratio.grid(True, linestyle=":", alpha=0.6)
+            
+            fig_prof.tight_layout()
+            fig_prof.savefig(prof_out_dir / f"{mod}_{ekey}_profile.png", dpi=200)
+            plt.close(fig_prof)
         # ─────────────────────────────────────────────────────────────────────
         # 3.7. ENERGY LINEARITY AND RESOLUTION PANELS (Bug fixes applied)
         # ─────────────────────────────────────────────────────────────────────
