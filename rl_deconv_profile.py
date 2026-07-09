@@ -194,10 +194,12 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iteration
         sample = raw_z_emits[sample_idx]
         counts, _ = np.histogram(sample, bins=edges)
         raw_reps.append(counts.astype(float))
+        jittered_sigma = sigma_layer * rng.normal(1.0, 0.05)
+        R_syst = extended_response_matrix(n_bins, pad_layers, jittered_sigma)
         
         # Unfold into extended virtual space
         x_unf_ext = richardson_lucy_deconvolve(
-            counts.astype(float), R_sliced, iterations=iterations, smoothing_sigma=0.35
+            counts.astype(float),R_syst, R_sliced, iterations=iterations, smoothing_sigma=0.35
         )
         # Strip padding layers to isolate physical target region
         unfolded_reps.append(x_unf_ext[pad_layers : pad_layers + n_bins])
@@ -379,9 +381,13 @@ def main():
             lyso_bounds = res["lyso_bounds"]
             sigma_layer = res["sigma_layer"]
             
-            # Boosted iterations to 35 safely because regularization stops noise propagation
+           
+            # If resolution is sharp (small sigma_layer), reduce inner-loop smoothing
+            dynamic_smoothing = max(0.05, 0.20 * (sigma_layer / 1.5))
+
             unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
-                res["raw_z_emits"], lyso_bounds, sigma_layer, n_boot=40, iterations=35, pad_layers=5
+                res["raw_z_emits"], lyso_bounds, sigma_layer, 
+                n_boot=40, iterations=35, smoothing_sigma=dynamic_smoothing
             )
 
             def safe_norm(v):
@@ -451,7 +457,7 @@ def main():
             ax_ratio.set_xlim(0, _N_LYSO + 1)
             ax_ratio.grid(True, linestyle=":", alpha=0.4)
 
-        # TO THIS:
+        
         for dummy_idx in range(n_energies, nrows * ncols):
             r_coord = dummy_idx // ncols
             c_coord = dummy_idx % ncols
