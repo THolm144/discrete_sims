@@ -111,8 +111,28 @@ def build_report(batch_dir: Path, meta: dict, results: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN
+# FALLBACK ANALYZE METHOD
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _generic_analyze(batch_dir: Path, run_dirs: list, meta: dict) -> dict:
+    """Fallback: optical hits + exits + dose, no world-specific logic."""
+    hits_files  = [p for d in run_dirs for p in sorted(d.glob("detector_hits*.root"))]
+    exits_files = [d / "optical_exited.root" for d in run_dirs]
+
+    hits        = utils.analyse_hits(hits_files)
+    exits       = utils.analyse_exits(exits_files)
+    centers, edep = utils.load_dose_mhd(run_dirs, meta["phantom_cm"])
+    timing_res  = (utils.extract_timing_resolution(hits_files)
+                   if hits_files else 0.0)
+
+    return {
+        "hits":         hits,
+        "exits":        exits,
+        "dose_centers": centers,
+        "dose_edep":    edep,
+        "timing_res_ps": timing_res,
+    }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
@@ -130,12 +150,11 @@ def main():
     print(f"  Run count   : {len(run_dirs)}")
 
     # Safely load metadata; handle cases where phantom_cm is missing entirely
-    # Safely load metadata; handle cases where phantom_cm is missing entirely
     try:
         meta = utils.load_batch_metadata(run_dirs, args.world)
     except RuntimeError as e:
         print(f"  [Warning] Metadata discovery failed: {e}")
-        print("  [Warning] Dynamically reconstruction of fallback metadata dictionary...")
+        print("  [Warning] Dynamically reconstructing fallback metadata dictionary...")
         
         world_name = args.world or "scintx_sipm_array"
         
@@ -158,7 +177,6 @@ def main():
             if run_meta_file.exists():
                 try:
                     raw_m = json.loads(run_meta_file.read_text())
-                    # Look for standard keys used across different iterations
                     accumulated_primaries += raw_m.get("n_primaries", raw_m.get("total_primaries", 0))
                     accumulated_optical   += raw_m.get("total_optical", raw_m.get("n_optical", 0))
                 except Exception:
@@ -170,17 +188,6 @@ def main():
         
         print(f"  [Recovered] Estimated total primaries: {meta['total_primaries']}")
         print(f"  [Recovered] Estimated total optical  : {meta['total_optical']}")
-        
-        # Attempt a quick repair on total primaries/optical if other keys exist
-        try:
-            first_run_meta = run_dirs[0] / "sim_metadata.json"
-            if first_run_meta.exists():
-                import json
-                raw_m = json.loads(first_run_meta.read_text())
-                meta["total_primaries"] = raw_m.get("n_primaries", 0) * len(run_dirs)
-                meta["total_optical"]   = raw_m.get("total_optical", 0) * len(run_dirs)
-        except Exception:
-            pass
 
     world_name = meta["world"]
     world      = load_world(world_name, script_dir)
@@ -190,6 +197,30 @@ def main():
         print("  [Override] Forcing PHANTOM_CM dimensions to: [10.0, 10.0, 0.6]")
         meta["phantom_cm"] = [10.0, 10.0, 0.6]
     # ─────────────────────────────────────────────────────────────────────
+
+    # ── Dispatch to world analyze() hook ─────────────────────────────────
+    if world and hasattr(world, "analyze"):
+        print(f"  Dispatching to {world_name}.analyze() …")
+        results = world.analyze(batch_dir, run_dirs, meta, utils)
+    else:
+        print("  No world analyze() hook — running generic analysis.")
+        results = _generic_analyze(batch_dir, run_dirs, meta)
+
+    # ── Standard depth-dose plot ──────────────────────────────────────────
+    centers = results.get("dose_centers")
+    edep    = results.get("dose_edep")
+    if centers is not None and edep is not None:
+        plot_path = utils.plot_dose_profile(
+            centers, edep, meta["total_primaries"],
+            meta["phantom_cm"], world_name, batch_dir,
+        )
+        results.setdefault("plots_saved", []).append(plot_path.name)
+
+    # ── Report ────────────────────────────────────────────────────────────
+    report = build_report(batch_dir, meta, results)
+    print("\n" + report)
+    (batch_dir / "batch_analysis.txt").write_text(report)
+    print(f"\n  Report → {batch_dir / 'batch_analysis.txt'}")
 
 
 if __name__ == "__main__":
