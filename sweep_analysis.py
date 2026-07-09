@@ -76,6 +76,14 @@ ARRIVAL_QUANTILE = 0.10
 MIN_PHOTONS_PER_FACE = 1  # kept for documentation; groupby already enforces >=1
 
 # ── Geometry mappings ──────────────────────────────────────────────────────
+
+_KNOWN_MODULE_LYSO_THICK = {
+    "radi_cal_energy": 1.5,
+    "radi_cal_triple": 4.5,
+    "rc_hex":          1.5,
+    "rc_hex_triple":   4.5,
+}
+
 _SQUARE_HOLE_OFFSET = 3.7032
 SQUARE_CAP_XY = np.array([
     [ _SQUARE_HOLE_OFFSET,  _SQUARE_HOLE_OFFSET],  # 0 (T)
@@ -208,7 +216,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, verbose_label: str = "")
     if detected_z_sensor is None:
         return None
 
-    lyso_thick = min(_KNOWN_Z_PLANES.items(), key=lambda kv: abs(kv[0] - detected_z_sensor))[1]
+    lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
