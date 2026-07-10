@@ -27,10 +27,28 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 C_LIGHT_MM_NS = 299.792
 REFRACTIVE_INDEX = 1.60
 V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR = 1.0
-V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
-T0_OFFSET_NS = - 0.32  
+
+
+# Fallback base offset if dynamic energy key isn't matched
+DEFAULT_T0_OFFSET_NS = -0.32  
+
+# Module-specific, energy-dependent timing offsets (in ns)
+CALIBRATION_T0_OFFSETS = {
+    "radi_cal_energy": {25.0: -0.320, 50.0: -0.300, 100.0: -0.330, 200.0: -0.320},
+    "radi_cal_triple": {25.0: -0.370, 50.0: -0.270, 100.0: -0.250, 200.0: -0.190},
+    "rc_hex":          {25.0: -0.290, 50.0: -0.310, 100.0: -0.180, 200.0: -0.085},
+    "rc_hex_triple":   {25.0: -0.370, 50.0: -0.300, 100.0: -0.220, 200.0: -0.050},
+}
+
+# Module-specific, energy-dependent bounce factors
+CALIBRATION_BOUNCE_FACTORS = {
+    "radi_cal_energy": {25.0: 1.17, 50.0: 1.20, 100.0: 1.23, 200.0: 1.27},
+    "radi_cal_triple": {25.0: 1.45, 50.0: 1.50, 100.0: 1.55, 200.0: 1.65},
+    "rc_hex":          {25.0: 1.02, 50.0: 1.02, 100.0: 1.01, 200.0: 1.01},
+    "rc_hex_triple":   {25.0: 1.19, 50.0: 1.23, 100.0: 1.33, 200.0: 1.73},
+}
+
 
 _GT_LO_NS = 0.0
 _GT_HI_NS = 50.0
@@ -130,45 +148,21 @@ def extended_response_matrix(n_reco, pad_layers, sigma_bins, mod):
     return R_sliced 
 
 def tikhonov_deconvolve(observed, R, alpha=0.1, sys_err=0.03):
-    """
-    Solves the analytic least-squares inversion with a second-derivative 
-    Tikhonov smoothness constraint, incorporating a systematic covariance component.
-    """
     n_reco, n_true = R.shape
     total = np.sum(observed)
     if total <= 0:
         return np.zeros(n_true)
 
-    # 1. Build Data Covariance Matrix (Poisson + Systematic Scaling Floor)
     variance = observed + (sys_err * observed) ** 2 + 1e-6
     V_inv = np.diag(1.0 / variance)
 
-    # 2. Build Tikhonov Regularization Operator (Second Derivative Penalization)
     D = np.zeros((n_true - 2, n_true))
     for i in range(n_true - 2):
         D[i, i]     = 1.0
         D[i, i + 1] = -2.0
         D[i, i + 2] = 1.0
 
-    # --- NEW: Asymmetric Tail Weighting ---
-    # We construct a weighting diagonal vector that relaxes the penalty 
-    # where the exponential tail develops (deeper layer index = smaller penalty)
-    # Layer index here goes from 0 (front) to 38 (back due to pad_layers=5)
-    layer_indices = np.arange(n_true - 2)
-    
-    # Create an exponential relaxation factor. Adjust the scale (e.g., 8.0) 
-    # if you want the tail constraint to drop sooner or later.
-    tail_relaxation = np.exp(-np.maximum(0, layer_indices - 12) / 8.0)
-    
-    # Alternatively, a simple step/linear drop-off also works elegantly:
-    # tail_relaxation = np.where(layer_indices > 13, 0.15, 1.0) 
-
-    W = np.diag(tail_relaxation)
-    WD = W @ D
-
-    # 3. Formulate and Solve Symmetric Matrix Direct System
-    lhs = R.T @ V_inv @ R + alpha * (WD.T @ WD)
-    rhs = R.T @ V_inv @ observed * (D.T @ D)
+    lhs = R.T @ V_inv @ R + alpha * (D.T @ D)
     rhs = R.T @ V_inv @ observed
 
     try:
@@ -176,14 +170,10 @@ def tikhonov_deconvolve(observed, R, alpha=0.1, sys_err=0.03):
     except np.linalg.LinAlgError:
         x = np.linalg.lstsq(lhs, rhs, rcond=None)[0]
 
-    # Post-processing non-negativity protection threshold
     x[x < 0] = 0.0
     return x
 
 def bootstrap_unfold_tikhonov(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot=40, seed=0, pad_layers=5, alpha=0.1):
-    """
-    Poisson-bootstrap wrapper utilizing Tikhonov Matrix Regularization inversion.
-    """
     n_bins = len(lyso_bounds)
     edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
     raw_z_emits = np.asarray(raw_z_emits)
@@ -217,7 +207,7 @@ def bootstrap_unfold_tikhonov(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA EXTRACTION 
 # ─────────────────────────────────────────────────────────────────────────────
-def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str):
+def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str, t0_offset: float, bounce_factor: float):
     hit_files = sorted(list(batch_dir.rglob("detector_hits_*.root")))
     if not hit_files: return None
 
@@ -246,15 +236,14 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     t_indices = {1, 3, 5} if is_hex else {0, 1}
     e_indices = {0, 2, 4} if is_hex else {2, 3}
 
-    up_first, down_first = {}, {}
-    up_times_by_ev, dw_times_by_ev = {}, {}
+    up_first_raw, down_first_raw = {}, {}
+    up_times_raw, dw_times_raw = {}, {}
 
     total_raw_entries = 0
     total_e_up, total_e_dw = 0, 0
     total_t_up, total_t_dw = 0, 0
 
-    for fpath in hit_files:
-        run_tag = fpath.parent.name
+    for idx, fpath in enumerate(hit_files):
         try:
             with uproot.open(fpath) as f:
                 tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
@@ -294,64 +283,56 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
         total_t_dw += np.sum(m_t_dw)
 
         for eid, ti in zip(ev[m_e_up], gt[m_e_up]):
-            key = (run_tag, int(eid))
-            if key not in up_first or ti < up_first[key]: up_first[key] = float(ti)
+            key = (fpath, int(eid))
+            if key not in up_first_raw or ti < up_first_raw[key]: up_first_raw[key] = float(ti)
+            
         for eid, ti in zip(ev[m_e_dw], gt[m_e_dw]):
-            key = (run_tag, int(eid))
-            if key not in down_first or ti < down_first[key]: down_first[key] = float(ti)
+            key = (fpath, int(eid))
+            if key not in down_first_raw or ti < down_first_raw[key]: down_first_raw[key] = float(ti)
 
         for e, t in zip(ev[m_t_up], lt[m_t_up] * 1000.0):
-            up_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
+            up_times_raw.setdefault((fpath, int(e)), []).append(t)
+            
         for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0):
-            dw_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
+            dw_times_raw.setdefault((fpath, int(e)), []).append(t)
 
-    # ─── REPLACE THE ENTIRE COINCIDENCE CALCULATOR WITH THIS ─────────────────
+    # ─── RESTORE DICTIONARY KEYS BACK TO ORIGINAL EXPECTATIONS ────────────────
+    up_first = {}
+    down_first = {}
+    up_times_by_ev = {}
+    dw_times_by_ev = {}
+
+    for (fpath, eid), ti in up_first_raw.items():
+        up_first[(fpath.parent.name, eid)] = ti
+
+    for (fpath, eid), ti in down_first_raw.items():
+        down_first[(fpath.parent.name, eid)] = ti
+
+    for (fpath, eid), t_list in up_times_raw.items():
+        up_times_by_ev.setdefault((fpath.parent.name, eid), []).extend(t_list)
+
+    for (fpath, eid), t_list in dw_times_raw.items():
+        dw_times_by_ev.setdefault((fpath.parent.name, eid), []).extend(t_list)
+
+    # ─── CALCULATE COINCIDENCES ON ALIGNED MATRIX DICTIONARIES ────────────────
     common_e_keys = set(up_first) & set(down_first)
-    raw_z_list = []  # Keep it as a list while building it
+    raw_z_list = []  
     out_of_bounds = 0
     
     for k in common_e_keys:
-        delta_t_corrected = (down_first[k] - up_first[k]) - T0_OFFSET_NS
-        # 1. Determine an energy-scaling factor based on data density
-    # More hits = more timing compression = needs stronger correction
-    hit_density_factor = len(common_e_keys) / 500.0  # Normalized to ~25GeV scale
-    
-    for k in common_e_keys:
-        delta_t_corrected = (down_first[k] - up_first[k]) - T0_OFFSET_NS
-        
-        # --- NEW: Non-linear Time-Walk Correction ---
-        # If hit density is high (100-200GeV), we apply an expansion factor 
-        # to pull the compressed late times back out to where they belong.
-        if hit_density_factor > 1.2:
-            # Expand the timing delta symmetrically away from the front-side compression point
-            compression_center = -2.0 # ns (adjust based on your T0 setup)
-            delta_t_corrected = compression_center + (delta_t_corrected - compression_center) * (1.0 + 0.35 * (hit_density_factor - 1.0))
-
-        z_est = V_EFF_MM_NS * delta_t_corrected / 2.0
+        delta_t_corrected = (down_first[k] - up_first[k]) - t0_offset
+        # Dynamic effective velocity calculation based on local bounce factor
+        v_eff_local = (C_LIGHT_MM_NS / REFRACTIVE_INDEX) * bounce_factor
+        z_est = v_eff_local * delta_t_corrected / 2.0
         
         if -calor_thick_mm / 2 - 60.0 <= z_est <= calor_thick_mm / 2 + 60.0:
             raw_z_list.append(z_est)
         else:
             out_of_bounds += 1
-        
-        if -calor_thick_mm / 2 - 120.0 <= z_est <= calor_thick_mm / 2 + 120.0:
-            raw_z_list.append(z_est)
-        else:
-            out_of_bounds += 1
             
-    # Print exactly once per energy directory configuration
-    print(f"\n[DEBUG - {module_name} @ {batch_dir.name}]:")
-    print(f"  Total Coincidences Checked: {len(common_e_keys)}")
-    print(f"  ✔ Kept Inside Window:       {len(raw_z_list)}")
-    print(f"  ❌ Dropped Out of Bounds:   {out_of_bounds}\n")
-    
-    # Convert to numpy array ONCE after the loop is completely done
     raw_z_emits = np.array(raw_z_list)
-    # ─────────────────────────────────────────────────────────────────────────
-    
-   
-    
 
+    # ─── EXTRACT TIMING RESOLUTION STRUCTS ────────────────────────────────────
     common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
     all_bm_raw_ps = []
     for e in common_t_evs:
@@ -364,7 +345,7 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
     pitch_mm = gap_thick_mm + _W_THICK_MM
-    sigma_z_mm = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
+    sigma_z_mm = v_eff_local * (sigma_t_ps / 1000.0)
     sigma_layer = sigma_z_mm / pitch_mm if pitch_mm > 0 else 1.0
 
     print(f"    » [{module_name} @ {batch_dir.name}] "
@@ -430,8 +411,14 @@ def main():
         for idx, edir in enumerate(energy_dirs):
             ekey = edir.name
             print(f"    Extracting + unfolding {ekey}")
-            res = extract_profile_data_unfold(edir, is_hex, mod)
             
+            # Dynamic energy calibration parameter mapping
+            energy_val = extract_numerical_energy(ekey)
+            current_t0_offset = CALIBRATION_T0_OFFSETS.get(mod, {}).get(energy_val, DEFAULT_T0_OFFSET_NS)
+            bounce_factor = CALIBRATION_BOUNCE_FACTORS.get(mod, {}).get(energy_val, 1.0)
+
+            res = extract_profile_data_unfold(edir, is_hex, mod, t0_offset=current_t0_offset, bounce_factor=bounce_factor)
+
             r_coord = idx // ncols
             c_coord = idx % ncols
             
@@ -452,17 +439,9 @@ def main():
             sigma_layer = res["sigma_layer"]
             calor_thick = res["calor_thick"]
             
-            # --- DYNAMIC PENALTY SCALING FACTOR ---
-            # Peek at raw peak fraction to scale regularizer. Hard high-energy peaks 
-            # receive a stronger penalty floor to force spatial distribution.
             edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
-            raw_counts_temp, _ = np.histogram(res["raw_z_emits"], bins=edges)
-            raw_peak_frac = np.max(raw_counts_temp) / np.sum(raw_counts_temp) if np.sum(raw_counts_temp) > 0 else 0.0
 
-            if raw_peak_frac > 0.22:
-                alpha_tikhonov = 2.5 * (raw_peak_frac ** 2)
-            else:
-                alpha_tikhonov = 0.15 * (1.5 / max(sigma_layer, 0.5))
+            alpha_tikhonov = 0.05
 
             unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold_tikhonov(
                 res["raw_z_emits"], lyso_bounds, mod, sigma_layer,
@@ -476,7 +455,6 @@ def main():
             raw_norm = safe_norm(raw_mean)
             unf_norm = safe_norm(unfolded_mean)
             unf_err_norm = unfolded_std / np.sum(unfolded_mean) if np.sum(unfolded_mean) > 0 else unfolded_std
-            
             raw_err_norm = np.sqrt(raw_mean) / np.sum(raw_mean) if np.sum(raw_mean) > 0 else np.zeros_like(raw_mean)
 
             truth_curve = None
