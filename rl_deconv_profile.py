@@ -2,8 +2,8 @@
 """
 unfold_profile_analysis.py
 ===========================
-Alternative longitudinal shower-profile reconstruction using Tikhonov Regularization
-(Regularized Matrix Inversion) with dynamic penalty scaling and ratio subpanels.
+Alternative longitudinal shower-profile reconstruction using Tikhonov Regularization,
+Richardson-Lucy, and D'Agostini Bayesian unfolding to preserve asymmetric shower tails.
 """
 
 import os
@@ -27,8 +27,6 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 C_LIGHT_MM_NS = 299.792
 REFRACTIVE_INDEX = 1.60
 V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-
-
 
 # Fallback base offset if dynamic energy key isn't matched
 DEFAULT_T0_OFFSET_NS = -0.32  
@@ -140,7 +138,7 @@ def extract_numerical_energy(label: str) -> float:
         return 0.0
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TIKHONOV UNFOLDING MACHINERY
+# UNFOLDING MACHINERY
 # ─────────────────────────────────────────────────────────────────────────────
 def extended_response_matrix(n_reco, pad_layers, sigma_bins, mod):
     module_name = mod
@@ -150,8 +148,7 @@ def extended_response_matrix(n_reco, pad_layers, sigma_bins, mod):
 def tikhonov_deconvolve(observed, R, alpha=0.1, sys_err=0.03):
     n_reco, n_true = R.shape
     total = np.sum(observed)
-    if total <= 0:
-        return np.zeros(n_true)
+    if total <= 0: return np.zeros(n_true)
 
     variance = observed + (sys_err * observed) ** 2 + 1e-6
     V_inv = np.diag(1.0 / variance)
@@ -173,7 +170,43 @@ def tikhonov_deconvolve(observed, R, alpha=0.1, sys_err=0.03):
     x[x < 0] = 0.0
     return x
 
-def bootstrap_unfold_tikhonov(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot=40, seed=0, pad_layers=5, alpha=0.1):
+def richardson_lucy_deconvolve(observed, R, iterations=15):
+    eps = 1e-12
+    eff = np.sum(R, axis=0)
+    eff[eff == 0] = 1.0
+    
+    x = np.ones(R.shape[1]) * (np.sum(observed) / R.shape[1])
+    for _ in range(iterations):
+        reco_pred = R @ x
+        ratio = observed / (reco_pred + eps)
+        x = (x / eff) * (R.T @ ratio)
+    return x
+
+def dagostini_unfold(observed, R, iterations=5):
+    eps = 1e-12
+    n_reco, n_true = R.shape
+    
+    eff = np.sum(R, axis=0)
+    eff[eff == 0] = 1.0
+    P_E_given_C = R / eff
+    
+    prior = np.ones(n_true) / n_true
+    n_obs_total = np.sum(observed)
+    if n_obs_total <= 0: return np.zeros(n_true)
+        
+    x_unf = np.zeros(n_true)
+    for _ in range(iterations):
+        denom = P_E_given_C @ prior
+        P_C_given_E = (P_E_given_C * prior) / (denom[:, np.newaxis] + eps)
+        
+        n_true_est = (P_C_given_E.T @ observed) / eff
+        x_unf = n_true_est
+        
+        prior = n_true_est / (np.sum(n_true_est) + eps)
+        
+    return x_unf
+
+def bootstrap_unfold(raw_z_emits, lyso_bounds, mod, sigma_layer, algo="tikhonov", n_boot=40, seed=0, pad_layers=5, **kwargs):
     n_bins = len(lyso_bounds)
     edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
     raw_z_emits = np.asarray(raw_z_emits)
@@ -194,9 +227,13 @@ def bootstrap_unfold_tikhonov(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot
         counts, _ = np.histogram(sample, bins=edges)
         raw_reps.append(counts.astype(float))
         
-        x_unf_ext = tikhonov_deconvolve(
-            counts.astype(float), R_sliced, alpha=alpha, sys_err=0.03
-        )
+        if algo == "tikhonov":
+            x_unf_ext = tikhonov_deconvolve(counts.astype(float), R_sliced, alpha=kwargs.get("alpha", 0.05), sys_err=0.03)
+        elif algo == "rl":
+            x_unf_ext = richardson_lucy_deconvolve(counts.astype(float), R_sliced, iterations=kwargs.get("iterations", 15))
+        elif algo == "dagostini":
+            x_unf_ext = dagostini_unfold(counts.astype(float), R_sliced, iterations=kwargs.get("iterations", 5))
+            
         unfolded_reps.append(x_unf_ext[pad_layers : pad_layers + n_bins])
 
     unfolded_reps = np.array(unfolded_reps)
@@ -296,32 +333,22 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str,
         for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0):
             dw_times_raw.setdefault((fpath, int(e)), []).append(t)
 
-    # ─── RESTORE DICTIONARY KEYS BACK TO ORIGINAL EXPECTATIONS ────────────────
     up_first = {}
     down_first = {}
     up_times_by_ev = {}
     dw_times_by_ev = {}
 
-    for (fpath, eid), ti in up_first_raw.items():
-        up_first[(fpath.parent.name, eid)] = ti
+    for (fpath, eid), ti in up_first_raw.items(): up_first[(fpath.parent.name, eid)] = ti
+    for (fpath, eid), ti in down_first_raw.items(): down_first[(fpath.parent.name, eid)] = ti
+    for (fpath, eid), t_list in up_times_raw.items(): up_times_by_ev.setdefault((fpath.parent.name, eid), []).extend(t_list)
+    for (fpath, eid), t_list in dw_times_raw.items(): dw_times_by_ev.setdefault((fpath.parent.name, eid), []).extend(t_list)
 
-    for (fpath, eid), ti in down_first_raw.items():
-        down_first[(fpath.parent.name, eid)] = ti
-
-    for (fpath, eid), t_list in up_times_raw.items():
-        up_times_by_ev.setdefault((fpath.parent.name, eid), []).extend(t_list)
-
-    for (fpath, eid), t_list in dw_times_raw.items():
-        dw_times_by_ev.setdefault((fpath.parent.name, eid), []).extend(t_list)
-
-    # ─── CALCULATE COINCIDENCES ON ALIGNED MATRIX DICTIONARIES ────────────────
     common_e_keys = set(up_first) & set(down_first)
     raw_z_list = []  
     out_of_bounds = 0
     
     for k in common_e_keys:
         delta_t_corrected = (down_first[k] - up_first[k]) - t0_offset
-        # Dynamic effective velocity calculation based on local bounce factor
         v_eff_local = (C_LIGHT_MM_NS / REFRACTIVE_INDEX) * bounce_factor
         z_est = v_eff_local * delta_t_corrected / 2.0
         
@@ -332,7 +359,6 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str,
             
     raw_z_emits = np.array(raw_z_list)
 
-    # ─── EXTRACT TIMING RESOLUTION STRUCTS ────────────────────────────────────
     common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
     all_bm_raw_ps = []
     for e in common_t_evs:
@@ -345,7 +371,7 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str,
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
     pitch_mm = gap_thick_mm + _W_THICK_MM
-    sigma_z_mm = v_eff_local * (sigma_t_ps / 1000.0)
+    sigma_z_mm = ((C_LIGHT_MM_NS / REFRACTIVE_INDEX) * bounce_factor) * (sigma_t_ps / 1000.0)
     sigma_layer = sigma_z_mm / pitch_mm if pitch_mm > 0 else 1.0
 
     print(f"    » [{module_name} @ {batch_dir.name}] "
@@ -365,16 +391,20 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str,
         "lyso_bounds": lyso_bounds,
     }
 
+def safe_norm(v):
+    s = np.sum(v)
+    return v / s if s > 0 else v
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     base_dir = Path(__file__).resolve().parent
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    analysis_out = base_dir / "tikhonov_profile_analysis" / f"tikhonov_summary_{timestamp}"
+    analysis_out = base_dir / "unfolded_profile_analysis" / f"unfold_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
 
-    print("Spawning Tikhonov Regularized Unfolded Profile Extractor...")
+    print("Spawning Multi-Algorithm Unfolded Profile Extractor...")
     print(f"Targeting outputs to: {analysis_out.relative_to(base_dir)}\n")
 
     try:
@@ -386,12 +416,19 @@ def main():
     mod_colors = {"radi_cal_energy": "#1976d2", "radi_cal_triple": "#388e3c", "rc_hex": "#d32f2f", "rc_hex_triple": "#7b1fa2"}
     layers = np.arange(1, _N_LYSO + 1)
 
+    algo_configs = {
+        "tikhonov": {"title": "Tikhonov Unfolded", "kwargs": {"alpha": 0.050}},
+        "rl": {"title": "Richardson-Lucy Unfolded", "kwargs": {"iterations": 15}},
+        "dagostini": {"title": "D'Agostini (Bayesian) Unfolded", "kwargs": {"iterations": 5}}
+    }
+    algos_to_run = list(algo_configs.keys()) + ["raw"]
+
     for mod, target_sweep in TARGET_SWEEPS.items():
         if not target_sweep.exists():
-            print(f"  Skipping '{mod}' - Target sweep not found: {target_sweep}")
+            print(f"  Skipping '{mod}' - Target sweep not found.")
             continue
 
-        print(f"Processing Tikhonov Profile Data for '{mod}'...")
+        print(f"Processing Profile Data for '{mod}'...")
         is_hex = "hex" in mod
         energy_dirs = sorted([d for d in target_sweep.iterdir() if d.is_dir() and "GeV" in d.name],
                              key=lambda p: extract_numerical_energy(p.name))
@@ -402,17 +439,16 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        fig_unf = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
-        gs_unf = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
-
-        fig_raw = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
-        gs_raw = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
+        figs = {}
+        gss = {}
+        for a in algos_to_run:
+            figs[a] = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
+            gss[a] = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
 
         for idx, edir in enumerate(energy_dirs):
             ekey = edir.name
             print(f"    Extracting + unfolding {ekey}")
             
-            # Dynamic energy calibration parameter mapping
             energy_val = extract_numerical_energy(ekey)
             current_t0_offset = CALIBRATION_T0_OFFSETS.get(mod, {}).get(energy_val, DEFAULT_T0_OFFSET_NS)
             bounce_factor = CALIBRATION_BOUNCE_FACTORS.get(mod, {}).get(energy_val, 1.0)
@@ -422,14 +458,15 @@ def main():
             r_coord = idx // ncols
             c_coord = idx % ncols
             
-            ax_main_unf = fig_unf.add_subplot(gs_unf[2 * r_coord, c_coord])
-            ax_ratio_unf = fig_unf.add_subplot(gs_unf[2 * r_coord + 1, c_coord], sharex=ax_main_unf)
-
-            ax_main_raw = fig_raw.add_subplot(gs_raw[2 * r_coord, c_coord])
-            ax_ratio_raw = fig_raw.add_subplot(gs_raw[2 * r_coord + 1, c_coord], sharex=ax_main_raw)
+            axes = {}
+            for a in algos_to_run:
+                ax_m = figs[a].add_subplot(gss[a][2 * r_coord, c_coord])
+                ax_r = figs[a].add_subplot(gss[a][2 * r_coord + 1, c_coord], sharex=ax_m)
+                axes[a] = (ax_m, ax_r)
 
             if res is None or len(res["raw_z_emits"]) < 5:
-                for ax_m, ax_r in [(ax_main_unf, ax_ratio_unf), (ax_main_raw, ax_ratio_raw)]:
+                for a in algos_to_run:
+                    ax_m, ax_r = axes[a]
                     ax_m.text(0.5, 0.5, "Insufficient Data", ha="center", va="center")
                     ax_m.set_title(ekey, fontsize=11, fontweight="bold")
                     ax_r.axis('off')
@@ -439,24 +476,6 @@ def main():
             sigma_layer = res["sigma_layer"]
             calor_thick = res["calor_thick"]
             
-            edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
-
-            alpha_tikhonov = 0.05
-
-            unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold_tikhonov(
-                res["raw_z_emits"], lyso_bounds, mod, sigma_layer,
-                n_boot=40, pad_layers=5, alpha=alpha_tikhonov
-            )
-
-            def safe_norm(v):
-                s = np.sum(v)
-                return v / s if s > 0 else v
-
-            raw_norm = safe_norm(raw_mean)
-            unf_norm = safe_norm(unfolded_mean)
-            unf_err_norm = unfolded_std / np.sum(unfolded_mean) if np.sum(unfolded_mean) > 0 else unfolded_std
-            raw_err_norm = np.sqrt(raw_mean) / np.sum(raw_mean) if np.sum(raw_mean) > 0 else np.zeros_like(raw_mean)
-
             truth_curve = None
             run_dirs = sorted(list(set(fp.parent for fp in edir.rglob("detector_hits_*.root"))))
             if utils and run_dirs:
@@ -474,107 +493,89 @@ def main():
                         truth_curve = np.array(layer_edeps)
                 except Exception:
                     truth_curve = None
+                    
+            truth_norm_disp = truth_curve / np.sum(truth_curve) if truth_curve is not None and np.sum(truth_curve) > 0 else None
 
-            raw_norm_disp = raw_norm[::-1]
-            raw_err_disp = raw_err_norm[::-1]
-            unf_norm_disp = unf_norm[::-1]
-            unf_err_disp = unf_err_norm[::-1]
+            raw_ref_mean = None
+            raw_ref_err = None
 
-            if truth_curve is not None and np.sum(truth_curve) > 0:
-                truth_norm_disp = truth_curve / np.sum(truth_curve)
+            for algo in algos_to_run:
+                ax_m, ax_r = axes[algo]
                 
-                for ax_m in [ax_main_unf, ax_main_raw]:
-                    ax_m.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
-                               linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
+                if algo == "raw":
+                    algo_mean = raw_ref_mean
+                    algo_std = raw_ref_err
+                    algo_label = "Raw Data Profile"
+                    color = "#e65100"
+                    marker = "s"
+                else:
+                    unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
+                        res["raw_z_emits"], lyso_bounds, mod, sigma_layer,
+                        algo=algo, n_boot=40, pad_layers=5, **algo_configs[algo]["kwargs"]
+                    )
+                    
+                    if raw_ref_mean is None:
+                        raw_ref_mean = safe_norm(raw_mean)[::-1]
+                        raw_ref_err = (np.sqrt(raw_mean) / np.sum(raw_mean))[::-1] if np.sum(raw_mean) > 0 else np.zeros_like(raw_mean)
 
-                sigma_bins_unf = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
-                chi2_unf = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins_unf) ** 2)
-                reduced_chi2_unf = chi2_unf / len(unf_norm_disp)
-                mae_unf = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
-                fit_stats_unf = f" (χ²/ndf={reduced_chi2_unf:.2f}, MAE={mae_unf:.1f}%)"
+                    algo_mean = safe_norm(unfolded_mean)[::-1]
+                    algo_std = (unfolded_std / np.sum(unfolded_mean))[::-1] if np.sum(unfolded_mean) > 0 else unfolded_std[::-1]
+                    
+                    cfg_k, cfg_v = list(algo_configs[algo]["kwargs"].items())[0]
+                    algo_label = f"{algo_configs[algo]['title']} ({cfg_k}={cfg_v})"
+                    color = mod_colors[mod]
+                    marker = "o"
 
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    ratio_unf = unf_norm_disp / truth_norm_disp
-                    ratio_err_unf = unf_err_disp / truth_norm_disp
-                ax_ratio_unf.errorbar(layers, ratio_unf, yerr=ratio_err_unf, color=mod_colors[mod],
-                                  fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
-                ax_ratio_unf.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
-                ax_ratio_unf.set_ylabel("Unf / Truth", fontsize=8)
-                ax_ratio_unf.set_ylim(0.4, 1.6)
+                if truth_norm_disp is not None:
+                    ax_m.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f", linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
+                    sigma_bins = np.where(algo_std > 0, algo_std, 1e-4)
+                    chi2 = np.sum(((algo_mean - truth_norm_disp) / sigma_bins) ** 2)
+                    reduced_chi2 = chi2 / len(algo_mean)
+                    mae = np.mean(np.abs(algo_mean - truth_norm_disp)) * 100
+                    fit_stats = f" (χ²/ndf={reduced_chi2:.2f}, MAE={mae:.1f}%)"
 
-                sigma_bins_raw = np.where(raw_err_disp > 0, raw_err_disp, 1e-4)
-                chi2_raw = np.sum(((raw_norm_disp - truth_norm_disp) / sigma_bins_raw) ** 2)
-                reduced_chi2_raw = chi2_raw / len(raw_norm_disp)
-                mae_raw = np.mean(np.abs(raw_norm_disp - truth_norm_disp)) * 100
-                fit_stats_raw = f" (χ²/ndf={reduced_chi2_raw:.2f}, MAE={mae_raw:.1f}%)"
-
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    ratio_raw = raw_norm_disp / truth_norm_disp
-                    ratio_err_raw = raw_err_disp / truth_norm_disp
-                ax_ratio_raw.errorbar(layers, ratio_raw, yerr=ratio_err_raw, color="#e65100",
-                                  fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
-                ax_ratio_raw.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
-                ax_ratio_raw.set_ylabel("Raw / Truth", fontsize=8)
-                ax_ratio_raw.set_ylim(0.4, 1.6)
-            else:
-                for ax_r in [ax_ratio_unf, ax_ratio_raw]:
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        ratio = algo_mean / truth_norm_disp
+                        ratio_err = algo_std / truth_norm_disp
+                    ax_r.errorbar(layers, ratio, yerr=ratio_err, color=color, fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
+                    ax_r.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
+                    ax_r.set_ylabel("Data / Truth", fontsize=8)
+                    ax_r.set_ylim(0.4, 1.6)
+                else:
+                    fit_stats = ""
                     ax_r.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_r.transAxes)
                     ax_r.set_ylim(0, 2)
-                fit_stats_unf = ""
-                fit_stats_raw = ""
 
-            # ─── POPULATE UNIFOLDED FIGURE PANEL ─────────────────────────────
-            ax_main_unf.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
-                    marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
-            ax_main_unf.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
-                        linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
-                        label=f"Tikhonov-Unfolded (α={alpha_tikhonov:.3f}){fit_stats_unf}")
+                if algo != "raw":
+                    ax_m.plot(layers, raw_ref_mean, color="gray", linewidth=1.2, linestyle=":", marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
+                
+                ax_m.errorbar(layers, algo_mean, yerr=algo_std, color=color, linewidth=1.8, marker=marker, markersize=4.0, capsize=2.5, capthick=0.9, label=f"{algo_label}{fit_stats}")
 
-            ax_main_unf.set_title(f"{ekey} (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
-            ax_main_unf.set_ylabel("Normalized Fraction", fontsize=9)
-            ax_main_unf.set_xlim(0, _N_LYSO + 1)
-            ax_main_unf.tick_params(labelbottom=False)
-            ax_main_unf.grid(True, linestyle=":", alpha=0.4)
-            ax_main_unf.legend(loc="upper right", fontsize=7.2)
+                ax_m.set_title(f"{ekey} (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
+                ax_m.set_ylabel("Normalized Fraction", fontsize=9)
+                ax_m.set_xlim(0, _N_LYSO + 1)
+                ax_m.tick_params(labelbottom=False)
+                ax_m.grid(True, linestyle=":", alpha=0.4)
+                ax_m.legend(loc="upper right", fontsize=7.2)
 
-            ax_ratio_unf.set_xlabel("LYSO Layer Number", fontsize=9)
-            ax_ratio_unf.set_xlim(0, _N_LYSO + 1)
-            ax_ratio_unf.grid(True, linestyle=":", alpha=0.4)
-
-            # ─── POPULATE RAW ONLY FIGURE PANEL ──────────────────────────────
-            ax_main_raw.errorbar(layers, raw_norm_disp, yerr=raw_err_disp, color="#e65100",
-                        linewidth=1.8, marker="s", markersize=4.0, capsize=2.5, capthick=0.9,
-                        label=f"Raw Data Profile{fit_stats_raw}")
-
-            ax_main_raw.set_title(f"{ekey} (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
-            ax_main_raw.set_ylabel("Normalized Fraction", fontsize=9)
-            ax_main_raw.set_xlim(0, _N_LYSO + 1)
-            ax_main_raw.tick_params(labelbottom=False)
-            ax_main_raw.grid(True, linestyle=":", alpha=0.4)
-            ax_main_raw.legend(loc="upper right", fontsize=7.2)
-
-            ax_ratio_raw.set_xlabel("LYSO Layer Number", fontsize=9)
-            ax_ratio_raw.set_xlim(0, _N_LYSO + 1)
-            ax_ratio_raw.grid(True, linestyle=":", alpha=0.4)
+                ax_r.set_xlabel("LYSO Layer Number", fontsize=9)
+                ax_r.set_xlim(0, _N_LYSO + 1)
+                ax_r.grid(True, linestyle=":", alpha=0.4)
 
         for dummy_idx in range(n_energies, nrows * ncols):
             r_coord = dummy_idx // ncols
             c_coord = dummy_idx % ncols
-            for fig_obj, gs_obj in [(fig_unf, gs_unf), (fig_raw, gs_raw)]:
-                fig_obj.add_subplot(gs_obj[2 * r_coord, c_coord]).axis('off')
-                fig_obj.add_subplot(gs_obj[2 * r_coord + 1, c_coord]).axis('off')
+            for a in algos_to_run:
+                figs[a].add_subplot(gss[a][2 * r_coord, c_coord]).axis('off')
+                figs[a].add_subplot(gss[a][2 * r_coord + 1, c_coord]).axis('off')
 
-        fig_unf.suptitle(f"Tikhonov Unfolded Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
-        out_path_unf = analysis_out / f"{mod}_tikhonov_profile.png"
-        fig_unf.savefig(out_path_unf, dpi=200, bbox_inches='tight')
-        plt.close(fig_unf)
-        print(f"    Saved Tikhonov Unfolded: {out_path_unf.name}")
-
-        fig_raw.suptitle(f"Raw Longitudinal Profile (No Deconvolution) — {mod}", fontsize=13, fontweight="bold", y=0.99)
-        out_path_raw = analysis_out / f"{mod}_raw_profile.png"
-        fig_raw.savefig(out_path_raw, dpi=200, bbox_inches='tight')
-        plt.close(fig_raw)
-        print(f"    Saved Raw Profile: {out_path_raw.name}")
+        for a in algos_to_run:
+            title_prefix = algo_configs[a]["title"] if a != "raw" else "Raw (No Deconvolution)"
+            figs[a].suptitle(f"{title_prefix} Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
+            out_path = analysis_out / f"{mod}_{a}_profile.png"
+            figs[a].savefig(out_path, dpi=200, bbox_inches='tight')
+            plt.close(figs[a])
+            print(f"    Saved {a.capitalize()} Profile: {out_path.name}")
 
 if __name__ == "__main__":
     main()
