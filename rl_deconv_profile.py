@@ -2,9 +2,8 @@
 """
 unfold_profile_analysis.py
 ===========================
-Alternative longitudinal shower-profile reconstruction using Regularized Richardson-Lucy
-deconvolution with virtual boundary padding and ratio subpanels.
-Updated to plot the raw data profile without any deconvolution to the same output folder.
+Alternative longitudinal shower-profile reconstruction using Tikhonov Regularization
+(Regularized Matrix Inversion) with dynamic penalty scaling and ratio subpanels.
 """
 
 import os
@@ -28,7 +27,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 C_LIGHT_MM_NS = 299.792
 REFRACTIVE_INDEX = 1.60
 V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR = 0.92
+BOUNCE_FACTOR = 1.0
 V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
 T0_OFFSET_NS = - 0.32  
@@ -123,60 +122,67 @@ def extract_numerical_energy(label: str) -> float:
         return 0.0
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UNFOLDING MACHINERY (Upgraded with Regularization & Padding)
+# TIKHONOV UNFOLDING MACHINERY
 # ─────────────────────────────────────────────────────────────────────────────
 def extended_response_matrix(n_reco, pad_layers, sigma_bins, mod):
     module_name = mod
     R_sliced = np.load(f"response_matrices/{module_name}_response_matrix.npy")
     return R_sliced 
 
-def richardson_lucy_deconvolve(observed, R, iterations=20, eps=1e-12, smoothing_sigma=0.35, damping_threshold=1.5, sys_err=0.03):
+def tikhonov_deconvolve(observed, R, alpha=0.1, sys_err=0.03):
     """
-    Damped Richardson-Lucy with a systematic error floor to prevent over-unfolding
-    and peak overestimation in high-statistics regimes.
+    Solves the analytic least-squares inversion with a second-derivative 
+    Tikhonov smoothness constraint, incorporating a systematic covariance component.
     """
     n_reco, n_true = R.shape
     total = np.sum(observed)
     if total <= 0:
         return np.zeros(n_true)
+
+    # 1. Build Data Covariance Matrix (Poisson + Systematic Scaling Floor)
+    variance = observed + (sys_err * observed) ** 2 + 1e-6
+    V_inv = np.diag(1.0 / variance)
+
+    # 2. Build Tikhonov Regularization Operator (Second Derivative Penalization)
+    D = np.zeros((n_true - 2, n_true))
+    for i in range(n_true - 2):
+        D[i, i]     = 1.0
+        D[i, i + 1] = -2.0
+        D[i, i + 2] = 1.0
+
+    # --- NEW: Asymmetric Tail Weighting ---
+    # We construct a weighting diagonal vector that relaxes the penalty 
+    # where the exponential tail develops (deeper layer index = smaller penalty)
+    # Layer index here goes from 0 (front) to 38 (back due to pad_layers=5)
+    layer_indices = np.arange(n_true - 2)
     
-    t = np.arange(n_true)
-    prior = (t + 1) ** 3.0 * np.exp(-0.25 * t)
-    x = (prior / np.sum(prior)) * total
+    # Create an exponential relaxation factor. Adjust the scale (e.g., 8.0) 
+    # if you want the tail constraint to drop sooner or later.
+    tail_relaxation = np.exp(-np.maximum(0, layer_indices - 12) / 8.0)
     
-    Rt = R.T
-    eff = Rt @ np.ones(n_reco)
-    eff[eff == 0] = 1.0
-    
-    for _ in range(iterations):
-        reconstructed = R @ x
-        denom = reconstructed + eps
-        
-        # Calculate residuals
-        relative_blur = observed / denom
-        
-        # White's Damping with an added quadratic systematic error floor
-        with np.errstate(divide='ignore', invalid='ignore'):
-            variance = reconstructed + (sys_err * reconstructed) ** 2 + eps
-            residual = (observed - reconstructed) / np.sqrt(variance)
-            weight = np.where(np.abs(residual) < damping_threshold, 
-                              (np.abs(residual) / damping_threshold) ** 2, 1.0)
-            weight = np.clip(weight, 0.0, 1.0)
-        
-        # Apply damped modifier
-        damped_blur = 1.0 + weight * (relative_blur - 1.0)
-        
-        x = x * (Rt @ damped_blur) / eff
-        
-        if smoothing_sigma > 0:
-            x = gaussian_filter1d(x, sigma=smoothing_sigma)
-            
+    # Alternatively, a simple step/linear drop-off also works elegantly:
+    # tail_relaxation = np.where(layer_indices > 13, 0.15, 1.0) 
+
+    W = np.diag(tail_relaxation)
+    WD = W @ D
+
+    # 3. Formulate and Solve Symmetric Matrix Direct System
+    lhs = R.T @ V_inv @ R + alpha * (WD.T @ WD)
+    rhs = R.T @ V_inv @ observed * (D.T @ D)
+    rhs = R.T @ V_inv @ observed
+
+    try:
+        x = np.linalg.solve(lhs, rhs)
+    except np.linalg.LinAlgError:
+        x = np.linalg.lstsq(lhs, rhs, rcond=None)[0]
+
+    # Post-processing non-negativity protection threshold
+    x[x < 0] = 0.0
     return x
 
-def bootstrap_unfold(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot=40, iterations=40, seed=0, pad_layers=5, smoothing_sigma=0.35):
+def bootstrap_unfold_tikhonov(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot=40, seed=0, pad_layers=5, alpha=0.1):
     """
-    Poisson-bootstrap wrapper utilizing the extended response matrix and 
-    stripping virtual pads post-unfolding.
+    Poisson-bootstrap wrapper utilizing Tikhonov Matrix Regularization inversion.
     """
     n_bins = len(lyso_bounds)
     edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
@@ -198,8 +204,8 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot=40, iter
         counts, _ = np.histogram(sample, bins=edges)
         raw_reps.append(counts.astype(float))
         
-        x_unf_ext = richardson_lucy_deconvolve(
-            counts.astype(float), R_sliced, iterations=iterations, smoothing_sigma=smoothing_sigma
+        x_unf_ext = tikhonov_deconvolve(
+            counts.astype(float), R_sliced, alpha=alpha, sys_err=0.03
         )
         unfolded_reps.append(x_unf_ext[pad_layers : pad_layers + n_bins])
 
@@ -299,14 +305,52 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
         for e, t in zip(ev[m_t_dw], lt[m_t_dw] * 1000.0):
             dw_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
 
+    # ─── REPLACE THE ENTIRE COINCIDENCE CALCULATOR WITH THIS ─────────────────
     common_e_keys = set(up_first) & set(down_first)
-    raw_z_emits = []
+    raw_z_list = []  # Keep it as a list while building it
+    out_of_bounds = 0
+    
     for k in common_e_keys:
         delta_t_corrected = (down_first[k] - up_first[k]) - T0_OFFSET_NS
+        # 1. Determine an energy-scaling factor based on data density
+    # More hits = more timing compression = needs stronger correction
+    hit_density_factor = len(common_e_keys) / 500.0  # Normalized to ~25GeV scale
+    
+    for k in common_e_keys:
+        delta_t_corrected = (down_first[k] - up_first[k]) - T0_OFFSET_NS
+        
+        # --- NEW: Non-linear Time-Walk Correction ---
+        # If hit density is high (100-200GeV), we apply an expansion factor 
+        # to pull the compressed late times back out to where they belong.
+        if hit_density_factor > 1.2:
+            # Expand the timing delta symmetrically away from the front-side compression point
+            compression_center = -2.0 # ns (adjust based on your T0 setup)
+            delta_t_corrected = compression_center + (delta_t_corrected - compression_center) * (1.0 + 0.35 * (hit_density_factor - 1.0))
+
         z_est = V_EFF_MM_NS * delta_t_corrected / 2.0
-        if -calor_thick_mm / 2 - 15.0 <= z_est <= calor_thick_mm / 2 + 15.0:
-            raw_z_emits.append(z_est)
-    raw_z_emits = np.array(raw_z_emits)
+        
+        if -calor_thick_mm / 2 - 60.0 <= z_est <= calor_thick_mm / 2 + 60.0:
+            raw_z_list.append(z_est)
+        else:
+            out_of_bounds += 1
+        
+        if -calor_thick_mm / 2 - 120.0 <= z_est <= calor_thick_mm / 2 + 120.0:
+            raw_z_list.append(z_est)
+        else:
+            out_of_bounds += 1
+            
+    # Print exactly once per energy directory configuration
+    print(f"\n[DEBUG - {module_name} @ {batch_dir.name}]:")
+    print(f"  Total Coincidences Checked: {len(common_e_keys)}")
+    print(f"  ✔ Kept Inside Window:       {len(raw_z_list)}")
+    print(f"  ❌ Dropped Out of Bounds:   {out_of_bounds}\n")
+    
+    # Convert to numpy array ONCE after the loop is completely done
+    raw_z_emits = np.array(raw_z_list)
+    # ─────────────────────────────────────────────────────────────────────────
+    
+   
+    
 
     common_t_evs = set(up_times_by_ev.keys()) & set(dw_times_by_ev.keys())
     all_bm_raw_ps = []
@@ -346,10 +390,10 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
 def main():
     base_dir = Path(__file__).resolve().parent
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    analysis_out = base_dir / "unfolded_profile_analysis" / f"unfolded_summary_{timestamp}"
+    analysis_out = base_dir / "tikhonov_profile_analysis" / f"tikhonov_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
 
-    print("Spawning Regularized Unfolded Profile Extractor...")
+    print("Spawning Tikhonov Regularized Unfolded Profile Extractor...")
     print(f"Targeting outputs to: {analysis_out.relative_to(base_dir)}\n")
 
     try:
@@ -366,7 +410,7 @@ def main():
             print(f"  Skipping '{mod}' - Target sweep not found: {target_sweep}")
             continue
 
-        print(f"Processing Unfolded Profile Data for '{mod}'...")
+        print(f"Processing Tikhonov Profile Data for '{mod}'...")
         is_hex = "hex" in mod
         energy_dirs = sorted([d for d in target_sweep.iterdir() if d.is_dir() and "GeV" in d.name],
                              key=lambda p: extract_numerical_energy(p.name))
@@ -377,7 +421,6 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # Setup separate figure properties for both output panels
         fig_unf = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
         gs_unf = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
 
@@ -392,11 +435,9 @@ def main():
             r_coord = idx // ncols
             c_coord = idx % ncols
             
-            # Setup Subplots for Unfolded Plot Layout
             ax_main_unf = fig_unf.add_subplot(gs_unf[2 * r_coord, c_coord])
             ax_ratio_unf = fig_unf.add_subplot(gs_unf[2 * r_coord + 1, c_coord], sharex=ax_main_unf)
 
-            # Setup Subplots for Raw Only Plot Layout
             ax_main_raw = fig_raw.add_subplot(gs_raw[2 * r_coord, c_coord])
             ax_ratio_raw = fig_raw.add_subplot(gs_raw[2 * r_coord + 1, c_coord], sharex=ax_main_raw)
 
@@ -411,14 +452,21 @@ def main():
             sigma_layer = res["sigma_layer"]
             calor_thick = res["calor_thick"]
             
-            
-            dynamic_smoothing = max(0.35, 0.50 * (sigma_layer / 1.5)) 
-            dynamic_iterations = int(max(15, min(40, 25 * (1.5 / sigma_layer))))
-            
-            unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
+            # --- DYNAMIC PENALTY SCALING FACTOR ---
+            # Peek at raw peak fraction to scale regularizer. Hard high-energy peaks 
+            # receive a stronger penalty floor to force spatial distribution.
+            edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
+            raw_counts_temp, _ = np.histogram(res["raw_z_emits"], bins=edges)
+            raw_peak_frac = np.max(raw_counts_temp) / np.sum(raw_counts_temp) if np.sum(raw_counts_temp) > 0 else 0.0
+
+            if raw_peak_frac > 0.22:
+                alpha_tikhonov = 2.5 * (raw_peak_frac ** 2)
+            else:
+                alpha_tikhonov = 0.15 * (1.5 / max(sigma_layer, 0.5))
+
+            unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold_tikhonov(
                 res["raw_z_emits"], lyso_bounds, mod, sigma_layer,
-                n_boot=40, iterations=dynamic_iterations, pad_layers=5,
-                smoothing_sigma=dynamic_smoothing
+                n_boot=40, pad_layers=5, alpha=alpha_tikhonov
             )
 
             def safe_norm(v):
@@ -429,7 +477,6 @@ def main():
             unf_norm = safe_norm(unfolded_mean)
             unf_err_norm = unfolded_std / np.sum(unfolded_mean) if np.sum(unfolded_mean) > 0 else unfolded_std
             
-            # Direct statistical error calculation for raw profile via basic counting error
             raw_err_norm = np.sqrt(raw_mean) / np.sum(raw_mean) if np.sum(raw_mean) > 0 else np.zeros_like(raw_mean)
 
             truth_curve = None
@@ -458,12 +505,10 @@ def main():
             if truth_curve is not None and np.sum(truth_curve) > 0:
                 truth_norm_disp = truth_curve / np.sum(truth_curve)
                 
-                # Plot truth background onto both layout variants
                 for ax_m in [ax_main_unf, ax_main_raw]:
                     ax_m.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
                                linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
-                # Metric and ratio plotting calculations for Unfolded Plot
                 sigma_bins_unf = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
                 chi2_unf = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins_unf) ** 2)
                 reduced_chi2_unf = chi2_unf / len(unf_norm_disp)
@@ -479,7 +524,6 @@ def main():
                 ax_ratio_unf.set_ylabel("Unf / Truth", fontsize=8)
                 ax_ratio_unf.set_ylim(0.4, 1.6)
 
-                # Metric and ratio plotting calculations for Raw Profile Plot
                 sigma_bins_raw = np.where(raw_err_disp > 0, raw_err_disp, 1e-4)
                 chi2_raw = np.sum(((raw_norm_disp - truth_norm_disp) / sigma_bins_raw) ** 2)
                 reduced_chi2_raw = chi2_raw / len(raw_norm_disp)
@@ -506,7 +550,7 @@ def main():
                     marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
             ax_main_unf.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
                         linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
-                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_unf}")
+                        label=f"Tikhonov-Unfolded (α={alpha_tikhonov:.3f}){fit_stats_unf}")
 
             ax_main_unf.set_title(f"{ekey} (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
             ax_main_unf.set_ylabel("Normalized Fraction", fontsize=9)
@@ -542,14 +586,12 @@ def main():
                 fig_obj.add_subplot(gs_obj[2 * r_coord, c_coord]).axis('off')
                 fig_obj.add_subplot(gs_obj[2 * r_coord + 1, c_coord]).axis('off')
 
-        # Format and save Unfolded summary canvas
-        fig_unf.suptitle(f"Richardson-Lucy Unfolded Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
-        out_path_unf = analysis_out / f"{mod}_unfolded_profile.png"
+        fig_unf.suptitle(f"Tikhonov Unfolded Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
+        out_path_unf = analysis_out / f"{mod}_tikhonov_profile.png"
         fig_unf.savefig(out_path_unf, dpi=200, bbox_inches='tight')
         plt.close(fig_unf)
-        print(f"    Saved Unfolded: {out_path_unf.name}")
+        print(f"    Saved Tikhonov Unfolded: {out_path_unf.name}")
 
-        # Format and save Raw Only summary canvas
         fig_raw.suptitle(f"Raw Longitudinal Profile (No Deconvolution) — {mod}", fontsize=13, fontweight="bold", y=0.99)
         out_path_raw = analysis_out / f"{mod}_raw_profile.png"
         fig_raw.savefig(out_path_raw, dpi=200, bbox_inches='tight')
