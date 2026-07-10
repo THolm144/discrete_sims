@@ -30,7 +30,7 @@ V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 BOUNCE_FACTOR = 0.92
 V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
-T0_OFFSET_NS = - 0.16  
+T0_OFFSET_NS = - 0.32  
 
 _GT_LO_NS = 0.0
 _GT_HI_NS = 50.0
@@ -124,24 +124,10 @@ def extract_numerical_energy(label: str) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 # UNFOLDING MACHINERY (Upgraded with Regularization & Padding)
 # ─────────────────────────────────────────────────────────────────────────────
-def extended_response_matrix(n_reco, pad_layers, sigma_bins):
-    """
-    UPGRADE 2: Build a non-square response matrix of shape (n_reco, n_true)
-    where n_true = n_reco + 2 * pad_layers. This accounts for boundary leakage
-    where photons from edge layers spill outside the active volume.
-    """
-    sigma_bins = max(float(sigma_bins), 1e-3)
-    n_true = n_reco + 2 * pad_layers
-    idx = np.arange(n_true)
-    diff = idx[:, None] - idx[None, :]
-    
-    R_full = np.exp(-0.5 * (diff / sigma_bins) ** 2)
-    col_sums = R_full.sum(axis=0, keepdims=True)
-    col_sums[col_sums == 0] = 1.0
-    R_full /= col_sums
-    
-    # Slice the rows to retain only the physical reconstruction bins
-    return R_full[pad_layers : pad_layers + n_reco, :]
+def extended_response_matrix(n_reco, pad_layers, sigma_bins, mod):
+    module_name = mod
+    R_sliced = np.load(f"response_matrices/{module_name}_response_matrix.npy")
+    return R_sliced 
 
 def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_sigma=0.35, damping_threshold=1.5):
     """
@@ -188,7 +174,7 @@ def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_
             
     return x
 
-def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iterations=40, seed=0, pad_layers=5, smoothing_sigma=0.35):
+def bootstrap_unfold(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot=40, iterations=40, seed=0, pad_layers=5, smoothing_sigma=0.35):
     """
     Poisson-bootstrap wrapper utilizing the extended response matrix and 
     stripping virtual pads post-unfolding.
@@ -197,7 +183,7 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, sigma_layer, n_boot=40, iteration
     edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
     raw_z_emits = np.asarray(raw_z_emits)
     
-    R_sliced = extended_response_matrix(n_bins, pad_layers, sigma_layer)
+    R_sliced = extended_response_matrix(n_bins, pad_layers, sigma_layer, mod)
 
     rng = np.random.default_rng(seed)
     n_events = len(raw_z_emits)
@@ -260,6 +246,12 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     up_first, down_first = {}, {}
     up_times_by_ev, dw_times_by_ev = {}, {}
 
+    # ─── 1. INITIALIZE BATCH COUNTERS ────────────────────────────────────────
+    total_raw_entries = 0
+    total_e_up, total_e_dw = 0, 0
+    total_t_up, total_t_dw = 0, 0
+    # ─────────────────────────────────────────────────────────────────────────
+
     for fpath in hit_files:
         run_tag = fpath.parent.name
         try:
@@ -268,6 +260,11 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
                 if not tk: continue
                 tree = f[tk]
                 if tree.num_entries == 0: continue
+                
+                # ─── 2. ACCUMULATE RAW ENTRIES ────────────────────────────────
+                total_raw_entries += tree.num_entries
+                # ─────────────────────────────────────────────────────────────
+                
                 x = tree["Position_X"].array(library="np")
                 y = tree["Position_Y"].array(library="np")
                 z = tree["Position_Z"].array(library="np")
@@ -289,15 +286,22 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
         is_e = np.isin(channels, list(e_indices))
         m_e_up, m_e_dw = is_e & is_prompt & near_up, is_e & is_prompt & near_dw
 
+        is_t = np.isin(channels, list(t_indices))
+        m_t_up, m_t_dw = is_t & is_optical & near_up, is_t & is_optical & near_dw
+
+        # ─── 3. ACCUMULATE FILTERED HITS ─────────────────────────────────────
+        total_e_up += np.sum(m_e_up)
+        total_e_dw += np.sum(m_e_dw)
+        total_t_up += np.sum(m_t_up)
+        total_t_dw += np.sum(m_t_dw)
+        # ─────────────────────────────────────────────────────────────────────
+
         for eid, ti in zip(ev[m_e_up], gt[m_e_up]):
             key = (run_tag, int(eid))
             if key not in up_first or ti < up_first[key]: up_first[key] = float(ti)
         for eid, ti in zip(ev[m_e_dw], gt[m_e_dw]):
             key = (run_tag, int(eid))
             if key not in down_first or ti < down_first[key]: down_first[key] = float(ti)
-
-        is_t = np.isin(channels, list(t_indices))
-        m_t_up, m_t_dw = is_t & is_optical & near_up, is_t & is_optical & near_dw
 
         for e, t in zip(ev[m_t_up], lt[m_t_up] * 1000.0):
             up_times_by_ev.setdefault((run_tag, int(e)), []).append(t)
@@ -307,8 +311,6 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     common_e_keys = set(up_first) & set(down_first)
     raw_z_emits = []
     for k in common_e_keys:
-        
-
         delta_t_corrected = (down_first[k] - up_first[k]) - T0_OFFSET_NS
         z_est = V_EFF_MM_NS * delta_t_corrected / 2.0
         if -calor_thick_mm / 2 - 15.0 <= z_est <= calor_thick_mm / 2 + 15.0:
@@ -330,6 +332,14 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     sigma_z_mm = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
     sigma_layer = sigma_z_mm / pitch_mm if pitch_mm > 0 else 1.0
 
+    # ─── 4. PRINT SUMMARY ONE-LINER PER BATCH ────────────────────────────────
+    print(f"    » [{module_name} @ {batch_dir.name}] "
+          f"Total Raw Hits: {total_raw_entries:,} | "
+          f"Filtered E (Up/Dn): {total_e_up}/{total_e_dw} | "
+          f"Filtered T (Up/Dn): {total_t_up}/{total_t_dw} | "
+          f"Coincidences: {len(common_e_keys)}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     return {
         "raw_z_emits": raw_z_emits,
         "n_e_coincidences": len(common_e_keys),
@@ -339,6 +349,7 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
         "lyso_thick": lyso_thick,
         "calor_thick": calor_thick_mm,
         "lyso_bounds": lyso_bounds,
+        
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -386,6 +397,11 @@ def main():
             ekey = edir.name
             print(f"    Extracting + unfolding {ekey}")
             res = extract_profile_data_unfold(edir, is_hex, mod)
+            if res is not None:
+                print(f"    [Diagnostic] {mod} {ekey} -> "
+                      f"Detected Z Sensor: {res.get('calor_thick', 0)/2:.2f} mm | "
+                      f"Sigma Layer: {res['sigma_layer']:.4f} | "
+                      f"Sigma T: {res['sigma_t_ps']:.1f} ps")
             
             r_coord = idx // ncols
             c_coord = idx % ncols
@@ -407,8 +423,8 @@ def main():
             dynamic_smoothing = max(0.35, 0.50 * (sigma_layer / 1.5)) 
             dynamic_iterations = int(max(15, min(40, 25 * (1.5 / sigma_layer))))
             unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
-                res["raw_z_emits"], lyso_bounds, sigma_layer, 
-                n_boot=40, iterations=dynamic_iterations, pad_layers=5, 
+                res["raw_z_emits"], lyso_bounds, mod, sigma_layer,
+                n_boot=40, iterations=dynamic_iterations, pad_layers=5,
                 smoothing_sigma=dynamic_smoothing
             )
 
