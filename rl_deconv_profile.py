@@ -4,6 +4,7 @@ unfold_profile_analysis.py
 ===========================
 Alternative longitudinal shower-profile reconstruction using Regularized Richardson-Lucy
 deconvolution with virtual boundary padding and ratio subpanels.
+Updated to plot the raw data profile without any deconvolution to the same output folder.
 """
 
 import os
@@ -66,7 +67,7 @@ HEX_CAP_XY = np.array([
 TARGET_SWEEPS = {
     "radi_cal_energy": Path("/home/uakgun/gate_sims/discrete_sims/radi_cal_energy/runs/radi_cal_energy/sweep_20260708_154719"),
     "radi_cal_triple": Path("/home/uakgun/gate_sims/discrete_sims/radi_cal_triple/runs/radi_cal_triple/sweep_20260708_154742"),
-    "rc_hex": Path("/home/uakgun/gate_sims/discrete_sims/rc_hex/runs/rc_hex/sweep_20260706_171127/sweep_20260706_171127"),
+    "rc_hex": Path("/home/uakgun/gate_sims/discrete_sims/rc_hex/runs/rc_hex/sweep_20260702_164238/sweep_20260702_164238"),
     "rc_hex_triple": Path("/home/uakgun/gate_sims/discrete_sims/rc_hex_triple/runs/rc_hex_triple/sweep_20260708_154836/sweep_20260708_154836"),
 }
 
@@ -129,10 +130,10 @@ def extended_response_matrix(n_reco, pad_layers, sigma_bins, mod):
     R_sliced = np.load(f"response_matrices/{module_name}_response_matrix.npy")
     return R_sliced 
 
-def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_sigma=0.35, damping_threshold=1.5):
+def richardson_lucy_deconvolve(observed, R, iterations=20, eps=1e-12, smoothing_sigma=0.35, damping_threshold=1.5, sys_err=0.03):
     """
-    Damped Richardson-Lucy to prevent over-unfolding and peak overestimation,
-    especially in high-statistics regimes.
+    Damped Richardson-Lucy with a systematic error floor to prevent over-unfolding
+    and peak overestimation in high-statistics regimes.
     """
     n_reco, n_true = R.shape
     total = np.sum(observed)
@@ -154,14 +155,12 @@ def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_
         # Calculate residuals
         relative_blur = observed / denom
         
-        # White's Damping: Suppress updates where fluctuations are consistent with noise
-        # For Poisson noise, variance ~ reconstructed value
+        # White's Damping with an added quadratic systematic error floor
         with np.errstate(divide='ignore', invalid='ignore'):
-            residual = (observed - reconstructed) / np.sqrt(reconstructed + eps)
-            # Damping weight drops to 0 when residual is small
+            variance = reconstructed + (sys_err * reconstructed) ** 2 + eps
+            residual = (observed - reconstructed) / np.sqrt(variance)
             weight = np.where(np.abs(residual) < damping_threshold, 
                               (np.abs(residual) / damping_threshold) ** 2, 1.0)
-            # Ensure boundaries or extreme values don't produce NaNs
             weight = np.clip(weight, 0.0, 1.0)
         
         # Apply damped modifier
@@ -199,11 +198,9 @@ def bootstrap_unfold(raw_z_emits, lyso_bounds, mod, sigma_layer, n_boot=40, iter
         counts, _ = np.histogram(sample, bins=edges)
         raw_reps.append(counts.astype(float))
         
-        # FIX HERE: Pass the parameter down to the deconvolution function
         x_unf_ext = richardson_lucy_deconvolve(
             counts.astype(float), R_sliced, iterations=iterations, smoothing_sigma=smoothing_sigma
         )
-        # Strip padding layers to isolate physical target region
         unfolded_reps.append(x_unf_ext[pad_layers : pad_layers + n_bins])
 
     unfolded_reps = np.array(unfolded_reps)
@@ -246,11 +243,9 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     up_first, down_first = {}, {}
     up_times_by_ev, dw_times_by_ev = {}, {}
 
-    # ─── 1. INITIALIZE BATCH COUNTERS ────────────────────────────────────────
     total_raw_entries = 0
     total_e_up, total_e_dw = 0, 0
     total_t_up, total_t_dw = 0, 0
-    # ─────────────────────────────────────────────────────────────────────────
 
     for fpath in hit_files:
         run_tag = fpath.parent.name
@@ -261,9 +256,7 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
                 tree = f[tk]
                 if tree.num_entries == 0: continue
                 
-                # ─── 2. ACCUMULATE RAW ENTRIES ────────────────────────────────
                 total_raw_entries += tree.num_entries
-                # ─────────────────────────────────────────────────────────────
                 
                 x = tree["Position_X"].array(library="np")
                 y = tree["Position_Y"].array(library="np")
@@ -289,12 +282,10 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
         is_t = np.isin(channels, list(t_indices))
         m_t_up, m_t_dw = is_t & is_optical & near_up, is_t & is_optical & near_dw
 
-        # ─── 3. ACCUMULATE FILTERED HITS ─────────────────────────────────────
         total_e_up += np.sum(m_e_up)
         total_e_dw += np.sum(m_e_dw)
         total_t_up += np.sum(m_t_up)
         total_t_dw += np.sum(m_t_dw)
-        # ─────────────────────────────────────────────────────────────────────
 
         for eid, ti in zip(ev[m_e_up], gt[m_e_up]):
             key = (run_tag, int(eid))
@@ -332,13 +323,11 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
     sigma_z_mm = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
     sigma_layer = sigma_z_mm / pitch_mm if pitch_mm > 0 else 1.0
 
-    # ─── 4. PRINT SUMMARY ONE-LINER PER BATCH ────────────────────────────────
     print(f"    » [{module_name} @ {batch_dir.name}] "
           f"Total Raw Hits: {total_raw_entries:,} | "
           f"Filtered E (Up/Dn): {total_e_up}/{total_e_dw} | "
           f"Filtered T (Up/Dn): {total_t_up}/{total_t_dw} | "
           f"Coincidences: {len(common_e_keys)}")
-    # ─────────────────────────────────────────────────────────────────────────
 
     return {
         "raw_z_emits": raw_z_emits,
@@ -349,7 +338,6 @@ def extract_profile_data_unfold(batch_dir: Path, is_hex: bool, module_name: str)
         "lyso_thick": lyso_thick,
         "calor_thick": calor_thick_mm,
         "lyso_bounds": lyso_bounds,
-        
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -389,47 +377,50 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-        # UPGRADE 4: Replaced simple subplots with a complex GridSpec for Ratio attachments
-        fig = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
-        gs = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
+        # Setup separate figure properties for both output panels
+        fig_unf = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
+        gs_unf = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
+
+        fig_raw = plt.figure(figsize=(7.2 * ncols, 6.0 * nrows))
+        gs_raw = gridspec.GridSpec(2 * nrows, ncols, height_ratios=[3, 1] * nrows, hspace=0.28, wspace=0.24)
 
         for idx, edir in enumerate(energy_dirs):
             ekey = edir.name
             print(f"    Extracting + unfolding {ekey}")
             res = extract_profile_data_unfold(edir, is_hex, mod)
-            if res is not None:
-                print(f"    [Diagnostic] {mod} {ekey} -> "
-                      f"Detected Z Sensor: {res.get('calor_thick', 0)/2:.2f} mm | "
-                      f"Sigma Layer: {res['sigma_layer']:.4f} | "
-                      f"Sigma T: {res['sigma_t_ps']:.1f} ps")
             
             r_coord = idx // ncols
             c_coord = idx % ncols
-            ax_main = fig.add_subplot(gs[2 * r_coord, c_coord])
-            ax_ratio = fig.add_subplot(gs[2 * r_coord + 1, c_coord], sharex=ax_main)
+            
+            # Setup Subplots for Unfolded Plot Layout
+            ax_main_unf = fig_unf.add_subplot(gs_unf[2 * r_coord, c_coord])
+            ax_ratio_unf = fig_unf.add_subplot(gs_unf[2 * r_coord + 1, c_coord], sharex=ax_main_unf)
+
+            # Setup Subplots for Raw Only Plot Layout
+            ax_main_raw = fig_raw.add_subplot(gs_raw[2 * r_coord, c_coord])
+            ax_ratio_raw = fig_raw.add_subplot(gs_raw[2 * r_coord + 1, c_coord], sharex=ax_main_raw)
 
             if res is None or len(res["raw_z_emits"]) < 5:
-                ax_main.text(0.5, 0.5, "Insufficient Data", ha="center", va="center")
-                ax_main.set_title(ekey, fontsize=11, fontweight="bold")
-                ax_ratio.axis('off')
+                for ax_m, ax_r in [(ax_main_unf, ax_ratio_unf), (ax_main_raw, ax_ratio_raw)]:
+                    ax_m.text(0.5, 0.5, "Insufficient Data", ha="center", va="center")
+                    ax_m.set_title(ekey, fontsize=11, fontweight="bold")
+                    ax_r.axis('off')
                 continue
 
             lyso_bounds = res["lyso_bounds"]
             sigma_layer = res["sigma_layer"]
+            calor_thick = res["calor_thick"]
             
-           
-            # If resolution is sharp (small sigma_layer), reduce inner-loop smoothing
-            # Safer, more conservative hyperparameter assignment
+            
             dynamic_smoothing = max(0.35, 0.50 * (sigma_layer / 1.5)) 
             dynamic_iterations = int(max(15, min(40, 25 * (1.5 / sigma_layer))))
+            
             unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
                 res["raw_z_emits"], lyso_bounds, mod, sigma_layer,
                 n_boot=40, iterations=dynamic_iterations, pad_layers=5,
                 smoothing_sigma=dynamic_smoothing
             )
 
-            
-    
             def safe_norm(v):
                 s = np.sum(v)
                 return v / s if s > 0 else v
@@ -437,9 +428,11 @@ def main():
             raw_norm = safe_norm(raw_mean)
             unf_norm = safe_norm(unfolded_mean)
             unf_err_norm = unfolded_std / np.sum(unfolded_mean) if np.sum(unfolded_mean) > 0 else unfolded_std
+            
+            # Direct statistical error calculation for raw profile via basic counting error
+            raw_err_norm = np.sqrt(raw_mean) / np.sum(raw_mean) if np.sum(raw_mean) > 0 else np.zeros_like(raw_mean)
 
             truth_curve = None
-            calor_thick = res["calor_thick"]
             run_dirs = sorted(list(set(fp.parent for fp in edir.rglob("detector_hits_*.root"))))
             if utils and run_dirs:
                 try:
@@ -458,75 +451,110 @@ def main():
                     truth_curve = None
 
             raw_norm_disp = raw_norm[::-1]
+            raw_err_disp = raw_err_norm[::-1]
             unf_norm_disp = unf_norm[::-1]
             unf_err_disp = unf_err_norm[::-1]
 
             if truth_curve is not None and np.sum(truth_curve) > 0:
                 truth_norm_disp = truth_curve / np.sum(truth_curve)
-                ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
-                       linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
-
-                # ─────────────────────────────────────────────────────────────
-                # NEW: Calculate Fit Metrics using the correct display variables
-                # ─────────────────────────────────────────────────────────────
-                # Use a small epsilon where unfolded uncertainty is 0 to avoid dividing by zero
-                sigma_bins = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
-                chi2 = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins) ** 2)
-                ndf = len(unf_norm_disp)
-                reduced_chi2 = chi2 / ndf
                 
-                mae = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
-                
-                # Dynamic string addition if truth is available
-                fit_stats_label = f" (χ²/ndf={reduced_chi2:.2f}, MAE={mae:.1f}%)"
-                # ─────────────────────────────────────────────────────────────
+                # Plot truth background onto both layout variants
+                for ax_m in [ax_main_unf, ax_main_raw]:
+                    ax_m.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
+                               linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
-                # UPGRADE 4 (Cont.): Compute and populate the Unfolded / Truth ratio subpanel
+                # Metric and ratio plotting calculations for Unfolded Plot
+                sigma_bins_unf = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
+                chi2_unf = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins_unf) ** 2)
+                reduced_chi2_unf = chi2_unf / len(unf_norm_disp)
+                mae_unf = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
+                fit_stats_unf = f" (χ²/ndf={reduced_chi2_unf:.2f}, MAE={mae_unf:.1f}%)"
+
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    ratio = unf_norm_disp / truth_norm_disp
-                    ratio_err = unf_err_disp / truth_norm_disp
-                
-                ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors[mod],
+                    ratio_unf = unf_norm_disp / truth_norm_disp
+                    ratio_err_unf = unf_err_disp / truth_norm_disp
+                ax_ratio_unf.errorbar(layers, ratio_unf, yerr=ratio_err_unf, color=mod_colors[mod],
                                   fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
-                ax_ratio.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
-                ax_ratio.set_ylabel("Unf / Truth", fontsize=8)
-                ax_ratio.set_ylim(0.4, 1.6)
+                ax_ratio_unf.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
+                ax_ratio_unf.set_ylabel("Unf / Truth", fontsize=8)
+                ax_ratio_unf.set_ylim(0.4, 1.6)
+
+                # Metric and ratio plotting calculations for Raw Profile Plot
+                sigma_bins_raw = np.where(raw_err_disp > 0, raw_err_disp, 1e-4)
+                chi2_raw = np.sum(((raw_norm_disp - truth_norm_disp) / sigma_bins_raw) ** 2)
+                reduced_chi2_raw = chi2_raw / len(raw_norm_disp)
+                mae_raw = np.mean(np.abs(raw_norm_disp - truth_norm_disp)) * 100
+                fit_stats_raw = f" (χ²/ndf={reduced_chi2_raw:.2f}, MAE={mae_raw:.1f}%)"
+
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    ratio_raw = raw_norm_disp / truth_norm_disp
+                    ratio_err_raw = raw_err_disp / truth_norm_disp
+                ax_ratio_raw.errorbar(layers, ratio_raw, yerr=ratio_err_raw, color="#e65100",
+                                  fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
+                ax_ratio_raw.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
+                ax_ratio_raw.set_ylabel("Raw / Truth", fontsize=8)
+                ax_ratio_raw.set_ylim(0.4, 1.6)
             else:
-                ax_ratio.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_ratio.transAxes)
-                ax_ratio.set_ylim(0, 2)
-                fit_stats_label = "" # Empty if truth curve isn't loaded
+                for ax_r in [ax_ratio_unf, ax_ratio_raw]:
+                    ax_r.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_r.transAxes)
+                    ax_r.set_ylim(0, 2)
+                fit_stats_unf = ""
+                fit_stats_raw = ""
 
-            ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
+            # ─── POPULATE UNIFOLDED FIGURE PANEL ─────────────────────────────
+            ax_main_unf.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
                     marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
-            
-           
-            ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
+            ax_main_unf.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
                         linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
-                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
+                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_unf}")
 
-            ax_main.set_title(f"{ekey}  (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
-            ax_main.set_ylabel("Normalized Fraction", fontsize=9)
-            ax_main.set_xlim(0, _N_LYSO + 1)
-            ax_main.tick_params(labelbottom=False)
-            ax_main.grid(True, linestyle=":", alpha=0.4)
-            ax_main.legend(loc="upper right", fontsize=7.2)
+            ax_main_unf.set_title(f"{ekey} (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
+            ax_main_unf.set_ylabel("Normalized Fraction", fontsize=9)
+            ax_main_unf.set_xlim(0, _N_LYSO + 1)
+            ax_main_unf.tick_params(labelbottom=False)
+            ax_main_unf.grid(True, linestyle=":", alpha=0.4)
+            ax_main_unf.legend(loc="upper right", fontsize=7.2)
 
-            ax_ratio.set_xlabel("LYSO Layer Number", fontsize=9)
-            ax_ratio.set_xlim(0, _N_LYSO + 1)
-            ax_ratio.grid(True, linestyle=":", alpha=0.4)
+            ax_ratio_unf.set_xlabel("LYSO Layer Number", fontsize=9)
+            ax_ratio_unf.set_xlim(0, _N_LYSO + 1)
+            ax_ratio_unf.grid(True, linestyle=":", alpha=0.4)
 
-        
+            # ─── POPULATE RAW ONLY FIGURE PANEL ──────────────────────────────
+            ax_main_raw.errorbar(layers, raw_norm_disp, yerr=raw_err_disp, color="#e65100",
+                        linewidth=1.8, marker="s", markersize=4.0, capsize=2.5, capthick=0.9,
+                        label=f"Raw Data Profile{fit_stats_raw}")
+
+            ax_main_raw.set_title(f"{ekey} (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
+            ax_main_raw.set_ylabel("Normalized Fraction", fontsize=9)
+            ax_main_raw.set_xlim(0, _N_LYSO + 1)
+            ax_main_raw.tick_params(labelbottom=False)
+            ax_main_raw.grid(True, linestyle=":", alpha=0.4)
+            ax_main_raw.legend(loc="upper right", fontsize=7.2)
+
+            ax_ratio_raw.set_xlabel("LYSO Layer Number", fontsize=9)
+            ax_ratio_raw.set_xlim(0, _N_LYSO + 1)
+            ax_ratio_raw.grid(True, linestyle=":", alpha=0.4)
+
         for dummy_idx in range(n_energies, nrows * ncols):
             r_coord = dummy_idx // ncols
             c_coord = dummy_idx % ncols
-            fig.add_subplot(gs[2 * r_coord, c_coord]).axis('off')
-            fig.add_subplot(gs[2 * r_coord + 1, c_coord]).axis('off')
+            for fig_obj, gs_obj in [(fig_unf, gs_unf), (fig_raw, gs_raw)]:
+                fig_obj.add_subplot(gs_obj[2 * r_coord, c_coord]).axis('off')
+                fig_obj.add_subplot(gs_obj[2 * r_coord + 1, c_coord]).axis('off')
 
-        fig.suptitle(f"Richardson-Lucy Unfolded Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
-        out_path = analysis_out / f"{mod}_unfolded_profile.png"
-        fig.savefig(out_path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        print(f"    Saved: {out_path.name}")
+        # Format and save Unfolded summary canvas
+        fig_unf.suptitle(f"Richardson-Lucy Unfolded Longitudinal Profile — {mod}", fontsize=13, fontweight="bold", y=0.99)
+        out_path_unf = analysis_out / f"{mod}_unfolded_profile.png"
+        fig_unf.savefig(out_path_unf, dpi=200, bbox_inches='tight')
+        plt.close(fig_unf)
+        print(f"    Saved Unfolded: {out_path_unf.name}")
+
+        # Format and save Raw Only summary canvas
+        fig_raw.suptitle(f"Raw Longitudinal Profile (No Deconvolution) — {mod}", fontsize=13, fontweight="bold", y=0.99)
+        out_path_raw = analysis_out / f"{mod}_raw_profile.png"
+        fig_raw.savefig(out_path_raw, dpi=200, bbox_inches='tight')
+        plt.close(fig_raw)
+        print(f"    Saved Raw Profile: {out_path_raw.name}")
 
 if __name__ == "__main__":
     main()

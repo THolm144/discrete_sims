@@ -23,6 +23,8 @@ rsync -avz --delete \
     --exclude='**/test_analysis/' \
     --exclude='unfolded_profile_analysis/' \
     --exclude='**/unfolded_profile_analysis/' \
+     --exclude='response_matrices/' \
+    --exclude='**/response_matrices/' \
     --exclude='*.root' \
     --exclude='*.json' \
     --exclude='*.mhd' \
