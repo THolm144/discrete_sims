@@ -8,6 +8,7 @@ Richardson-Lucy, D'Agostini Bayesian unfolding, and a hybrid R-L + Tikhonov smoo
 
 import os
 import sys
+import json
 import datetime
 import warnings
 from pathlib import Path
@@ -17,6 +18,8 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
+
+import response_kernel as rk
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -82,6 +85,21 @@ TARGET_SWEEPS = {
     "rc_hex_triple": Path("/home/uakgun/gate_sims/discrete_sims/rc_hex_triple/runs/rc_hex_triple/sweep_20260708_154836/sweep_20260708_154836"),
 }
 
+# Cache of loaded response-kernel params so we don't re-read the JSON file
+# for every energy point / bootstrap call.
+_RESPONSE_PARAMS_CACHE = {}
+
+def load_response_params(mod, response_dir=None):
+    """Loads the fitted kernel parameter vector for `mod`, cached per module."""
+    if mod in _RESPONSE_PARAMS_CACHE:
+        return _RESPONSE_PARAMS_CACHE[mod]
+    response_dir = response_dir or (Path(__file__).resolve().parent / "response_matrices")
+    meta_path = response_dir / f"{mod}_response_params.json"
+    with open(meta_path) as f:
+        meta = json.load(f)
+    _RESPONSE_PARAMS_CACHE[mod] = meta
+    return meta
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SHARED HELPERS 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,8 +152,23 @@ def extract_numerical_energy(label: str) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 # UNFOLDING MACHINERY
 # ─────────────────────────────────────────────────────────────────────────────
-def extended_response_matrix(n_reco, pad_layers, sigma_bins, mod):
-    return np.load(f"response_matrices/{mod}_response_matrix.npy")
+def extended_response_matrix(n_reco, pad_layers, mod, energy_val):
+    """
+    Builds R on the fly at the requested energy, from the module's fitted
+    kernel parameters (response_matrices/<mod>_response_params.json), rather
+    than loading a frozen matrix. This is what makes the deconvolution
+    kernel track the actual energy-dependent timing resolution instead of
+    using one static shape for every energy point.
+    """
+    meta = load_response_params(mod)
+    if meta["n_reco"] != n_reco or meta["pad_layers"] != pad_layers:
+        raise ValueError(
+            f"[{mod}] response params were fit with n_reco={meta['n_reco']}, "
+            f"pad_layers={meta['pad_layers']} but this call wants "
+            f"n_reco={n_reco}, pad_layers={pad_layers}. Re-run "
+            f"build_empirical_response_matrix.py or fix the mismatch."
+        )
+    return rk.build_kernel_matrix(n_reco, pad_layers, meta["params_vector"], energy_val=energy_val)
 
 def tikhonov_deconvolve(observed, R, alpha=0.1, sys_err=0.03):
     n_reco, n_true = R.shape
@@ -161,7 +194,7 @@ def tikhonov_deconvolve(observed, R, alpha=0.1, sys_err=0.03):
     x[x < 0] = 0.0
     return x
 
-def tikhonov_smooth(x_unf, alpha=0.5):
+def tikhonov_smooth(x_unf, alpha=5.0):
     """Applies a Whittaker-Eilers (Tikhonov) smoothing penalty directly to an unfolded array."""
     n = len(x_unf)
     D = np.zeros((n - 2, n))
@@ -213,12 +246,15 @@ def dagostini_unfold(observed, R, iterations=5):
         
     return x_unf
 
-def bootstrap_unfold(raw_z_emits, lyso_bounds, mod, sigma_layer, algo="tikhonov", n_boot=40, seed=0, pad_layers=5, **kwargs):
+def bootstrap_unfold(raw_z_emits, lyso_bounds, mod, energy_val, algo="tikhonov", n_boot=40, seed=0, pad_layers=5, **kwargs):
     n_bins = len(lyso_bounds)
     edges = np.array([b[0] for b in lyso_bounds] + [lyso_bounds[-1][1]])
     raw_z_emits = np.asarray(raw_z_emits)
-    
-    R_sliced = extended_response_matrix(n_bins, pad_layers, sigma_layer, mod)
+
+    # Built ONCE per energy point (not per bootstrap replicate) at the
+    # correct energy -- this is the piece that used to be a frozen,
+    # energy-independent .npy.
+    R_sliced = extended_response_matrix(n_bins, pad_layers, mod, energy_val)
     rng = np.random.default_rng(seed)
     n_events = len(raw_z_emits)
     
@@ -443,7 +479,7 @@ def main():
             algo_results = {}
             for algo in ["raw", "tikhonov", "rl", "dagostini", "rl_tikhonov"]:
                 u_mean, u_std, r_mean, _ = bootstrap_unfold(
-                    res["raw_z_emits"], res["lyso_bounds"], mod, res["sigma_layer"],
+                    res["raw_z_emits"], res["lyso_bounds"], mod, energy_val,
                     algo=algo, n_boot=20, pad_layers=5, **(algo_configs[algo]["kwargs"] if algo != "raw" else {})
                 )
                 if "raw" not in algo_results:
@@ -476,7 +512,10 @@ def main():
 
                     fit_stats = ""
                     if truth_norm_disp is not None:
-                        sigma_bins = np.where(a_std > 0, a_std, 1e-4)
+                        # Use a signal-scale-relative floor rather than an absolute
+                        # constant, otherwise near-zero-variance tail bins blow up
+                        # chi2/ndf into meaningless numbers (bug fixed this pass).
+                        sigma_bins = np.maximum(a_std, 0.01 * np.max(a_mean) if np.max(a_mean) > 0 else 1e-4)
                         chi2_ndf = np.sum(((a_mean - truth_norm_disp) / sigma_bins)**2) / len(a_mean)
                         fit_stats = f" (χ²={chi2_ndf:.1f}, MAE={np.mean(np.abs(a_mean - truth_norm_disp))*100:.1f}%)"
                         with np.errstate(divide='ignore', invalid='ignore'):

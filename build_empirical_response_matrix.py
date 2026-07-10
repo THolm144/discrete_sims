@@ -2,56 +2,38 @@
 """
 build_empirical_response_matrix.py
 ====================================
-Constructs a data-driven longitudinal response matrix per calorimeter module by
-jointly fitting a parametric (position-dependent, skewed) kernel against the
-Sim-Truth (DoseActor) vs raw ΔT-reconstructed profile pairs that already come
-out of the existing sweep -- no new point-source calibration simulations
-required.
+Fits a data-driven, ENERGY-DEPENDENT longitudinal response kernel per
+calorimeter module against the Sim-Truth (DoseActor) vs raw ΔT-reconstructed
+profile pairs from the sweep.
 
-APPROACH
---------
-At each energy point we already have:
-  - truth_norm : normalized DoseActor energy deposit per LYSO layer
-  - raw_norm   : normalized histogram of raw_z_emits (BestMinus ToF z_est)
+CHANGE FROM PREVIOUS VERSION
+-----------------------------
+Previously this script fit one static kernel pooled across all energies and
+saved it as a fixed <module>_response_matrix.npy, which the consumer
+(unfold_profile_analysis.py) loaded unconditionally -- so every energy point
+was deconvolved with the same kernel width regardless of its actual timing
+resolution.
 
-The raw histogram is a blurred version of the truth: y_obs = R @ x_true (+noise).
-Rather than assume R is a single fixed symmetric Gaussian (as in
-unfold_profile_analysis.py's extended_response_matrix), we fit a handful of
-shape parameters of R -- width, width-vs-depth slope, skew, and a wide-tail
-mixture fraction for leakage -- against ALL energy points *simultaneously*.
-Different energies populate different depths/widths in the calorimeter, so
-pooling them gives real constraining power on kernel shape that a single
-truth/observed pair could not.
+Now the kernel width has an explicit energy term:
 
-This script fits SHAPE only. It deliberately does not fit for a peak offset/
-shift (that's V_EFF_MM_NS / BOUNCE_FACTOR / T0_OFFSET calibration, handled
-separately) -- letting the kernel absorb a shift would just hide the real bug.
+    sigma(j, E) = sigma0 + sigma_slope*(j - n_true/2) + sigma_E_slope*log(E/E_REF)
 
-CAVEAT: the truth curves themselves are finite-statistics DoseActor
-histograms. For modules/energies with sparse truth stats (rc_hex_triple is
-noted as spiky at low N), the fit is only as good as that truth curve --
-inspect the fit-quality plots before trusting a given module's matrix, and
-consider excluding energy points where the truth histogram itself looks
-noisy rather than physical.
+fit jointly across all energy points (each pair still gets its OWN R built at
+its own energy during the fit -- only the underlying parameters are shared).
+The output is the fitted PARAMETER VECTOR (saved as JSON), not a frozen
+matrix. The consumer builds R on the fly per energy point via
+response_kernel.build_kernel_matrix(..., energy_val=...).
+
+A reference matrix at E_REF_GEV is still saved as .npy purely for quick
+visual inspection -- it is NOT what gets used in the actual unfolding.
 
 OUTPUT
 ------
-response_matrices/<module>_response_matrix.npy       -- the (n_reco, n_true) matrix
-response_matrices/<module>_response_matrix_meta.json -- fitted params + provenance
+response_matrices/<module>_response_params.json      -- fitted [sigma0, sigma_slope,
+                                                          skew, tail_frac, tail_mult,
+                                                          sigma_E_slope] + provenance
+response_matrices/<module>_response_matrix_Eref.npy  -- reference matrix at E_REF_GEV (diagnostic only)
 response_matrices/<module>_response_fit_quality.png  -- truth vs observed vs R@truth per energy
-
-USAGE
------
-Place in the same directory as unfold_profile_analysis.py (it imports geometry/
-extraction code from there so the matrix stays self-consistent with whatever
-consumes it) and run:
-
-    python3 build_empirical_response_matrix.py
-
-Then in unfold_profile_analysis.py, replace the analytic
-extended_response_matrix(...) call in bootstrap_unfold with e.g.:
-
-    R_sliced = np.load(f"response_matrices/{module_name}_response_matrix.npy")
 """
 
 import sys
@@ -60,13 +42,14 @@ import warnings
 from pathlib import Path
 import numpy as np
 from scipy.optimize import least_squares
-from scipy.stats import skewnorm
 
 warnings.filterwarnings("ignore")
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import response_kernel as rk
+
 # Reuse geometry/extraction/truth-loading code so this matrix is built from
 # EXACTLY the same pipeline that will eventually consume it.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rl_deconv_profile as base
 
 try:
@@ -78,47 +61,13 @@ except ImportError:
 
 PAD_LAYERS = 5
 MIN_COINCIDENCES = 30       # skip energy points with too few coincidences to trust
-MIN_ENERGY_POINTS = 2       # minimum usable points needed to fit a kernel at all
+MIN_ENERGY_POINTS = 3       # need >=3 distinct energies to constrain an energy SLOPE
+                             # (2 points fits *a* line trivially with zero residual --
+                             # not a real constraint)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Parametric kernel model
-# ─────────────────────────────────────────────────────────────────────────────
-def build_kernel_matrix(n_reco, pad_layers, params):
-    """
-    params = [sigma0, sigma_slope, skew, tail_frac, tail_width_mult]
-
-    sigma(j) = sigma0 + sigma_slope * (j - n_true/2), floor-clipped
-    Each column j (the response to a true emission in true-layer j) is a
-    skew-normal centered at j with width sigma(j), mixed with a wider
-    skew-normal "tail" component (same skew, wider scale) to capture
-    leakage/scatter a single peak can't describe. Columns are normalized to
-    sum to 1 (probability-conserving), then rows are sliced down to the
-    physical n_reco window -- same padding convention as
-    extended_response_matrix() in unfold_profile_analysis.py.
-    """
-    sigma0, sigma_slope, skew, tail_frac, tail_mult = params
-    n_true = n_reco + 2 * pad_layers
-    idx = np.arange(n_true)
-
-    R_full = np.zeros((n_true, n_true))
-    for j in idx:
-        sigma_j = max(sigma0 + sigma_slope * (j - n_true / 2.0), 0.15)
-        x = idx - j
-        core = skewnorm.pdf(x, a=skew, loc=0.0, scale=sigma_j)
-        tail = skewnorm.pdf(x, a=skew, loc=0.0, scale=sigma_j * max(tail_mult, 1.0))
-        col = (1.0 - tail_frac) * core + tail_frac * tail
-        s = col.sum()
-        if s > 0:
-            col /= s
-        R_full[:, j] = col
-
-    return R_full[pad_layers: pad_layers + n_reco, :]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data collection -- reuses extract_profile_data_unfold + the same truth-curve
-# loading block as unfold_profile_analysis.py's main(), so nothing drifts.
+# Data collection -- now also records energy_val per pair
 # ─────────────────────────────────────────────────────────────────────────────
 def collect_truth_observed_pairs(mod, target_sweep, is_hex):
     energy_dirs = sorted(
@@ -126,10 +75,11 @@ def collect_truth_observed_pairs(mod, target_sweep, is_hex):
         key=lambda p: base.extract_numerical_energy(p.name),
     )
 
-    pairs = []  # (truth_norm, raw_norm, label, n_coincidences)
+    pairs = []  # (truth_norm, raw_norm, label, n_coincidences, energy_val)
     lyso_bounds_ref = None
 
     for edir in energy_dirs:
+        energy_val = base.extract_numerical_energy(edir.name)
         res = base.extract_profile_data_unfold(edir, is_hex, mod)
         if res is None or len(res["raw_z_emits"]) < MIN_COINCIDENCES:
             print(f"    [skip] {edir.name}: insufficient coincidences "
@@ -177,20 +127,28 @@ def collect_truth_observed_pairs(mod, target_sweep, is_hex):
             continue
         truth_norm = truth_curve / truth_curve.sum()
 
-        pairs.append((truth_norm, raw_norm, edir.name, res["n_e_coincidences"]))
-        print(f"    [ok]   {edir.name}: N={res['n_e_coincidences']} coincidences, truth+raw loaded")
+        pairs.append((truth_norm, raw_norm, edir.name, res["n_e_coincidences"], energy_val))
+        print(f"    [ok]   {edir.name}: E={energy_val:.0f}GeV N={res['n_e_coincidences']} "
+              f"coincidences, truth+raw loaded")
 
     return pairs, lyso_bounds_ref
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fit
+# Fit -- each pair now gets ITS OWN R, built at its own energy, from the
+# SAME shared parameter vector. This is what actually constrains sigma_E_slope.
 # ─────────────────────────────────────────────────────────────────────────────
 def fit_response_matrix(pairs, n_reco, pad_layers):
+    energies = sorted(set(p[4] for p in pairs))
+    if len(energies) < MIN_ENERGY_POINTS:
+        print(f"    [warn] only {len(energies)} distinct energy points "
+              f"({energies}) -- sigma_E_slope will be poorly constrained. "
+              f"Consider fixing sigma_E_slope=0 instead of trusting this fit.")
+
     def residuals(params):
-        R = build_kernel_matrix(n_reco, pad_layers, params)
         res = []
-        for truth_norm, raw_norm, label, n_coinc in pairs:
+        for truth_norm, raw_norm, label, n_coinc, energy_val in pairs:
+            R = rk.build_kernel_matrix(n_reco, pad_layers, params, energy_val=energy_val)
             x_ext = np.zeros(n_reco + 2 * pad_layers)
             x_ext[pad_layers: pad_layers + n_reco] = truth_norm
             pred = R @ x_ext
@@ -201,18 +159,18 @@ def fit_response_matrix(pairs, n_reco, pad_layers):
             res.append(weight * (pred_norm - raw_norm))
         return np.concatenate(res)
 
-    # params: sigma0, sigma_slope, skew, tail_frac, tail_width_mult
-    p0        = [1.5,  0.0,   0.0, 0.10, 3.0]
-    bounds_lo = [0.2, -0.15, -8.0, 0.00, 1.5]
-    bounds_hi = [6.0,  0.15,  8.0, 0.50, 8.0]
+    # params: sigma0, sigma_slope, skew, tail_frac, tail_width_mult, sigma_E_slope
+    p0        = [1.5,  0.0,   0.0, 0.10, 3.0, 0.0]
+    bounds_lo = [0.2, -0.15, -8.0, 0.00, 1.5, -3.0]
+    bounds_hi = [6.0,  0.15,  8.0, 0.50, 8.0,  3.0]
 
     return least_squares(residuals, p0, bounds=(bounds_lo, bounds_hi), verbose=0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Diagnostic plot
+# Diagnostic plot -- builds R per-pair at that pair's own energy, same as fit
 # ─────────────────────────────────────────────────────────────────────────────
-def plot_fit_quality(mod, pairs, R, n_reco, pad_layers, out_path):
+def plot_fit_quality(mod, pairs, params, n_reco, pad_layers, out_path):
     import matplotlib.pyplot as plt
     n = len(pairs)
     ncols = 2 if n >= 2 else 1
@@ -220,8 +178,9 @@ def plot_fit_quality(mod, pairs, R, n_reco, pad_layers, out_path):
     fig, axes = plt.subplots(nrows, ncols, figsize=(6.5 * ncols, 4.2 * nrows), squeeze=False)
     layers = np.arange(1, n_reco + 1)
 
-    for i, (truth_norm, raw_norm, label, n_coinc) in enumerate(pairs):
+    for i, (truth_norm, raw_norm, label, n_coinc, energy_val) in enumerate(pairs):
         ax = axes[i // ncols][i % ncols]
+        R = rk.build_kernel_matrix(n_reco, pad_layers, params, energy_val=energy_val)
         x_ext = np.zeros(n_reco + 2 * pad_layers)
         x_ext[pad_layers: pad_layers + n_reco] = truth_norm
         pred = R @ x_ext
@@ -230,14 +189,15 @@ def plot_fit_quality(mod, pairs, R, n_reco, pad_layers, out_path):
         ax.bar(layers, truth_norm, color="#00bcd4", alpha=0.25, edgecolor="#00838f", label="Truth (DoseActor)")
         ax.plot(layers, raw_norm, "k.:", label="Observed raw ΔT", alpha=0.7)
         ax.plot(layers, pred_norm, "r-o", markersize=3, linewidth=1.5, label="R @ Truth (fitted)")
-        ax.set_title(f"{label}  (N={n_coinc})", fontsize=10)
+        sigma_disp = rk.sigma_of_layer(n_reco / 2.0 + pad_layers, n_reco + 2 * pad_layers, energy_val, params)
+        ax.set_title(f"{label}  (N={n_coinc}, σ_mid≈{sigma_disp:.2f} layers)", fontsize=10)
         ax.legend(fontsize=7)
         ax.grid(alpha=0.3, linestyle=":")
 
     for j in range(n, nrows * ncols):
         axes[j // ncols][j % ncols].axis("off")
 
-    fig.suptitle(f"Empirical Response Matrix Fit Quality — {mod}", fontsize=13, fontweight="bold")
+    fig.suptitle(f"Empirical Response Kernel Fit Quality — {mod}", fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
@@ -255,50 +215,53 @@ def main():
             print(f"Skipping '{mod}' - sweep not found: {target_sweep}")
             continue
 
-        print(f"\n=== Building empirical response matrix for '{mod}' ===")
+        print(f"\n=== Building empirical response kernel for '{mod}' ===")
         is_hex = "hex" in mod
         pairs, lyso_bounds = collect_truth_observed_pairs(mod, target_sweep, is_hex)
 
-        if len(pairs) < MIN_ENERGY_POINTS:
-            print(f"  [Fatal] Need >= {MIN_ENERGY_POINTS} usable energy points to fit a kernel "
+        if len(pairs) < 2:
+            print(f"  [Fatal] Need >= 2 usable energy points to fit anything "
                   f"(got {len(pairs)}). Skipping '{mod}'.")
             continue
 
         n_reco = len(lyso_bounds)
         fit = fit_response_matrix(pairs, n_reco, PAD_LAYERS)
-        sigma0, sigma_slope, skew, tail_frac, tail_mult = fit.x
+        sigma0, sigma_slope, skew, tail_frac, tail_mult, sigma_E_slope = fit.x
 
         print(f"  Fitted kernel: sigma0={sigma0:.3f}  sigma_slope={sigma_slope:+.4f}  "
-              f"skew={skew:+.2f}  tail_frac={tail_frac:.3f}  tail_mult={tail_mult:.2f}")
+              f"skew={skew:+.2f}  tail_frac={tail_frac:.3f}  tail_mult={tail_mult:.2f}  "
+              f"sigma_E_slope={sigma_E_slope:+.4f}")
         print(f"  Final cost={fit.cost:.6f}  residual_norm={np.linalg.norm(fit.fun):.4f}")
-
-        R = build_kernel_matrix(n_reco, PAD_LAYERS, fit.x)
-
-        npy_path = out_dir / f"{mod}_response_matrix.npy"
-        np.save(npy_path, R)
 
         meta = {
             "module": mod,
             "n_reco": n_reco,
             "pad_layers": PAD_LAYERS,
-            "params": {
-                "sigma0": sigma0, "sigma_slope": sigma_slope, "skew": skew,
-                "tail_frac": tail_frac, "tail_width_mult": tail_mult,
-            },
+            "E_REF_GEV": rk.E_REF_GEV,
+            "params": dict(zip(rk.PARAM_NAMES, fit.x.tolist())),
+            "params_vector": fit.x.tolist(),   # convenience: ordered list matching PARAM_NAMES
             "fit_cost": float(fit.cost),
             "n_energy_points_used": len(pairs),
-            "energy_points": [p[2] for p in pairs],
+            "energy_points": [{"label": p[2], "energy_gev": p[4], "n_coinc": p[3]} for p in pairs],
         }
-        with open(out_dir / f"{mod}_response_matrix_meta.json", "w") as f:
+        with open(out_dir / f"{mod}_response_params.json", "w") as f:
             json.dump(meta, f, indent=2)
 
+        # Diagnostic-only reference matrix at E_REF_GEV -- NOT used by the consumer.
+        R_ref = rk.build_kernel_matrix(n_reco, PAD_LAYERS, fit.x, energy_val=rk.E_REF_GEV)
+        np.save(out_dir / f"{mod}_response_matrix_Eref.npy", R_ref)
+
         plot_path = out_dir / f"{mod}_response_fit_quality.png"
-        plot_fit_quality(mod, pairs, R, n_reco, PAD_LAYERS, plot_path)
+        plot_fit_quality(mod, pairs, fit.x, n_reco, PAD_LAYERS, plot_path)
 
-        print(f"  Saved: {npy_path.name}, {plot_path.name}")
+        print(f"  Saved: {mod}_response_params.json, {mod}_response_matrix_Eref.npy (diagnostic), "
+              f"{plot_path.name}")
 
-    print("\nDone. Load a matrix with:")
-    print("  R = np.load('response_matrices/<module>_response_matrix.npy')")
+    print("\nDone. Consumer loads per-energy R via:")
+    print("  import response_kernel as rk, json")
+    print("  meta = json.load(open('response_matrices/<module>_response_params.json'))")
+    print("  R = rk.build_kernel_matrix(meta['n_reco'], meta['pad_layers'],")
+    print("                             meta['params_vector'], energy_val=<this energy in GeV>)")
 
 
 if __name__ == "__main__":
