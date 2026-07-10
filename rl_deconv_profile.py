@@ -64,10 +64,10 @@ HEX_CAP_XY = np.array([
 ])
 
 TARGET_SWEEPS = {
-    "radi_cal_energy": Path("/home/uakgun/env/THOMAS/discrete_sims/radi_cal_energy/runs/radi_cal_energy/sweep_20260707_170533"),
-    "radi_cal_triple": Path("/home/uakgun/env/THOMAS/discrete_sims/radi_cal_triple/runs/radi_cal_triple/sweep_20260706_171040"),
-    "rc_hex": Path("/home/uakgun/env/THOMAS/discrete_sims/rc_hex/runs/rc_hex/sweep_20260706_171127"),
-    "rc_hex_triple": Path("/home/uakgun/env/THOMAS/discrete_sims/rc_hex_triple/runs/rc_hex_triple/sweep_20260706_171101"),
+    "radi_cal_energy": Path("/home/uakgun/gate_sims/discrete_sims/radi_cal_energy/runs/radi_cal_energy/sweep_20260708_154719"),
+    "radi_cal_triple": Path("/home/uakgun/gate_sims/discrete_sims/radi_cal_triple/runs/radi_cal_triple/sweep_20260708_154742"),
+    "rc_hex": Path("/home/uakgun/gate_sims/discrete_sims/rc_hex/runs/rc_hex/sweep_20260706_171127/sweep_20260706_171127"),
+    "rc_hex_triple": Path("/home/uakgun/gate_sims/discrete_sims/rc_hex_triple/runs/rc_hex_triple/sweep_20260708_154836/sweep_20260708_154836"),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,31 +143,46 @@ def extended_response_matrix(n_reco, pad_layers, sigma_bins):
     # Slice the rows to retain only the physical reconstruction bins
     return R_full[pad_layers : pad_layers + n_reco, :]
 
-def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_sigma=0.35):
+def richardson_lucy_deconvolve(observed, R, iterations=40, eps=1e-12, smoothing_sigma=0.35, damping_threshold=1.5):
     """
-    UPGRADE 1 & 3: Regularized Richardson-Lucy with a physical Gamma prior.
-    Accepts non-square matrix R to correctly handle spatial boundary limits.
+    Damped Richardson-Lucy to prevent over-unfolding and peak overestimation,
+    especially in high-statistics regimes.
     """
     n_reco, n_true = R.shape
     total = np.sum(observed)
     if total <= 0:
         return np.zeros(n_true)
     
-    # UPGRADE 3: Broad Physical Prior (Standard broad EM-shower Gamma-like profile)
     t = np.arange(n_true)
-    # A sharper initial power allows the front face of the shower to resolve faster
     prior = (t + 1) ** 3.0 * np.exp(-0.25 * t)
     x = (prior / np.sum(prior)) * total
     
     Rt = R.T
-    eff = Rt @ np.ones(n_reco)  # Efficiency mapping for missing edge tracking
+    eff = Rt @ np.ones(n_reco)
     eff[eff == 0] = 1.0
     
     for _ in range(iterations):
-        denom = R @ x + eps
-        x = x * (Rt @ (observed / denom)) / eff
+        reconstructed = R @ x
+        denom = reconstructed + eps
         
-        # UPGRADE 1: High-frequency noise smoothing step inside iteration loop
+        # Calculate residuals
+        relative_blur = observed / denom
+        
+        # White's Damping: Suppress updates where fluctuations are consistent with noise
+        # For Poisson noise, variance ~ reconstructed value
+        with np.errstate(divide='ignore', invalid='ignore'):
+            residual = (observed - reconstructed) / np.sqrt(reconstructed + eps)
+            # Damping weight drops to 0 when residual is small
+            weight = np.where(np.abs(residual) < damping_threshold, 
+                              (np.abs(residual) / damping_threshold) ** 2, 1.0)
+            # Ensure boundaries or extreme values don't produce NaNs
+            weight = np.clip(weight, 0.0, 1.0)
+        
+        # Apply damped modifier
+        damped_blur = 1.0 + weight * (relative_blur - 1.0)
+        
+        x = x * (Rt @ damped_blur) / eff
+        
         if smoothing_sigma > 0:
             x = gaussian_filter1d(x, sigma=smoothing_sigma)
             
@@ -388,8 +403,9 @@ def main():
             
            
             # If resolution is sharp (small sigma_layer), reduce inner-loop smoothing
-            dynamic_smoothing = max(0.05, 0.20 * (sigma_layer / 1.5))
-            dynamic_iterations = int(max(30, min(80, 50 * (1.5 / sigma_layer))))
+            # Safer, more conservative hyperparameter assignment
+            dynamic_smoothing = max(0.35, 0.50 * (sigma_layer / 1.5)) 
+            dynamic_iterations = int(max(15, min(40, 25 * (1.5 / sigma_layer))))
             unfolded_mean, unfolded_std, raw_mean, _ = bootstrap_unfold(
                 res["raw_z_emits"], lyso_bounds, sigma_layer, 
                 n_boot=40, iterations=dynamic_iterations, pad_layers=5, 
@@ -466,9 +482,11 @@ def main():
 
             ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
                     marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
+            
+           
             ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
                         linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
-                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f})")
+                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
 
             ax_main.set_title(f"{ekey}  (N={res['n_e_coincidences']})", fontsize=11, fontweight="bold")
             ax_main.set_ylabel("Normalized Fraction", fontsize=9)
