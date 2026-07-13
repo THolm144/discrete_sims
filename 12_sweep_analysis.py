@@ -62,8 +62,8 @@ T_OFFSET_NS = {
     "luagce_rc_hex_triple":   0.0,
 }
 
-
-V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
+for mod in BOUNCE_FACTOR.keys():
+    V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92)
 
 _GT_LO_NS = 0.0
 _GT_HI_NS = 50.0
