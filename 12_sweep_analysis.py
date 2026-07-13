@@ -639,7 +639,7 @@ def main():
                 unf_err_disp = np.zeros_like(raw_norm_disp)
 
             if utils is not None and hasattr(utils, 'load_truth_curve'):
-                truth_curve = utils.load_truth_curve(mod, ekey)
+                 truth_curve = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd")
             else:
                 truth_curve = None
 
