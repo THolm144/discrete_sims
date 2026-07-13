@@ -12,6 +12,8 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 import itertools
+from scipy.stats import crystalball
+from scipy.optimize import curve_fit
 
 import numpy as np
 import pandas as pd
@@ -239,6 +241,13 @@ def cb_plus_broad_bg(x, amp_core, mu, sigma_core, alpha, n, amp_bg, sigma_bg, ri
     background = amp_bg * np.exp(-0.5 * ((x - mu) / sigma_bg) ** 2)
     
     return core_cb + background
+
+def crystal_ball_model(x, amp, beta, m, loc, scale):
+    """
+    Wrapper for SciPy's Crystal Ball PDF. 
+    Includes 'amp' to scale the normalized PDF to absolute histogram counts.
+    """
+    return amp * crystalball.pdf(x, beta, m, loc=loc, scale=scale)
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -585,7 +594,7 @@ def main():
             data = master_summary[mod][ekey]["raw_bm_data"]
 
             if len(data) > 0:
-                clean = clean_around_mode(data, window_ps=250.0)
+                clean = clean_around_mode(data, window_ps=500.0)
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 total_range = hi - lo
 
@@ -603,53 +612,40 @@ def main():
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 x_fit = np.linspace(lo, hi, 5000)
-
-                # Asymmetry & Parameter Seeding
-                from scipy.stats import skew
-                is_right_tailed = skew(clean) > 0 if len(clean) > 2 else False
                 
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
                 amp_max = float(counts.max())
-
-                # Seeding parameters to separate the sharp core from the wide base
-                # p0 = [amp_core, mu, sigma_core, alpha, n, amp_bg, sigma_bg]
-                p0 = [amp_max * 0.8, mu_guess, 15.0, 1.2, 3.0, amp_max * 0.2, 50.0]
                 
-                # Strict boundaries prevent the background component from trying to fit the peak
-                bounds = (
-                    [amp_max * 0.3, lo,  3.0,  0.1, 1.05, 0.0,            30.0],  # Minimums
-                    [amp_max * 1.5, hi,  35.0, 5.0,  40.0, amp_max * 0.6, 150.0]  # Maximums
-                )
+                # Estimate standard deviation for the scale parameter
+                std_guess = float(np.std(clean)) if len(clean) > 1 else 15.0
 
-                # Peak-focused weighting: heavily weights the high-amplitude bins
+                # 2. Provide an initial guess [amp, beta, m, loc, scale] 
+                # amp guess approximates the area under the peak
+                initial_guess = [amp_max * std_guess * np.sqrt(2 * np.pi), 1.0, 2.0, mu_guess, std_guess]
+
+                # Peak-focused weighting
                 fit_errors = np.sqrt(counts)
                 fit_errors[fit_errors == 0] = 1.0
 
                 try:
-                    fit_func = lambda x, ac, m, sc, al, n, ab, sb: cb_plus_broad_bg(
-                        x, ac, m, sc, al, n, ab, sb, right_tailed=is_right_tailed
-                    )
-
+                    # 3. Perform the fit using the SciPy wrapper
                     popt, _ = curve_fit(
-                        fit_func, bin_centers, counts, 
-                        p0=p0, bounds=bounds, 
+                        crystal_ball_model, bin_centers, counts, 
+                        p0=initial_guess, 
                         sigma=fit_errors, absolute_sigma=True, 
                         maxfev=30000
                     )
-                    ac_f, mu_f, sc_f, al_f, n_f, ab_f, sb_f = popt
+                    amp_f, beta_f, m_f, loc_f, scale_f = popt
                     
-                    # Store the TRUE physical core timing resolution, completely ignoring the background width
-                    master_summary[mod][ekey]["sigma_t_ps"] = sc_f
+                    # Store the TRUE physical core timing resolution (scale parameter in SciPy)
+                    master_summary[mod][ekey]["sigma_t_ps"] = scale_f
 
-                    y_fit = fit_func(x_fit, ac_f, mu_f, sc_f, al_f, n_f, ab_f, sb_f)
+                    # 4. Plot the result
+                    y_fit = crystal_ball_model(x_fit, *popt)
                     
-                    # Also calculate components individually for high-fidelity visualization
-                    y_core = cb_plus_broad_bg(x_fit, ac_f, mu_f, sc_f, al_f, n_f, 0.0, sb_f, right_tailed=is_right_tailed)
-                    
-                    label_text = f"Two-Component Fit\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sc_f:.1f} ps\n$\\sigma_{{bg}}$ = {sb_f:.1f} ps"
+                    label_text = f"SciPy CB Fit\n$\\mu$ = {loc_f:.1f} ps\n$\\sigma_{{core}}$ = {scale_f:.1f} ps"
                     ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
-                    ax.plot(x_fit, y_core, color="red", linestyle=":", linewidth=1.5, label="Extracted Core Peak")
                     
                 except Exception:
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
