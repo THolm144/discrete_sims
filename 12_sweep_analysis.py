@@ -225,7 +225,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         is_e = np.isin(channels, e_indices)
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
         
-        # BUG FIX A: Applying is_optical filter to E-Type channels
         m_e_up = is_e & is_prompt & near_up & is_optical
         m_e_dw = is_e & is_prompt & near_dw & is_optical
 
@@ -341,7 +340,7 @@ def main():
         for mod in modules:
             mod_path = base_dir / mod / "runs" / mod
             if not mod_path.exists():
-                mod_path = base_dir / mod # Try standard directory without 'runs' intermediate
+                mod_path = base_dir / mod 
                 if not mod_path.exists():
                     print(f"  Skipping module '{mod}' (path not found)")
                     continue
@@ -372,19 +371,16 @@ def main():
 
    # ── EXPLICIT DESIGN MAPS FOR THE 12 MODULE VARIANTS ──────────────────────
     mod_colors = {
-        # Baseline (BCF92) Variants
         "radi_cal_energy":        "#f708af",  
         "radi_cal_triple":        "#f708af",  
         "rc_hex":                 "#f708af",  
         "rc_hex_triple":          "#f708af",  
         
-        # DSB1 Variants
         "dsb1_radi_cal_energy":   "#04207e",  
         "dsb1_radi_cal_triple":   "#04207e",  
         "dsb1_rc_hex":            "#04207e", 
         "dsb1_rc_hex_triple":     "#04207e",  
         
-        # LuAG:Ce Variants
         "luagce_radi_cal_energy": "#fa0707",  
         "luagce_radi_cal_triple": "#fa0707",  
         "luagce_rc_hex":          "#fa0707",  
@@ -409,8 +405,8 @@ def main():
     }
 
     mod_linestyles = {
-        "radi_cal_energy":        ":",   # Solid
-        "radi_cal_triple":        "--",  # Dashed
+        "radi_cal_energy":        ":",   
+        "radi_cal_triple":        "--",  
         "rc_hex":                 ":",   
         "rc_hex_triple":          "--",  
         
@@ -444,9 +440,174 @@ def main():
         ncols = 2 if n_energies >= 2 else 1
         nrows = int(np.ceil(n_energies / ncols))
 
-       
         # ─────────────────────────────────────────────────────────────────────
-        # 3.5. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
+        # 1. TIMING HIERARCHY — DYNAMIC PER-PANEL BINNING (FREEDMAN-DIACONIS)
+        # ─────────────────────────────────────────────────────────────────────
+        fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_time = axs_time.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_time[idx]
+            data = master_summary[mod][ekey]["raw_bm_data"]
+
+            if len(data) > 0:
+                clean = clean_around_mode(data, window_ps=500.0)
+                lo, hi = float(np.min(clean)), float(np.max(clean))
+                total_range = hi - lo
+
+                if hi <= lo:
+                    hi = lo + 1.0
+
+                q75, q25 = np.percentile(clean, [75, 25])
+                iqr = q75 - q25
+                if iqr > 0 and len(clean) > 1:
+                    fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
+                else:
+                    fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
+                min_width = max(1.0, total_range / 50.0)
+                optimal_width = max(min_width, min(fd_width, 10.0))
+                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
+                actual_plot_width = (hi - lo) / plot_bins
+
+                counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
+                                            color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
+
+                def crystal_ball_binned(x, amp, mu, sigma, alpha, n):
+                    zsc = (x - mu) / sigma
+                    gauss = amp * np.exp(-0.5 * zsc ** 2)
+                    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
+                    b = n / alpha - alpha
+                    tail = amp * a * (b - zsc) ** (-n)
+                    return np.where(zsc > -alpha, gauss, tail)
+
+                bin_centers = (edges[:-1] + edges[1:]) / 2.0
+                x_fit = np.linspace(lo, hi, 5000)
+
+                peak_idx = np.argmax(counts)
+                mu_guess = float(bin_centers[peak_idx])
+                std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
+
+                p0 = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
+                bounds = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
+
+                try:
+                    popt, _ = curve_fit(crystal_ball_binned, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
+                    amp_f, mu_f, sigma_f, alpha_f, n_f = popt
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+
+                    y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
+                    label_text = (f"Crystal Ball\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
+                except Exception:
+                    _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma
+
+                    amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
+                    y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
+                    label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
+                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
+                ax.legend(loc="upper right", fontsize=9)
+        for idx in range(n_energies, len(axs_time)):
+            fig_time.delaxes(axs_time[idx])
+
+        fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_time.tight_layout()
+        fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
+        plt.close(fig_time)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 2. DOWNSTREAM E-TYPE SIPM HITS VS TIME
+        # ─────────────────────────────────────────────────────────────────────
+        fig_dw_hits, axs_dw_hits = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_dw_hits = axs_dw_hits.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_dw_hits[idx]
+            dw_times = master_summary[mod][ekey]["dw_e_times"]
+
+            if len(dw_times) > 0:
+                ax.hist(dw_times, bins=70, range=(_GT_LO_NS, _GT_HI_NS), color=mod_colors.get(mod, "#f708af"),
+                        alpha=0.7, edgecolor="black", linewidth=0.5, label=f"Downstream E-Hits\nTotal={len(dw_times)}")
+
+                ax.set_title(f"Downstream Intensity: {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel("Photon Global Time (ns)", fontsize=9)
+                ax.set_ylabel("Hit Count / Bin", fontsize=9)
+                ax.set_xlim(_GT_LO_NS, _GT_HI_NS)
+                ax.legend(loc="upper right", fontsize=8, frameon=True)
+            else:
+                ax.text(0.5, 0.5, "No Downstream Hits", ha='center', va='center')
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        for idx in range(n_energies, len(axs_dw_hits)):
+            fig_dw_hits.delaxes(axs_dw_hits[idx])
+
+        fig_dw_hits.suptitle(f"Downstream E-Type SiPM Intensity Profiles — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_dw_hits.tight_layout()
+        fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
+        plt.close(fig_dw_hits)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 3. DOWNSTREAM PROMPT STRIKES VS DISTANCE (SINGLE-SIDED ZOOM)
+        # ─────────────────────────────────────────────────────────────────────
+        fig_dist, axs_dist = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_dist = axs_dist.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_dist[idx]
+            summ = master_summary[mod][ekey]
+            first_times = summ["dw_first_times"]
+            lyso_thick = summ["lyso_thick"]
+
+            if len(first_times) > 0:
+                distances_mm = first_times * V_EFF_MM_NS
+                view_min, view_max = 120.0, 350.0
+
+                counts, edges, _ = ax.hist(distances_mm, bins=80, range=(view_min, view_max), color="#ff9800",
+                                            alpha=0.6, edgecolor="black", linewidth=0.5,
+                                            label=f"Prompt Strikes (N={len(first_times)})")
+
+                if len(counts) > 0 and np.max(counts) > 0:
+                    peak_idx = np.argmax(counts)
+                    peak_dist = edges[peak_idx] + (edges[1] - edges[0]) / 2.0
+                    ax.axvline(peak_dist, color="red", linestyle="--", linewidth=1.5,
+                                label=f"Peak: {peak_dist:.1f} mm")
+
+                run_dirs = summ.get("run_dirs", [])
+                if utils and run_dirs:
+                    try:
+                        gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+                        calor_thick = (_N_LYSO * gap_thick) + (_N_W * _W_THICK_MM)
+                        long_arr, _ = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
+
+                        if long_arr is not None:
+                            avg = long_arr / max(len(run_dirs), 1)
+                            ax_twin = ax.twinx()
+                            z_axis = np.linspace(-calor_thick/2, calor_thick/2, len(avg))
+                            dist_axis = 110.0 - z_axis 
+                            ax_twin.plot(dist_axis, avg, color="blue", alpha=0.4, linestyle="-.", label="Dose Profile")
+                            ax_twin.set_ylabel("Energy Deposition (MeV)", color="blue", fontsize=8)
+                            ax_twin.tick_params(axis='y', labelcolor="blue", labelsize=8)
+                    except Exception:
+                        pass
+                
+                ax.set_title(f"Prompt Hits Zoom: {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel("Effective Propagation Distance (mm)", fontsize=9)
+                ax.set_ylabel("Counts / Bin", fontsize=9)
+                ax.set_xlim(view_min, view_max)
+                ax.legend(loc="upper right", fontsize=8)
+            else:
+                ax.text(0.5, 0.5, "No First Hits Data", ha='center', va='center')
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        for idx in range(n_energies, len(axs_dist)):
+            fig_dist.delaxes(axs_dist[idx])
+
+        fig_dist.suptitle(f"Downstream Prompt Arrival Spatial Correlation — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_dist.tight_layout()
+        fig_dist.savefig(analysis_out / f"{mod}_dw_prompt_distance_cropped.png", dpi=200)
+        plt.close(fig_dist)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 4. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
         # ─────────────────────────────────────────────────────────────────────
         prof_out_dir = analysis_out / "profiles"
         prof_out_dir.mkdir(exist_ok=True)
@@ -456,19 +617,13 @@ def main():
             sigma_t_ps = master_summary[mod][ekey]["sigma_t_ps"]
             pitch_mm = master_summary[mod][ekey]["pitch_mm"]
             
-            # Skip empty profile arrays
             if np.sum(raw_profile) == 0:
                 continue
 
-            # Normalize the raw profile for display
             raw_norm_disp = raw_profile / np.sum(raw_profile)
-            
-            # Calculate the blurring extent (sigma_layer)
             s_z = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
             sigma_layer = s_z / pitch_mm if pitch_mm > 0 else 1.0
 
-            # ── 1. Unfold and Load Truth ──
-            # (Assuming you are using your analysis_utils for the actual math and data loading)
             if utils is not None and hasattr(utils, 'rl_unfold'):
                 unf_norm_disp, unf_err_disp = utils.rl_unfold(raw_norm_disp, sigma_layer)
             else:
@@ -480,35 +635,27 @@ def main():
             else:
                 truth_curve = None
 
-            # ── 2. Setup Figure & Subpanels ──
             fig_prof, (ax_main, ax_ratio) = plt.subplots(
                 2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [3, 1]}, sharex=True
             )
 
-            # ── 3. Apply the fixed RL-Unfolding Plot Logic ──
             if truth_curve is not None and np.sum(truth_curve) > 0:
                 truth_norm_disp = truth_curve / np.sum(truth_curve)
                 ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
                        linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
-                # Calculate Fit Metrics using the correct display variables
-                # Use a small epsilon where unfolded uncertainty is 0 to avoid dividing by zero
                 sigma_bins = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
                 chi2 = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins) ** 2)
                 ndf = len(unf_norm_disp)
                 reduced_chi2 = chi2 / ndf
-                
                 mae = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
-                
-                # Dynamic string addition if truth is available
                 fit_stats_label = f" (χ²/ndf={reduced_chi2:.2f}, MAE={mae:.1f}%)"
 
-                # Compute and populate the Unfolded / Truth ratio subpanel
                 with np.errstate(divide='ignore', invalid='ignore'):
                     ratio = unf_norm_disp / truth_norm_disp
                     ratio_err = unf_err_disp / truth_norm_disp
                 
-                ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors[mod],
+                ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors.get(mod, "black"),
                                   fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
                 ax_ratio.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
                 ax_ratio.set_ylabel("Unf / Truth", fontsize=8)
@@ -516,18 +663,15 @@ def main():
             else:
                 ax_ratio.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_ratio.transAxes)
                 ax_ratio.set_ylim(0, 2)
-                fit_stats_label = "" # Empty if truth curve isn't loaded
+                fit_stats_label = ""
 
-            # Plot Raw Profile
             ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
                     marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
             
-            # Plot Unfolded Profile
-            ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors[mod],
+            ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors.get(mod, "black"),
                         linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
                         label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
 
-            # ── 4. Formatting & Export ──
             ax_main.set_ylabel("Normalized Intensity", fontsize=10)
             ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12, fontweight="bold")
             ax_main.grid(True, linestyle=":", alpha=0.6)
@@ -540,8 +684,9 @@ def main():
             fig_prof.tight_layout()
             fig_prof.savefig(prof_out_dir / f"{mod}_{ekey}_profile.png", dpi=200)
             plt.close(fig_prof)
+
         # ─────────────────────────────────────────────────────────────────────
-        # 3.7. ENERGY LINEARITY AND RESOLUTION PANELS (Bug fixes applied)
+        # 5. ENERGY LINEARITY AND RESOLUTION PANELS (Bug fixes applied)
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
 
@@ -575,8 +720,6 @@ def main():
                             color=mod_colors.get(mod, 'black'), label=f"Simulated Data ({mod})")
 
             x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
-            
-            # BUG FIX B: Scientific notation for the linearity text to prevent '0.0' truncation
             ax_lin.plot(x_lin_smooth, linear_func(x_lin_smooth, *popt_lin),
                         color="black", linestyle="--", label=f"Fit: {popt_lin[0]:.3e} photons/GeV")
 
@@ -589,7 +732,6 @@ def main():
             def resolution_func(E, c, s, n):
                 return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
 
-            # BUG FIX C: Widened boundary constraints for curve_fit to prevent failure on sparse data
             try:
                 popt_res, _ = curve_fit(resolution_func, energies_gev, res_e_list,
                                         p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
@@ -618,7 +760,7 @@ def main():
             plt.close(fig_er)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH (Now 12 Modules)
+    # 6. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH (Now 12 Modules)
     # ─────────────────────────────────────────────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(10, 7))
     any_points = False
@@ -647,7 +789,7 @@ def main():
                 x_energy, y_res, yerr=y_err, 
                 marker=mod_markers.get(mod, 'o'), 
                 color=mod_colors.get(mod, 'black'),
-                linestyle=mod_linestyles.get(mod, '-'),  # <-- Now pulls explicit line styles
+                linestyle=mod_linestyles.get(mod, '-'),  
                 linewidth=2, 
                 markersize=7, 
                 capsize=4, 
@@ -664,7 +806,6 @@ def main():
     ax_perf.get_xaxis().set_major_formatter(plt.ScalarFormatter())
     
     if any_points:
-        
         ax_perf.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize=9, frameon=True)
     else:
         ax_perf.text(0.5, 0.5, "No modules had sufficient statistics", ha='center', va='center', transform=ax_perf.transAxes)
@@ -672,13 +813,12 @@ def main():
     fig_perf.tight_layout()
     fig_perf.savefig(analysis_out / "timing_resolution_vs_energy.png", dpi=220)
 
-    # ── VISUAL KEY BOX ────────────────────────────────────────────────────────
     key_text = (
         "VISUAL ENCODING KEY\n"
         "───────────────────\n"
         "• Colors (Material Class):\n"
         "  Pinks   = BCF92 Baseline\n"
-        "  Navys  = DSB1 Variants\n"
+        "  Navys   = DSB1 Variants\n"
         "  Reds    = LuAG:Ce Variants\n\n"
         "• Line Styles (Thickness):\n"
         "  Dot  = Single (1.5mm LYSO )\n"
@@ -688,7 +828,6 @@ def main():
         "Hexagon: hexagon"
     )
     
-    # Places the text box neatly under the legend on the right side
     fig_perf.text(
         1.02, 0.15, key_text, 
         fontsize=9, 
@@ -699,7 +838,7 @@ def main():
     plt.close(fig_perf)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 5. EXPORT MASTER MATRIX TEXT REPORT
+    # 7. EXPORT MASTER MATRIX TEXT REPORT
     # ─────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:

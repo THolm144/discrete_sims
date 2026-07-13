@@ -27,6 +27,8 @@ rsync -avz --delete \
     --exclude='**/tikhonov_profile_analysis/' \
     --exclude='response_matrices/' \
     --exclude='**/response_matrices/' \
+    --exclude='12_sweep_analysis/' \
+    --exclude='**/12_sweep_analysis/' \
     --exclude='*.root' \
     --exclude='*.json' \
     --exclude='*.mhd' \
