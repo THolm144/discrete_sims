@@ -249,7 +249,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         return None
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
-    v_light = C_LIGHT_MM_NS / REFRACTIVE_INDEX.get(module_name, 1.60)
+    v_light = v_eff_for_module(mod)
     v_eff = v_eff_for_module(module_name)
     t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
    
