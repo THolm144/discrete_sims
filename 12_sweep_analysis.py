@@ -204,6 +204,20 @@ def extract_numerical_energy(label: str) -> float:
     except ValueError:
         return 0.0
 
+def crystal_ball_adaptive(x, amp, mu, sigma, alpha, n, right_tailed=False):
+    """
+    An adaptive Crystal Ball function that automatically accommodates 
+    either left-sided or right-sided tail asymmetry.
+    """
+    zsc = (x - mu) / sigma
+    if right_tailed:
+        zsc = -zsc  # Mirror the axis internally to handle high-side tails smoothly
+    
+    gauss = amp * np.exp(-0.5 * zsc ** 2)
+    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
+    b = n / alpha - alpha
+    tail = amp * a * (b - zsc) ** (-n)
+    return np.where(zsc > -alpha, gauss, tail)
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -392,6 +406,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
+
 def _run_job(args):
     mod, ekey, edir, is_hex = args
     res = analyze_energy_batch(edir, is_hex, mod, verbose_label=f"{mod}:{ekey}")
@@ -549,13 +564,14 @@ def main():
             data = master_summary[mod][ekey]["raw_bm_data"]
 
             if len(data) > 0:
-                clean = clean_around_mode(data, window_ps=500.0)
+                clean = clean_around_mode(data, window_ps=250.0)
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 total_range = hi - lo
 
                 if hi <= lo:
                     hi = lo + 1.0
 
+                # Determine the optimal plotting bin width (Freedman-Diaconis)
                 q75, q25 = np.percentile(clean, [75, 25])
                 iqr = q75 - q25
                 if iqr > 0 and len(clean) > 1:
@@ -570,31 +586,48 @@ def main():
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
-                def crystal_ball_binned(x, amp, mu, sigma, alpha, n):
-                    zsc = (x - mu) / sigma
-                    gauss = amp * np.exp(-0.5 * zsc ** 2)
-                    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
-                    b = n / alpha - alpha
-                    tail = amp * a * (b - zsc) ** (-n)
-                    return np.where(zsc > -alpha, gauss, tail)
-
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 x_fit = np.linspace(lo, hi, 5000)
 
+                # ── DYNAMIC ASYMMETRY DETECTION ─────────────────────────────
+                from scipy.stats import skew
+                is_right_tailed = skew(clean) > 0 if len(clean) > 2 else False
+
+                # ── TAIL-IMMUNE SIGMA INITIALIZATION ─────────────────────────
+                # Seeding with IQR/1.349 isolates the true core width,
+                # preventing far-out tail outliers from inflating the initial guess.
+                core_sigma_guess = iqr / 1.349 if iqr > 0 else 15.0
+                
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
-                std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
 
-                p0 = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
-                bounds = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
+                p0 = [float(counts.max()), mu_guess, core_sigma_guess, 1.2, 3.0]
+                bounds = (
+                    [counts.max() * 0.2, lo, 1.0, 0.1, 1.05], 
+                    [counts.max() * 3.0, hi, core_sigma_guess * 3.0, 5.0, 40.0]
+                )
+
+                # Assign Poisson weighting matrix to target the dense peaks
+                fit_errors = np.sqrt(counts)
+                fit_errors[fit_errors == 0] = 1.0
 
                 try:
-                    popt, _ = curve_fit(crystal_ball_binned, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
+                    # Bind the directional flag using a lambda wrapper
+                    fit_func = lambda x, amp, mu, sigma, alpha, n: crystal_ball_adaptive(
+                        x, amp, mu, sigma, alpha, n, right_tailed=is_right_tailed
+                    )
+
+                    popt, _ = curve_fit(
+                        fit_func, bin_centers, counts, 
+                        p0=p0, bounds=bounds, 
+                        sigma=fit_errors, absolute_sigma=True, 
+                        maxfev=20000
+                    )
                     amp_f, mu_f, sigma_f, alpha_f, n_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
-                    label_text = (f"Crystal Ball\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
+                    y_fit = fit_func(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
+                    label_text = f"Adaptive CB Fit\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps"
                 except Exception:
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma
@@ -602,6 +635,7 @@ def main():
                     amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
                     y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
                     label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
+                
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.legend(loc="upper right", fontsize=9)
         for idx in range(n_energies, len(axs_time)):
