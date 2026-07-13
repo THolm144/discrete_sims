@@ -81,6 +81,24 @@ HEX_CAP_XY = np.array([
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+def rebin_fine_profile_to_layers(fine_arr: np.ndarray, lyso_bounds: list, calor_thick_mm: float) -> np.ndarray:
+    """
+    Collapse a fine-resolution DoseActor voxel array (spanning the full
+    calorimeter thickness, centered at z=0) down to one value per physical
+    LYSO layer, using the same z-boundaries as get_lyso_layer_bounds().
+    """
+    n = len(fine_arr)
+    if n == 0:
+        return np.zeros(len(lyso_bounds))
+    dz = calor_thick_mm / n
+    centers = -calor_thick_mm / 2.0 + dz * (np.arange(n) + 0.5)
+    binned = np.zeros(len(lyso_bounds))
+    for i, (z_lo, z_hi) in enumerate(lyso_bounds):
+        mask = (centers >= z_lo) & (centers < z_hi)
+        binned[i] = fine_arr[mask].sum()
+    return binned
+
+
 def get_lyso_layer_bounds(lyso_thick, calor_thick):
     gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
     bounds = []
@@ -624,10 +642,15 @@ def main():
             raw_profile = master_summary[mod][ekey]["tof_profile"]
             sigma_t_ps = master_summary[mod][ekey]["sigma_t_ps"]
             pitch_mm = master_summary[mod][ekey]["pitch_mm"]
+            lyso_thick = master_summary[mod][ekey]["lyso_thick"]
             run_dirs_ek = master_summary[mod][ekey]["run_dirs"]
-            
+
             if np.sum(raw_profile) == 0:
                 continue
+
+            gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
+            calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
+            lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
 
             raw_norm_disp = raw_profile / np.sum(raw_profile)
             s_z = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
@@ -639,10 +662,14 @@ def main():
                 unf_norm_disp = raw_norm_disp
                 unf_err_disp = np.zeros_like(raw_norm_disp)
 
-            if utils is not None and hasattr(utils, 'load_truth_curve'):
-                truth_curve, _ = utils.load_calorimeter_mhd(run_dirs_ek, long_glob="run_Dose_edep.mhd")
-            else:
-                truth_curve = None
+            # Load the raw DoseActor voxel grid (fine z-resolution, NOT yet
+            # binned per LYSO layer) and rebin it onto the same 29 layer
+            # boundaries used for the raw/unfolded profiles above.
+            truth_curve = None
+            if utils is not None:
+                fine_truth, _ = utils.load_calorimeter_mhd(run_dirs_ek, long_glob="run_Dose_edep.mhd")
+                if fine_truth is not None:
+                    truth_curve = rebin_fine_profile_to_layers(fine_truth, lyso_bounds, calor_thick_mm)
 
             fig_prof, (ax_main, ax_ratio) = plt.subplots(
                 2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [3, 1]}, sharex=True
