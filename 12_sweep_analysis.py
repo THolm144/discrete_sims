@@ -45,6 +45,8 @@ REFRACTIVE_INDEX = {
     "luagce_rc_hex_triple":   1.84,
 }
 
+V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
+
 
 BOUNCE_FACTOR = {
     "radi_cal_energy":        0.92,
@@ -75,6 +77,9 @@ T_OFFSET_NS = {
     "luagce_rc_hex":          0.0,
     "luagce_rc_hex_triple":   0.0,
 }
+
+for mod in BOUNCE_FACTOR.keys():
+    V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92)
 
 
 
@@ -247,8 +252,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         return None
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
-    v_light = C_LIGHT_MM_NS / REFRACTIVE_INDEX.get(module_name, 1.60)
-    v_light = v_eff_for_module(module_name) / BOUNCE_FACTOR.get(module_name, 0.92)
+    v_light = v_eff_for_module(module_name)
+
     v_eff = v_eff_for_module(module_name)
     t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
 
@@ -263,7 +268,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     up_first_chunks, down_first_chunks = [], []
     up_q_chunks, dw_q_chunks = [], []
     dw_e_hit_chunks, dw_t_hit_chunks = [], []
-    all_dw_e_times = []
     run_dirs = set()
 
     branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "LocalTime", "EventID", "ParticleName"]
@@ -284,7 +288,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
 
-
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
@@ -299,9 +302,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
         m_e_up = is_e & is_prompt & near_up & is_optical
         m_e_dw = is_e & is_prompt & near_dw & is_optical
-
-        if m_e_dw.any():
-            all_dw_e_times.append(gt[m_e_dw].astype(float))
 
         c = _chunk_series(m_e_up, gt, ev, run_tag)
         if c is not None: up_first_chunks.append(c)
@@ -365,7 +365,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
         "n_t_coincidences": len(common_t_evs),
         "n_e_coincidences": len(common_e_keys),
-        "dw_e_times": np.concatenate(all_dw_e_times) if all_dw_e_times else np.array([]),
         "dw_first_times": np.array(list(down_first.values())),
         "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) for k in down_first.keys()]),
         "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) for k in down_first.keys()]),
@@ -401,13 +400,11 @@ def main():
 
     # ── SUBFOLDER GENERATION HIERARCHY ───────────────────────────────────────
     timing_dir = analysis_out / "timing_distributions"
-    intensity_dir = analysis_out / "intensity_profiles"
-    spatial_dir = analysis_out / "spatial_correlations"
     profile_dir = analysis_out / "longitudinal_profiles"
     energy_dir = analysis_out / "energy_performance"
     summary_dir = analysis_out / "summary_plots"
 
-    for d in [timing_dir, intensity_dir, spatial_dir, profile_dir, energy_dir, summary_dir]:
+    for d in [timing_dir, profile_dir, energy_dir, summary_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     master_summary = {mod: {} for mod in modules}
@@ -598,99 +595,7 @@ def main():
         plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 2. DOWNSTREAM E-TYPE SIPM HITS VS TIME
-        # ─────────────────────────────────────────────────────────────────────
-        fig_dw_hits, axs_dw_hits = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
-        axs_dw_hits = axs_dw_hits.flatten()
-
-        for idx, ekey in enumerate(energy_keys):
-            ax = axs_dw_hits[idx]
-            dw_times = master_summary[mod][ekey]["dw_e_times"]
-
-            if len(dw_times) > 0:
-                ax.hist(dw_times, bins=70, range=(_GT_LO_NS, _GT_HI_NS), color=mod_colors.get(mod, "#f708af"),
-                        alpha=0.7, edgecolor="black", linewidth=0.5, label=f"Downstream E-Hits\nTotal={len(dw_times)}")
-
-                ax.set_title(f"Downstream Intensity: {ekey}", fontsize=11, fontweight="bold")
-                ax.set_xlabel("Photon Global Time (ns)", fontsize=9)
-                ax.set_ylabel("Hit Count / Bin", fontsize=9)
-                ax.set_xlim(_GT_LO_NS, _GT_HI_NS)
-                ax.legend(loc="upper right", fontsize=8, frameon=True)
-            else:
-                ax.text(0.5, 0.5, "No Downstream Hits", ha='center', va='center')
-            ax.grid(True, linestyle=":", alpha=0.5)
-
-        for idx in range(n_energies, len(axs_dw_hits)):
-            fig_dw_hits.delaxes(axs_dw_hits[idx])
-
-        fig_dw_hits.suptitle(f"Downstream E-Type SiPM Intensity Profiles — {mod}", fontsize=14, fontweight="bold", y=0.98)
-        fig_dw_hits.tight_layout()
-        fig_dw_hits.savefig(intensity_dir / f"{mod}_dw_e_hits_time.png", dpi=200)
-        plt.close(fig_dw_hits)
-
-        # ─────────────────────────────────────────────────────────────────────
-        # 3. DOWNSTREAM PROMPT STRIKES VS DISTANCE (SINGLE-SIDED ZOOM)
-        # ─────────────────────────────────────────────────────────────────────
-        fig_dist, axs_dist = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
-        axs_dist = axs_dist.flatten()
-
-        for idx, ekey in enumerate(energy_keys):
-            ax = axs_dist[idx]
-            summ = master_summary[mod][ekey]
-            first_times = summ["dw_first_times"]
-            lyso_thick = summ["lyso_thick"]
-
-            if len(first_times) > 0:
-                distances_mm = first_times * v_eff_for_module(mod)
-                view_min, view_max = 120.0, 350.0
-
-                counts, edges, _ = ax.hist(distances_mm, bins=80, range=(view_min, view_max), color="#ff9800",
-                                            alpha=0.6, edgecolor="black", linewidth=0.5,
-                                            label=f"Prompt Strikes (N={len(first_times)})")
-
-                if len(counts) > 0 and np.max(counts) > 0:
-                    peak_idx = np.argmax(counts)
-                    peak_dist = edges[peak_idx] + (edges[1] - edges[0]) / 2.0
-                    ax.axvline(peak_dist, color="red", linestyle="--", linewidth=1.5,
-                                label=f"Peak: {peak_dist:.1f} mm")
-
-                run_dirs = summ.get("run_dirs", [])
-                if utils and run_dirs:
-                    try:
-                        gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
-                        calor_thick = (_N_LYSO * gap_thick) + (_N_W * _W_THICK_MM)
-                        long_arr, _ = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
-
-                        if long_arr is not None:
-                            avg = long_arr / max(len(run_dirs), 1)
-                            ax_twin = ax.twinx()
-                            z_axis = np.linspace(-calor_thick/2, calor_thick/2, len(avg))
-                            dist_axis = 110.0 - z_axis 
-                            ax_twin.plot(dist_axis, avg, color="blue", alpha=0.4, linestyle="-.", label="Dose Profile")
-                            ax_twin.set_ylabel("Energy Deposition (MeV)", color="blue", fontsize=8)
-                            ax_twin.tick_params(axis='y', labelcolor="blue", labelsize=8)
-                    except Exception:
-                        pass
-
-                ax.set_title(f"Prompt Hits Zoom: {ekey}", fontsize=11, fontweight="bold")
-                ax.set_xlabel("Effective Propagation Distance (mm)", fontsize=9)
-                ax.set_ylabel("Counts / Bin", fontsize=9)
-                ax.set_xlim(view_min, view_max)
-                ax.legend(loc="upper right", fontsize=8)
-            else:
-                ax.text(0.5, 0.5, "No First Hits Data", ha='center', va='center')
-            ax.grid(True, linestyle=":", alpha=0.5)
-
-        for idx in range(n_energies, len(axs_dist)):
-            fig_dist.delaxes(axs_dist[idx])
-
-        fig_dist.suptitle(f"Downstream Prompt Arrival Spatial Correlation — {mod}", fontsize=14, fontweight="bold", y=0.98)
-        fig_dist.tight_layout()
-        fig_dist.savefig(spatial_dir / f"{mod}_dw_prompt_distance_cropped.png", dpi=200)
-        plt.close(fig_dist)
-
-        # ─────────────────────────────────────────────────────────────────────
-        # 4. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
+        # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
         # ─────────────────────────────────────────────────────────────────────
         for ekey in energy_keys:
             raw_profile = master_summary[mod][ekey]["tof_profile"]
@@ -716,9 +621,6 @@ def main():
                 unf_norm_disp = raw_norm_disp
                 unf_err_disp = np.zeros_like(raw_norm_disp)
 
-            # Load the raw DoseActor voxel grid (fine z-resolution, NOT yet
-            # binned per LYSO layer) and rebin it onto the same 29 layer
-            # boundaries used for the raw/unfolded profiles above.
             truth_curve = None
             if utils is not None:
                 fine_truth, _ = utils.load_calorimeter_mhd(run_dirs_ek, long_glob="run_Dose_edep.mhd")
@@ -776,7 +678,7 @@ def main():
             plt.close(fig_prof)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 5. ENERGY LINEARITY AND RESOLUTION PANELS
+        # 3. ENERGY LINEARITY AND RESOLUTION PANELS
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
 
@@ -850,7 +752,7 @@ def main():
             plt.close(fig_er)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 6. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
+    # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
     # ─────────────────────────────────────────────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(10, 7))
     any_points = False
@@ -928,7 +830,7 @@ def main():
     plt.close(fig_perf)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 7. EXPORT MASTER MATRIX TEXT REPORT
+    # 5. EXPORT MASTER MATRIX TEXT REPORT
     # ─────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
