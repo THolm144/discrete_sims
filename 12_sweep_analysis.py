@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 unified_sweep_analysis_optimized.py
 =====================================
@@ -11,8 +12,6 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 import itertools
-from scipy.stats import crystalball
-from scipy.optimize import curve_fit
 
 import numpy as np
 import pandas as pd
@@ -46,7 +45,7 @@ REFRACTIVE_INDEX = {
     "luagce_rc_hex_triple":   1.84,
 }
 
-
+V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 
 BOUNCE_FACTOR = {
     "radi_cal_energy":        0.92,
@@ -78,8 +77,8 @@ T_OFFSET_NS = {
     "luagce_rc_hex_triple":   0.0,
 }
 
-
-
+for mod in BOUNCE_FACTOR.keys():
+    V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92)
 
 _GT_LO_NS = 0.0
 _GT_HI_NS = 50.0
@@ -89,10 +88,7 @@ _N_LYSO = 29
 _N_W = 28
 
 ARRIVAL_QUANTILE = 0.10
-
-
-N_TH_PHOTON_TRIGGER = 5      # Mimics a physical CFD discriminator threshold
-MIN_PHOTONS_PER_FACE = 10   #Quality cut to reject photon-starved events
+MIN_PHOTONS_PER_FACE = 1
 
 # ── Geometry mappings ──────────────────────────────────────────────────────
 
@@ -205,50 +201,6 @@ def extract_numerical_energy(label: str) -> float:
     except ValueError:
         return 0.0
 
-def crystal_ball_adaptive(x, amp, mu, sigma, alpha, n, right_tailed=False):
-    """
-    An adaptive Crystal Ball function that automatically accommodates 
-    either left-sided or right-sided tail asymmetry.
-    """
-    zsc = (x - mu) / sigma
-    if right_tailed:
-        zsc = -zsc  # Mirror the axis internally to handle high-side tails smoothly
-
-    gauss = amp * np.exp(-0.5 * zsc ** 2)
-    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
-    b = n / alpha - alpha
-    tail = amp * a * (b - zsc) ** (-n)
-    return np.where(zsc > -alpha, gauss, tail)
-
-def cb_plus_broad_bg(x, amp_core, mu, sigma_core, alpha, n, amp_bg, sigma_bg, right_tailed=False):
-    """
-    Two-component model: A sharp, tail-adaptive Crystal Ball for the core timing peak,
-    plus a wide Gaussian to absorb the geometric/scattered photon background pedestal.
-    """
-    # 1. Core Crystal Ball Component
-    zsc = (x - mu) / sigma_core
-    if right_tailed:
-        zsc = -zsc
-
-    gauss_core = amp_core * np.exp(-0.5 * zsc ** 2)
-    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
-    b = n / alpha - alpha
-    tail_core = amp_core * a * (b - zsc) ** (-n)
-    core_cb = np.where(zsc > -alpha, gauss_core, tail_core)
-
-    # 2. Broad Pedestal Background Component
-    background = amp_bg * np.exp(-0.5 * ((x - mu) / sigma_bg) ** 2)
-
-    return core_cb + background
-
-def crystal_ball_model(x, amp, beta, m, loc, scale):
-    """
-    Wrapper for SciPy's Crystal Ball PDF. 
-    Includes 'amp' to scale the normalized PDF to absolute histogram counts.
-    """
-    return amp * crystalball.pdf(x, beta, m, loc=loc, scale=scale)
-    # Force SciPy to read your variables correctly using explicit keywords
-    return amp * crystalball.pdf(x, beta=beta, m=m, loc=loc, scale=scale)
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -264,18 +216,12 @@ def _grouped(chunks, how):
         return {}
     s = pd.concat(chunks)
     g = s.groupby(level=[0, 1])
-
     if how == "min":
         s = g.min()
     elif how == "count":
         s = g.count()
-    elif isinstance(how, int):
-        #  Find the arrival time of exactly the N-th photon.
-        # np.partition is O(N), making it significantly faster than sorting full arrays.
-        s = g.apply(lambda x: np.partition(x.values, how - 1)[how - 1] if len(x) >= how else np.nan).dropna()
     else:
         s = g.quantile(how)
-
     return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
 
 def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbose_label: str = ""):
@@ -303,8 +249,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         return None
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
-    v_light = v_eff_for_module(module_name)
-
+    v_light = C_LIGHT_MM_NS / REFRACTIVE_INDEX.get(module_name, 1.60)
+    v_light = v_eff_for_module(mod)
     v_eff = v_eff_for_module(module_name)
     t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
 
@@ -318,8 +264,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
     up_first_chunks, down_first_chunks = [], []
     up_q_chunks, dw_q_chunks = [], []
-    up_e_hit_chunks, up_t_hit_chunks = [], []
     dw_e_hit_chunks, dw_t_hit_chunks = [], []
+    all_dw_e_times = []
     run_dirs = set()
 
     branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "LocalTime", "EventID", "ParticleName"]
@@ -340,6 +286,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
 
+
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
@@ -354,6 +301,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
         m_e_up = is_e & is_prompt & near_up & is_optical
         m_e_dw = is_e & is_prompt & near_dw & is_optical
+
+        if m_e_dw.any():
+            all_dw_e_times.append(gt[m_e_dw].astype(float))
 
         c = _chunk_series(m_e_up, gt, ev, run_tag)
         if c is not None: up_first_chunks.append(c)
@@ -373,29 +323,17 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
             dw_q_chunks.append(c)
             dw_t_hit_chunks.append(c)
 
-        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
-        if c is not None:
-            up_q_chunks.append(c)
-            up_t_hit_chunks.append(c)
-
     up_first = _grouped(up_first_chunks, "min")
     down_first = _grouped(down_first_chunks, "min")
-    up_q = _grouped(up_q_chunks, N_TH_PHOTON_TRIGGER)
-    dw_q = _grouped(dw_q_chunks, N_TH_PHOTON_TRIGGER)
-    up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
-    dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
+    up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
+    dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
     dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
+    dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
 
-    common_t_evs = {
-        e for e in (set(up_q) & set(dw_q))
-        if up_t_hits_per_ev.get(e, 0) >= MIN_PHOTONS_PER_FACE 
-        and dw_t_hits_per_ev.get(e, 0) >= MIN_PHOTONS_PER_FACE
-    }
-
+    common_t_evs = set(up_q) & set(dw_q)
     all_bm_raw_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
     clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0)
-    mu_t_ps = float(np.mean(clean_bm)) if len(clean_bm) else 0.0
-    sigma_t_ps = float(np.std(clean_bm, ddof=1)) if len(clean_bm) > 1 else 0.0
+    _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
     common_e_keys = set(up_first) & set(down_first)
     z_lo, z_hi = -calor_thick_mm / 2 - 15.0, calor_thick_mm / 2 + 15.0
@@ -423,13 +361,13 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
     return {
         "sigma_t_ps": sigma_t_ps,
-        "mu_t_ps": mu_t_ps,
         "raw_bm_data": all_bm_raw_ps,
         "tof_profile": profile_counts,
         "lyso_thick": lyso_thick,
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
         "n_t_coincidences": len(common_t_evs),
         "n_e_coincidences": len(common_e_keys),
+        "dw_e_times": np.concatenate(all_dw_e_times) if all_dw_e_times else np.array([]),
         "dw_first_times": np.array(list(down_first.values())),
         "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) for k in down_first.keys()]),
         "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) for k in down_first.keys()]),
@@ -439,7 +377,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
-
 def _run_job(args):
     mod, ekey, edir, is_hex = args
     res = analyze_energy_batch(edir, is_hex, mod, verbose_label=f"{mod}:{ekey}")
@@ -466,11 +403,13 @@ def main():
 
     # ── SUBFOLDER GENERATION HIERARCHY ───────────────────────────────────────
     timing_dir = analysis_out / "timing_distributions"
+    intensity_dir = analysis_out / "intensity_profiles"
+    spatial_dir = analysis_out / "spatial_correlations"
     profile_dir = analysis_out / "longitudinal_profiles"
     energy_dir = analysis_out / "energy_performance"
     summary_dir = analysis_out / "summary_plots"
 
-    for d in [timing_dir, profile_dir, energy_dir, summary_dir]:
+    for d in [timing_dir, intensity_dir, spatial_dir, profile_dir, energy_dir, summary_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     master_summary = {mod: {} for mod in modules}
@@ -604,22 +543,19 @@ def main():
                 if hi <= lo:
                     hi = lo + 1.0
 
-                # Freedman-Diaconis rule for dynamic bin width
                 q75, q25 = np.percentile(clean, [75, 25])
                 iqr = q75 - q25
                 if iqr > 0 and len(clean) > 1:
                     fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
                 else:
                     fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
-                
                 min_width = max(1.0, total_range / 50.0)
                 optimal_width = max(min_width, min(fd_width, 10.0))
                 plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
                 actual_plot_width = (hi - lo) / plot_bins
 
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
-                                            color=mod_colors.get(mod, "#f708af"), 
-                                            alpha=0.6, edgecolor="black", label="Data")
+                                            color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
                 def crystal_ball_binned(x, amp, mu, sigma, alpha, n):
                     zsc = (x - mu) / sigma
@@ -632,7 +568,7 @@ def main():
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 x_fit = np.linspace(lo, hi, 5000)
 
-                peak_idx = int(np.argmax(counts))
+                peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
                 std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
 
@@ -640,35 +576,21 @@ def main():
                 bounds = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
 
                 try:
-                    # Attempt Crystal Ball Fit
                     popt, _ = curve_fit(crystal_ball_binned, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
                     amp_f, mu_f, sigma_f, alpha_f, n_f = popt
-                    
-                    master_summary[mod][ekey]["mu_t_ps"] = mu_f
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
                     y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
-                    fwhm_fit = 2.355 * sigma_f
-                    label_text = (f"Crystal Ball\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps\nFWHM = {fwhm_fit:.1f} ps")
-                
+                    label_text = (f"Crystal Ball\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
                 except Exception:
-                    # Fallback to standard Gaussian Fit
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
-                    
-                    master_summary[mod][ekey]["mu_t_ps"] = mu
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma
 
                     amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
                     y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
-                    fwhm_fit = 2.355 * sigma
-                    label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps\nFWHM = {fwhm_fit:.1f} ps"
-                
+                    label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
-                
-                ax.set_title(ekey)
-                ax.grid(True, linestyle=":", alpha=0.5)
-                ax.legend(loc="upper right", fontsize=8)
-
+                ax.legend(loc="upper right", fontsize=9)
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
 
@@ -678,7 +600,99 @@ def main():
         plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
+        # 2. DOWNSTREAM E-TYPE SIPM HITS VS TIME
+        # ─────────────────────────────────────────────────────────────────────
+        fig_dw_hits, axs_dw_hits = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_dw_hits = axs_dw_hits.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_dw_hits[idx]
+            dw_times = master_summary[mod][ekey]["dw_e_times"]
+
+            if len(dw_times) > 0:
+                ax.hist(dw_times, bins=70, range=(_GT_LO_NS, _GT_HI_NS), color=mod_colors.get(mod, "#f708af"),
+                        alpha=0.7, edgecolor="black", linewidth=0.5, label=f"Downstream E-Hits\nTotal={len(dw_times)}")
+
+                ax.set_title(f"Downstream Intensity: {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel("Photon Global Time (ns)", fontsize=9)
+                ax.set_ylabel("Hit Count / Bin", fontsize=9)
+                ax.set_xlim(_GT_LO_NS, _GT_HI_NS)
+                ax.legend(loc="upper right", fontsize=8, frameon=True)
+            else:
+                ax.text(0.5, 0.5, "No Downstream Hits", ha='center', va='center')
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        for idx in range(n_energies, len(axs_dw_hits)):
+            fig_dw_hits.delaxes(axs_dw_hits[idx])
+
+        fig_dw_hits.suptitle(f"Downstream E-Type SiPM Intensity Profiles — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_dw_hits.tight_layout()
+        fig_dw_hits.savefig(intensity_dir / f"{mod}_dw_e_hits_time.png", dpi=200)
+        plt.close(fig_dw_hits)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 3. DOWNSTREAM PROMPT STRIKES VS DISTANCE (SINGLE-SIDED ZOOM)
+        # ─────────────────────────────────────────────────────────────────────
+        fig_dist, axs_dist = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        axs_dist = axs_dist.flatten()
+
+        for idx, ekey in enumerate(energy_keys):
+            ax = axs_dist[idx]
+            summ = master_summary[mod][ekey]
+            first_times = summ["dw_first_times"]
+            lyso_thick = summ["lyso_thick"]
+
+            if len(first_times) > 0:
+                distances_mm = first_times * v_eff_for_module(mod)
+                view_min, view_max = 120.0, 350.0
+
+                counts, edges, _ = ax.hist(distances_mm, bins=80, range=(view_min, view_max), color="#ff9800",
+                                            alpha=0.6, edgecolor="black", linewidth=0.5,
+                                            label=f"Prompt Strikes (N={len(first_times)})")
+
+                if len(counts) > 0 and np.max(counts) > 0:
+                    peak_idx = np.argmax(counts)
+                    peak_dist = edges[peak_idx] + (edges[1] - edges[0]) / 2.0
+                    ax.axvline(peak_dist, color="red", linestyle="--", linewidth=1.5,
+                                label=f"Peak: {peak_dist:.1f} mm")
+
+                run_dirs = summ.get("run_dirs", [])
+                if utils and run_dirs:
+                    try:
+                        gap_thick = lyso_thick + 2 * _TYVEK_THICK_MM
+                        calor_thick = (_N_LYSO * gap_thick) + (_N_W * _W_THICK_MM)
+                        long_arr, _ = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd", trans_glob="transverse_shower_max_edep.mhd")
+
+                        if long_arr is not None:
+                            avg = long_arr / max(len(run_dirs), 1)
+                            ax_twin = ax.twinx()
+                            z_axis = np.linspace(-calor_thick/2, calor_thick/2, len(avg))
+                            dist_axis = 110.0 - z_axis 
+                            ax_twin.plot(dist_axis, avg, color="blue", alpha=0.4, linestyle="-.", label="Dose Profile")
+                            ax_twin.set_ylabel("Energy Deposition (MeV)", color="blue", fontsize=8)
+                            ax_twin.tick_params(axis='y', labelcolor="blue", labelsize=8)
+                    except Exception:
+                        pass
+
+                ax.set_title(f"Prompt Hits Zoom: {ekey}", fontsize=11, fontweight="bold")
+                ax.set_xlabel("Effective Propagation Distance (mm)", fontsize=9)
+                ax.set_ylabel("Counts / Bin", fontsize=9)
+                ax.set_xlim(view_min, view_max)
+                ax.legend(loc="upper right", fontsize=8)
+            else:
+                ax.text(0.5, 0.5, "No First Hits Data", ha='center', va='center')
+            ax.grid(True, linestyle=":", alpha=0.5)
+
+        for idx in range(n_energies, len(axs_dist)):
+            fig_dist.delaxes(axs_dist[idx])
+
+        fig_dist.suptitle(f"Downstream Prompt Arrival Spatial Correlation — {mod}", fontsize=14, fontweight="bold", y=0.98)
+        fig_dist.tight_layout()
+        fig_dist.savefig(spatial_dir / f"{mod}_dw_prompt_distance_cropped.png", dpi=200)
+        plt.close(fig_dist)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 4. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
         # ─────────────────────────────────────────────────────────────────────
         for ekey in energy_keys:
             raw_profile = master_summary[mod][ekey]["tof_profile"]
@@ -704,6 +718,9 @@ def main():
                 unf_norm_disp = raw_norm_disp
                 unf_err_disp = np.zeros_like(raw_norm_disp)
 
+            # Load the raw DoseActor voxel grid (fine z-resolution, NOT yet
+            # binned per LYSO layer) and rebin it onto the same 29 layer
+            # boundaries used for the raw/unfolded profiles above.
             truth_curve = None
             if utils is not None:
                 fine_truth, _ = utils.load_calorimeter_mhd(run_dirs_ek, long_glob="run_Dose_edep.mhd")
@@ -761,7 +778,7 @@ def main():
             plt.close(fig_prof)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 3. ENERGY LINEARITY AND RESOLUTION PANELS
+        # 5. ENERGY LINEARITY AND RESOLUTION PANELS
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
 
@@ -835,7 +852,7 @@ def main():
             plt.close(fig_er)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
+    # 6. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
     # ─────────────────────────────────────────────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(10, 7))
     any_points = False
@@ -913,7 +930,7 @@ def main():
     plt.close(fig_perf)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 5. EXPORT MASTER MATRIX TEXT REPORT
+    # 7. EXPORT MASTER MATRIX TEXT REPORT
     # ─────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
