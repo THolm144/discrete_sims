@@ -29,7 +29,22 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # OPTICAL KINEMATICS CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 C_LIGHT_MM_NS = 299.792
-REFRACTIVE_INDEX = 1.60
+
+REFRACTIVE_INDEX = {
+    "radi_cal_energy":        1.60,   # BCF92 baseline
+    "radi_cal_triple":        1.60,
+    "rc_hex":                 1.60,
+    "rc_hex_triple":          1.60,
+    "dsb1_radi_cal_energy":   1.55,   # DSB1
+    "dsb1_radi_cal_triple":   1.55,
+    "dsb1_rc_hex":            1.55,
+    "dsb1_rc_hex_triple":     1.55,
+    "luagce_radi_cal_energy": 1.84,   # LuAG:Ce
+    "luagce_radi_cal_triple": 1.84,
+    "luagce_rc_hex":          1.84,
+    "luagce_rc_hex_triple":   1.84,
+}
+
 V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 
 BOUNCE_FACTOR = {
@@ -112,6 +127,9 @@ HEX_CAP_XY = np.array([
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+def v_eff_for_module(mod: str) -> float:
+    return (C_LIGHT_MM_NS / REFRACTIVE_INDEX.get(mod, 1.60)) * BOUNCE_FACTOR.get(mod, 0.92)
+
 def rebin_fine_profile_to_layers(fine_arr: np.ndarray, lyso_bounds: list, calor_thick_mm: float) -> np.ndarray:
     """
     Collapse a fine-resolution DoseActor voxel array (spanning the full
@@ -231,8 +249,10 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         return None
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
-    v_eff = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(module_name, 0.92)
+    v_light = C_LIGHT_MM_NS / REFRACTIVE_INDEX.get(module_name, 1.60)
+    v_eff = v_eff_for_module(module_name)
     t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
+   
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
@@ -622,7 +642,7 @@ def main():
             lyso_thick = summ["lyso_thick"]
 
             if len(first_times) > 0:
-                distances_mm = first_times * V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92)
+                distances_mm = first_times * v_eff_for_module(mod)
                 view_min, view_max = 120.0, 350.0
 
                 counts, edges, _ = ax.hist(distances_mm, bins=80, range=(view_min, view_max), color="#ff9800",
@@ -688,7 +708,7 @@ def main():
             lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
 
             raw_norm_disp = raw_profile / np.sum(raw_profile)
-            s_z = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92) * (sigma_t_ps / 1000.0)
+            s_z = v_eff_for_module(mod) * (sigma_t_ps / 1000.0)
             sigma_layer = s_z / pitch_mm if pitch_mm > 0 else 1.0
 
             if utils is not None and hasattr(utils, 'rl_unfold'):
@@ -930,7 +950,7 @@ def main():
             energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
             for ekey in energy_keys:
                 s_t = master_summary[mod][ekey]["sigma_t_ps"]
-                s_z = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92) * (s_t / 1000.0)
+                s_z = v_eff_for_module(mod) * (s_t / 1000.0)
                 pitch = master_summary[mod][ekey]["pitch_mm"]
                 s_layer = s_z / pitch if pitch > 0 else 0
                 n_t = master_summary[mod][ekey]["n_t_coincidences"]
