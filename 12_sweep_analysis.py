@@ -587,49 +587,87 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. SIMPLE TIMING HISTOGRAMS
+        # 1. TIMING HIERARCHY — DYNAMIC PER-PANEL BINNING (FREEDMAN-DIACONIS)
         # ─────────────────────────────────────────────────────────────────────
-        fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6*ncols,4.5*nrows), squeeze=False)
+        fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
             data = master_summary[mod][ekey]["raw_bm_data"]
-            if len(data):
+
+            if len(data) > 0:
                 clean = clean_around_mode(data, window_ps=500.0)
-                
-                # Raw statistics (currently used for down-stream calculations)
-                mu = float(np.mean(clean)) if len(clean) else 0.0
-                sigma = float(np.std(clean, ddof=1)) if len(clean)>1 else 0.0
-                master_summary[mod][ekey]["mu_t_ps"] = mu
-                master_summary[mod][ekey]["sigma_t_ps"] = sigma
+                lo, hi = float(np.min(clean)), float(np.max(clean))
+                total_range = hi - lo
 
-                # Plot the raw histogram
-                ax.hist(clean, bins=60,
-                        color=mod_colors.get(mod,"#f708af"),
-                        alpha=0.65, edgecolor="black")
+                if hi <= lo:
+                    hi = lo + 1.0
+
+                # Freedman-Diaconis rule for dynamic bin width
+                q75, q25 = np.percentile(clean, [75, 25])
+                iqr = q75 - q25
+                if iqr > 0 and len(clean) > 1:
+                    fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
+                else:
+                    fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
                 
-                # --- APPLIED FIT OVERLAY ---
-                # Apply your Gaussian fit to the cleaned timing data
-                A_fit, mu_fit, sigma_fit = fit_gaussian_to_peak(clean, n_bins=60)
-                
-                # Generate x values across the range of the data to plot a smooth curve
-                if len(clean) > 1 and sigma_fit > 0:
-                    x_smooth = np.linspace(min(clean), max(clean), 200)
-                    y_fit = standard_gaussian(x_smooth, A_fit, mu_fit, sigma_fit)
+                min_width = max(1.0, total_range / 50.0)
+                optimal_width = max(min_width, min(fd_width, 10.0))
+                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
+                actual_plot_width = (hi - lo) / plot_bins
+
+                counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
+                                            color=mod_colors.get(mod, "#f708af"), 
+                                            alpha=0.6, edgecolor="black", label="Data")
+
+                def crystal_ball_binned(x, amp, mu, sigma, alpha, n):
+                    zsc = (x - mu) / sigma
+                    gauss = amp * np.exp(-0.5 * zsc ** 2)
+                    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
+                    b = n / alpha - alpha
+                    tail = amp * a * (b - zsc) ** (-n)
+                    return np.where(zsc > -alpha, gauss, tail)
+
+                bin_centers = (edges[:-1] + edges[1:]) / 2.0
+                x_fit = np.linspace(lo, hi, 5000)
+
+                peak_idx = int(np.argmax(counts))
+                mu_guess = float(bin_centers[peak_idx])
+                std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
+
+                p0 = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
+                bounds = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
+
+                try:
+                    # Attempt Crystal Ball Fit
+                    popt, _ = curve_fit(crystal_ball_binned, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
+                    amp_f, mu_f, sigma_f, alpha_f, n_f = popt
                     
-                    # Plot the fit line
-                    ax.plot(x_smooth, y_fit, color="black", linestyle="--", 
-                            linewidth=2, label=f"Fit σ = {sigma_fit:.1f} ps")
+                    master_summary[mod][ekey]["mu_t_ps"] = mu_f
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                # Overlay the mean line and 1-sigma span
-                ax.axvline(mu, color="black", lw=1.5, label=f"Data μ = {mu:.1f} ps")
-                ax.axvspan(mu - sigma, mu + sigma, color="gray", alpha=0.25,
-                           label=f"Data σ = {sigma:.1f} ps")
+                    y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
+                    fwhm_fit = 2.355 * sigma_f
+                    label_text = (f"Crystal Ball\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps\nFWHM = {fwhm_fit:.1f} ps")
+                
+                except Exception:
+                    # Fallback to standard Gaussian Fit
+                    _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
+                    
+                    master_summary[mod][ekey]["mu_t_ps"] = mu
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma
+
+                    amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
+                    y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
+                    fwhm_fit = 2.355 * sigma
+                    label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps\nFWHM = {fwhm_fit:.1f} ps"
+                
+                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 
                 ax.set_title(ekey)
                 ax.grid(True, linestyle=":", alpha=0.5)
-                ax.legend(fontsize=8)
+                ax.legend(loc="upper right", fontsize=8)
 
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
