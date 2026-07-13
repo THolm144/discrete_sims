@@ -113,6 +113,53 @@ def analyse_hits(paths: list[Path]) -> dict[str, int]:
 def analyse_exits(paths: list[Path]) -> dict[str, int]:
     return count_unique_by_process(paths, ("exited", "phasespace"))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# HOOK FOR MAIN ANALYSIS SCRIPT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_truth_curve(mod: str, ekey: str, base_dir: str | Path = "/home/uakgun/env/THOMAS/discrete_sims/radi_cal_triple") -> np.ndarray | None:
+    """
+    Hook expected by the main script to reconstruct the longitudinal truth profile
+    for a specific module and energy key (e.g., '25GeV').
+    """
+    base_path = Path(base_dir)
+    
+    # 1. Locate the sweep directory for this module
+    world_dir = base_path / "runs" / mod
+    if not world_dir.exists():
+        return None
+        
+    # Find the newest sweep directory
+    batches = _newest_batches(world_dir)
+    if not batches:
+        return None
+    latest_sweep = batches[0]
+    
+    # 2. Navigate into the specific energy folder (e.g., .../sweep_20260709_165209/25GeV)
+    energy_dir = latest_sweep / ekey
+    if not energy_dir.exists():
+        # Fallback if ekey formatting differs slightly (e.g., '25' vs '25GeV')
+        energy_dir = latest_sweep / f"{ekey}GeV"
+        if not energy_dir.exists():
+            return None
+
+    # 3. Find all run_* subdirectories inside the energy folder
+    try:
+        run_dirs = find_runs(energy_dir)
+    except FileNotFoundError:
+        return None
+
+    # 4. Use the existing loader to aggregate the data across all runs
+    # (Using the explicit path fix from earlier to avoid restrictive globbing)
+    long_acc = None
+    for rdir in run_dirs:
+        target_file = rdir / "run_Dose_edep.mhd"
+        if target_file.exists():
+            import itk
+            arr = itk.array_from_image(itk.imread(str(target_file))).reshape(-1)
+            long_acc = arr.astype(np.float64) if long_acc is None else long_acc + arr
+
+    return long_acc
 
 def load_root_positions(root_paths: list[Path], max_points: int,
                         process_filter: str | None = None
