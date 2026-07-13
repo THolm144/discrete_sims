@@ -45,6 +45,7 @@ REFRACTIVE_INDEX = {
     "luagce_rc_hex_triple":   1.84,
 }
 
+V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 
 BOUNCE_FACTOR = {
     "radi_cal_energy":        0.92,
@@ -76,6 +77,8 @@ T_OFFSET_NS = {
     "luagce_rc_hex_triple":   0.0,
 }
 
+for mod in BOUNCE_FACTOR.keys():
+    V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92)
 
 
 _GT_LO_NS = 0.0
@@ -125,33 +128,15 @@ HEX_CAP_XY = np.array([
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
-def _lookup_energy_dict(nested: dict, module_name: str, energy_gev: float, default: float) -> float:
-    mod_dict = nested.get(module_name, {})
-    if not mod_dict:
-        return default
-    key_int = int(round(energy_gev))
-    
-    try:
-        if key_int in mod_dict:
-            return mod_dict[key_int]
-        nearest = min(mod_dict.keys(), key=lambda k: abs(k - energy_gev))
-        return mod_dict[nearest]
-    
-    except TypeError:
-        print(f"\n[DEBUG ALERT] Crash incoming!")
-        print(f"Module: {module_name}, Energy: {energy_gev}")
-        print(f"Type of mod_dict: {type(mod_dict)}, Value of mod_dict: {mod_dict}")
-        raise
-
-def v_eff_for_module(mod: str, energy_gev: float) -> float:
-    r_index = REFRACTIVE_INDEX.get(mod, 1.60)
-    bounce = _lookup_energy_dict(BOUNCE_FACTOR, mod, energy_gev, 0.92)
-    return (C_LIGHT_MM_NS / r_index) * bounce
-
-def t_offset_for_module(mod: str, energy_gev: float) -> float:
-    return _lookup_energy_dict(T_OFFSET_NS, mod, energy_gev, 0.0)
+def v_eff_for_module(mod: str) -> float:
+    return (C_LIGHT_MM_NS / REFRACTIVE_INDEX.get(mod, 1.60)) * BOUNCE_FACTOR.get(mod, 0.92)
 
 def rebin_fine_profile_to_layers(fine_arr: np.ndarray, lyso_bounds: list, calor_thick_mm: float) -> np.ndarray:
+    """
+    Collapse a fine-resolution DoseActor voxel array (spanning the full
+    calorimeter thickness, centered at z=0) down to one value per physical
+    LYSO layer, using the same z-boundaries as get_lyso_layer_bounds().
+    """
     n = len(fine_arr)
     if n == 0:
         return np.zeros(len(lyso_bounds))
@@ -240,7 +225,7 @@ def _grouped(chunks, how):
         s = g.quantile(how)
     return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
 
-def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, energy_gev: float, verbose_label: str = ""):
+def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbose_label: str = ""):
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"))
     if not hit_files:
         if verbose_label:
@@ -260,15 +245,16 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, energy
                     break
         except Exception:
             continue
-    
+
     if detected_z_sensor is None:
         return None
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
+    v_light = v_eff_for_module(module_name)
+    
+    v_eff = v_eff_for_module(module_name)
+    t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
 
-    v_eff = v_eff_for_module(module_name, energy_gev)
-    t_offset_ns = t_offset_for_module(module_name, energy_gev)
-   
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
@@ -280,7 +266,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, energy
     up_first_chunks, down_first_chunks = [], []
     up_q_chunks, dw_q_chunks = [], []
     dw_e_hit_chunks, dw_t_hit_chunks = [], []
-    all_dw_e_times = []
     run_dirs = set()
 
     branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "LocalTime", "EventID", "ParticleName"]
@@ -300,7 +285,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, energy
 
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
-      
 
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
@@ -313,12 +297,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, energy
 
         is_e = np.isin(channels, e_indices)
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
-        
+
         m_e_up = is_e & is_prompt & near_up & is_optical
         m_e_dw = is_e & is_prompt & near_dw & is_optical
-
-        if m_e_dw.any():
-            all_dw_e_times.append(gt[m_e_dw].astype(float))
 
         c = _chunk_series(m_e_up, gt, ev, run_tag)
         if c is not None: up_first_chunks.append(c)
@@ -382,7 +363,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, energy
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
         "n_t_coincidences": len(common_t_evs),
         "n_e_coincidences": len(common_e_keys),
-        "dw_e_times": np.concatenate(all_dw_e_times) if all_dw_e_times else np.array([]),
         "dw_first_times": np.array(list(down_first.values())),
         "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) for k in down_first.keys()]),
         "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) for k in down_first.keys()]),
@@ -394,8 +374,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, energy
 # ─────────────────────────────────────────────────────────────────────────────
 def _run_job(args):
     mod, ekey, edir, is_hex = args
-    energy_gev = extract_numerical_energy(ekey)
-    res = analyze_energy_batch(edir, is_hex, mod, energy_gev, verbose_label=f"{mod}:{ekey}")
+    res = analyze_energy_batch(edir, is_hex, mod, verbose_label=f"{mod}:{ekey}")
     return mod, ekey, res
 
 def main():
@@ -417,7 +396,7 @@ def main():
     analysis_out = base_dir / "12_sweep_analysis" / f"sweep_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
 
-    # ── SUBFOLDER GENERATION HIERARCHY (TIMING, LONGITUDINAL, ENERGY, SUMMARY) ──
+    # ── SUBFOLDER GENERATION HIERARCHY ───────────────────────────────────────
     timing_dir = analysis_out / "timing_distributions"
     profile_dir = analysis_out / "longitudinal_profiles"
     energy_dir = analysis_out / "energy_performance"
@@ -434,7 +413,7 @@ def main():
             master_summary = pickle.load(fh)
     else:
         print("Master processing engine spawned. Targeting tracking metrics...")
-        
+
         jobs = []
         for mod in modules:
             mod_path = base_dir / mod / "runs" / mod
@@ -456,7 +435,7 @@ def main():
 
         import os
         n_workers = min(100, max(1, (os.cpu_count() or 2) - 1)) if args.workers else max(1, (os.cpu_count() or 2) - 1)
-        
+
         with ProcessPoolExecutor(max_workers=n_workers) as ex:
             futures = [ex.submit(_run_job, job) for job in jobs]
             for fut in as_completed(futures):
@@ -474,12 +453,12 @@ def main():
         "radi_cal_triple":        "#f708af",  
         "rc_hex":                 "#f708af",  
         "rc_hex_triple":          "#f708af",  
-        
+
         "dsb1_radi_cal_energy":   "#04207e",  
         "dsb1_radi_cal_triple":   "#04207e",  
         "dsb1_rc_hex":            "#04207e", 
         "dsb1_rc_hex_triple":     "#04207e",  
-        
+
         "luagce_radi_cal_energy": "#fa0707",  
         "luagce_radi_cal_triple": "#fa0707",  
         "luagce_rc_hex":          "#fa0707",  
@@ -491,12 +470,12 @@ def main():
         "radi_cal_triple":        "s",  
         "rc_hex":                 "h",  
         "rc_hex_triple":          "h",  
-        
+
         "dsb1_radi_cal_energy":   "s",
         "dsb1_radi_cal_triple":   "s",
         "dsb1_rc_hex":            "h",
         "dsb1_rc_hex_triple":     "h",
-        
+
         "luagce_radi_cal_energy": "s",
         "luagce_radi_cal_triple": "s",
         "luagce_rc_hex":          "h",
@@ -508,12 +487,12 @@ def main():
         "radi_cal_triple":        "--",  
         "rc_hex":                 ":",   
         "rc_hex_triple":          "--",  
-        
+
         "dsb1_radi_cal_energy":   ":",
         "dsb1_radi_cal_triple":   "--",
         "dsb1_rc_hex":            ":",
         "dsb1_rc_hex_triple":     "--",
-        
+
         "luagce_radi_cal_energy": ":",
         "luagce_radi_cal_triple": "--",
         "luagce_rc_hex":          ":",
@@ -530,7 +509,7 @@ def main():
     for mod in modules:
         if mod not in master_summary or not master_summary[mod]:
             continue
-            
+
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
         if not energy_keys:
             continue
@@ -631,7 +610,7 @@ def main():
             lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
 
             raw_norm_disp = raw_profile / np.sum(raw_profile)
-            s_z = v_eff_for_module(mod, extract_numerical_energy(ekey)) * (sigma_t_ps / 1000.0)
+            s_z = v_eff_for_module(mod) * (sigma_t_ps / 1000.0)
             sigma_layer = s_z / pitch_mm if pitch_mm > 0 else 1.0
 
             if utils is not None and hasattr(utils, 'rl_unfold'):
@@ -665,7 +644,7 @@ def main():
                 with np.errstate(divide='ignore', invalid='ignore'):
                     ratio = unf_norm_disp / truth_norm_disp
                     ratio_err = unf_err_disp / truth_norm_disp
-                
+
                 ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors.get(mod, "black"),
                                   fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
                 ax_ratio.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
@@ -678,7 +657,7 @@ def main():
 
             ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
                     marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
-            
+
             ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors.get(mod, "black"),
                         linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
                         label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
@@ -687,11 +666,11 @@ def main():
             ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12, fontweight="bold")
             ax_main.grid(True, linestyle=":", alpha=0.6)
             ax_main.legend(fontsize=9)
-            
+
             ax_ratio.set_xlabel("Layer Number", fontsize=10)
             ax_ratio.set_xticks(layers[::2])
             ax_ratio.grid(True, linestyle=":", alpha=0.6)
-            
+
             fig_prof.tight_layout()
             fig_prof.savefig(profile_dir / f"{mod}_{ekey}_profile.png", dpi=200)
             plt.close(fig_prof)
@@ -704,10 +683,10 @@ def main():
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
             if E_val <= 0: continue
-            
+
             e_totals = master_summary[mod][ekey].get("dw_e_total", np.array([]))
             if len(e_totals) < 5: continue
-            
+
             _, mu_val, sigma_val = fit_gaussian_to_peak(e_totals, n_bins=40)
 
             if mu_val > 0:
@@ -779,7 +758,7 @@ def main():
     for mod in modules:
         if mod not in master_summary or not master_summary[mod]:
             continue
-            
+
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
         if not energy_keys:
             continue
@@ -815,7 +794,7 @@ def main():
     ax_perf.set_xscale("log")
     ax_perf.set_xticks([25, 50, 100, 200])
     ax_perf.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-    
+
     if any_points:
         ax_perf.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize=9, frameon=True)
     else:
@@ -837,7 +816,7 @@ def main():
         "Square: square \n" 
         "Hexagon: hexagon"
     )
-    
+
     fig_perf.text(
         1.02, 0.15, key_text, 
         fontsize=9, 
@@ -861,7 +840,7 @@ def main():
         for mod in modules:
             if mod not in master_summary or not master_summary[mod]:
                 continue
-                
+
             f.write(f"MODULE: {mod}\n")
             f.write(f"{'-' * 65}\n")
             f.write(f"  {'Energy':<12} | {'sigma_t (ps)':<16} | {'sigma_z (mm)':<14} | {'sigma_layer':<12} | {'N events (T/E)':<15}\n")
@@ -870,7 +849,7 @@ def main():
             energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
             for ekey in energy_keys:
                 s_t = master_summary[mod][ekey]["sigma_t_ps"]
-                s_z = v_eff_for_module(mod, extract_numerical_energy(ekey)) * (s_t / 1000.0)
+                s_z = v_eff_for_module(mod) * (s_t / 1000.0)
                 pitch = master_summary[mod][ekey]["pitch_mm"]
                 s_layer = s_z / pitch if pitch > 0 else 0
                 n_t = master_summary[mod][ekey]["n_t_coincidences"]
