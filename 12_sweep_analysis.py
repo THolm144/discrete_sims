@@ -88,7 +88,10 @@ _N_LYSO = 29
 _N_W = 28
 
 ARRIVAL_QUANTILE = 0.10
-MIN_PHOTONS_PER_FACE = 1
+
+
+N_TH_PHOTON_TRIGGER = 5      # Mimics a physical CFD discriminator threshold
+MIN_PHOTONS_PER_FACE = 10   #Quality cut to reject photon-starved events
 
 # ── Geometry mappings ──────────────────────────────────────────────────────
 
@@ -216,12 +219,18 @@ def _grouped(chunks, how):
         return {}
     s = pd.concat(chunks)
     g = s.groupby(level=[0, 1])
+    
     if how == "min":
         s = g.min()
     elif how == "count":
         s = g.count()
+    elif isinstance(how, int):
+        #  Find the arrival time of exactly the N-th photon.
+        # np.partition is O(N), making it significantly faster than sorting full arrays.
+        s = g.apply(lambda x: np.partition(x.values, how - 1)[how - 1] if len(x) >= how else np.nan).dropna()
     else:
         s = g.quantile(how)
+        
     return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
 
 def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbose_label: str = ""):
@@ -264,6 +273,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
     up_first_chunks, down_first_chunks = [], []
     up_q_chunks, dw_q_chunks = [], []
+    up_e_hit_chunks, up_t_hit_chunks = [], []
     dw_e_hit_chunks, dw_t_hit_chunks = [], []
     run_dirs = set()
 
@@ -318,16 +328,27 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
             dw_q_chunks.append(c)
             dw_t_hit_chunks.append(c)
 
+        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
+        if c is not None:
+            up_q_chunks.append(c)
+            up_t_hit_chunks.append(c)
+
     up_first = _grouped(up_first_chunks, "min")
     down_first = _grouped(down_first_chunks, "min")
-    up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
-    dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
-    dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
+    up_q = _grouped(up_q_chunks, N_TH_PHOTON_TRIGGER)
+    dw_q = _grouped(dw_q_chunks, N_TH_PHOTON_TRIGGER)
+    up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
     dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
+    dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
 
-    common_t_evs = set(up_q) & set(dw_q)
+    common_t_evs = {
+        e for e in (set(up_q) & set(dw_q))
+        if up_t_hits_per_ev.get(e, 0) >= MIN_PHOTONS_PER_FACE 
+        and dw_t_hits_per_ev.get(e, 0) >= MIN_PHOTONS_PER_FACE
+    }
+    
     all_bm_raw_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
-    clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0)
+    clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0) 
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
 
     common_e_keys = set(up_first) & set(down_first)
