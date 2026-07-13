@@ -1,12 +1,10 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_12_sweep.sh — Multi-Model Localized OpenGATE Sweeper
+# run_12_sweep_hyper.sh — Maximum CPU Saturation Parallel OpenGATE Sweeper
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Keep a record of the absolute root path to jump back to
 ROOT_DIR=$(pwd)
 
-# All 12 subdirectories matching your models
 WORLDS=(
     "radi_cal"               "radi_cal_triple"             "rc_hex"             "rc_hex_triple"
     "dsb1_radi_cal_energy"   "dsb1_radi_cal_triple"        "dsb1_rc_hex"        "dsb1_rc_hex_triple"
@@ -20,93 +18,103 @@ OPTICAL="on"
 CHERENKOV="off"
 PHYSICS_LIST="QGSP_BERT_EMV"
 
-# --- Core-Pool Optimization & Math ---
-N_PARTICLES_PER_RUN=14
+# --- Extreme Cluster Optimization ---
+N_PARTICLES_PER_RUN=24
 N_RUNS_PER_ENERGY=43
-THREADS_PER_RUN=1       # 1 thread eliminates multi-threading lock contention
-MAX_CONCURRENT_SIMS=43  # Utilize all 200 physical cores safely
+THREADS_PER_RUN=1
 
-# Define target sweep energies in keV (25 GeV, 50 GeV, 100 GeV, 200 GeV)
+# GLOBAL CONCURRENCY LIMIT: Set this to match your total physical core count
+# Since each simulation uses 1 thread, this keeps up to 180 cores saturated at all times.
+MAX_GLOBAL_CONCURRENT_SIMS=180
+
+# Define target sweep energies in keV
 ENERGIES_KEV=(25000000 50000000 100000000 200000000)
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 echo "========================================================================"
-echo " Starting OpenGATE Energy Sweep Pipeline across 12 Localized Models"
+echo " Launching Hyper-Parallel OpenGATE Sweeper [All Models Simultaneous]"
 echo "========================================================================"
-echo " Particle Type     : ${PARTICLE}"
-echo " Concurrent Workers: ${MAX_CONCURRENT_SIMS} Single-Threaded Cores"
-echo " Sweep Timestamp   : ${TIMESTAMP}"
+echo " Particle Type         : ${PARTICLE}"
+echo " Global Core Pool Limit: ${MAX_GLOBAL_CONCURRENT_SIMS} Single-Threaded Cores"
+echo " Sweep Timestamp       : ${TIMESTAMP}"
 echo "========================================================================"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 1: DISPATCH SIMULATIONS (GLOBAL POOL TRAPPING)
+# ─────────────────────────────────────────────────────────────────────────────
+echo " [+] Dispatching all model sweeps into a unified background pool..."
+
 for WORLD in "${WORLDS[@]}"; do
-    
-    # 1. Verify directory exists, then move into it
     if [ ! -d "$WORLD" ]; then
         echo " [!] Warning: Directory ${WORLD} not found. Skipping."
         continue
     fi
 
-    cd "$WORLD" || continue
-    
-    # Define local path relative to the module folder (just like your original script)
-    MASTER_BATCH_DIR="runs/sweep_${TIMESTAMP}"
+    # Define the output directory path from the root perspective
+    MASTER_BATCH_DIR="${ROOT_DIR}/${WORLD}/runs/sweep_${TIMESTAMP}"
     mkdir -p "${MASTER_BATCH_DIR}/logs"
 
-    echo ""
-    echo " ─────────────────────────────────────────────────────────────────────"
-    echo " >> WORKING IN DIRECTORY: ${WORLD}"
-    echo " >> Local Output Target : ${WORLD}/${MASTER_BATCH_DIR}"
-    echo " ─────────────────────────────────────────────────────────────────────"
-
-    # Loop through each energy step
     for ENERGY in "${ENERGIES_KEV[@]}"; do
         ENERGY_GBS=$(( ENERGY / 1000000 ))
         ENERGY_DIR="${MASTER_BATCH_DIR}/${ENERGY_GBS}GeV"
         mkdir -p "$ENERGY_DIR"
 
-        echo "  [+] Queueing primaries for [${ENERGY_GBS}GeV]..."
-
         for RUN_ID in $(seq 0 $((N_RUNS_PER_ENERGY - 1))); do
-            # Throttle parallel tasks using local jobs tracking
-            while [ $(jobs -rp | wc -l) -ge $MAX_CONCURRENT_SIMS ]; do
-                sleep 0.1
+            
+            # Global throttle: checks ALL background tasks spawned by this script
+            while [ $(jobs -rp | wc -l) -ge $MAX_GLOBAL_CONCURRENT_SIMS ]; do
+                sleep 0.05
             done
 
             LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
             RUN_OUT_DIR="${ENERGY_DIR}"
 
-            # Dispatch simulation worker using the local module's simulator.py
-            # Pass the base world name (e.g., "rc_hex") if required, or keep $WORLD depending on how config maps it
-            python3 simulator.py \
-                --world        "$WORLD" \
-                --particle     "$PARTICLE" \
-                --energy-kev   "$ENERGY" \
-                --n            "$N_PARTICLES_PER_RUN" \
-                --threads      "$THREADS_PER_RUN" \
-                --beam-radius  "$BEAM_RADIUS" \
-                --optical      "$OPTICAL" \
-                --cherenkov    "$CHERENKOV" \
-                --hits-optical-only on \
-                --physics-list "$PHYSICS_LIST" \
-                --run-id       "$RUN_ID" \
-                --output-dir   "$RUN_OUT_DIR" > "$LOG_FILE" 2>&1 &
+            # Execute python inside a subshell context so it retains local file paths natively
+            (
+                cd "$WORLD" || exit
+                python3 simulator.py \
+                    --world        "$WORLD" \
+                    --particle     "$PARTICLE" \
+                    --energy-kev   "$ENERGY" \
+                    --n            "$N_PARTICLES_PER_RUN" \
+                    --threads      "$THREADS_PER_RUN" \
+                    --beam-radius  "$BEAM_RADIUS" \
+                    --optical      "$OPTICAL" \
+                    --cherenkov    "$CHERENKOV" \
+                    --hits-optical-only on \
+                    --physics-list "$PHYSICS_LIST" \
+                    --run-id       "$RUN_ID" \
+                    --output-dir   "$RUN_OUT_DIR" > "$LOG_FILE" 2>&1
+            ) & # Spawns into background globally
         done
     done
+done
 
-    echo "  [+] All simulation tasks dispatched for ${WORLD}. Waiting for core pool..."
-    wait
-    echo "  [✓] Simulation phase complete for ${WORLD}. Running local analysis pipeline..."
+echo " [+] All simulation threads across all 12 models successfully queued."
+echo " [+] Keeping cluster saturated. Waiting for final simulation tasks to complete..."
+wait
+echo " [✓] Simulation phase complete for all models. Initiating analysis phase..."
+echo "------------------------------------------------------------------------"
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # POST-PROCESSING PIPELINE (Executed locally per module)
-    # ─────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 2: POST-PROCESSING PIPELINE
+# ─────────────────────────────────────────────────────────────────────────────
+# Now that simulations are done, we can safely run analysis routines.
+# We do this sequentially per model to ensure python file handling/memory leaks 
+# don't thrash the filesystem or crash the kernel.
+for WORLD in "${WORLDS[@]}"; do
+    if [ ! -d "$WORLD" ]; then continue; fi
+    
+    cd "${ROOT_DIR}/${WORLD}" || continue
+    MASTER_BATCH_DIR="runs/sweep_${TIMESTAMP}"
+
+    echo " [+] Processing analytical pipeline for: ${WORLD}"
+
     for ENERGY in "${ENERGIES_KEV[@]}"; do
         ENERGY_GBS=$(( ENERGY / 1000000 ))
         ENERGY_DIR="${MASTER_BATCH_DIR}/${ENERGY_GBS}GeV"
         ANALYSIS_LOG="${ENERGY_DIR}/analysis_pipeline_log.txt"
         touch "$ANALYSIS_LOG"
-
-        echo "      -> [${ENERGY_GBS}GeV] Processing local data logs..."
 
         if [ -f "analyze.py" ]; then
             python3 analyze.py --batch-dir "$ENERGY_DIR" --workers 64 >> "$ANALYSIS_LOG" 2>&1
@@ -120,14 +128,10 @@ for WORLD in "${WORLDS[@]}"; do
             python3 tof_reconstruction.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
         fi
     done
-    echo "  [✓] Post-processing step finished for ${WORLD}."
-
-    # 2. Return to root before processing next world item
-    cd "$ROOT_DIR" || exit
 done
 
-echo ""
+cd "$ROOT_DIR" || exit
 echo "========================================================================"
-echo " ENTIRE 12-MODEL PIPELINE COMPLETE."
-echo " Outputs natively populated within each folder's /runs/ directory."
+echo " GLOBAL PIPELINE COMPLETE."
+echo " All outputs have populated their native /runs/ subdirectories."
 echo "========================================================================"
