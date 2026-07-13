@@ -214,7 +214,7 @@ def crystal_ball_adaptive(x, amp, mu, sigma, alpha, n, right_tailed=False):
     zsc = (x - mu) / sigma
     if right_tailed:
         zsc = -zsc  # Mirror the axis internally to handle high-side tails smoothly
-    
+
     gauss = amp * np.exp(-0.5 * zsc ** 2)
     a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
     b = n / alpha - alpha
@@ -230,22 +230,24 @@ def cb_plus_broad_bg(x, amp_core, mu, sigma_core, alpha, n, amp_bg, sigma_bg, ri
     zsc = (x - mu) / sigma_core
     if right_tailed:
         zsc = -zsc
-    
+
     gauss_core = amp_core * np.exp(-0.5 * zsc ** 2)
     a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
     b = n / alpha - alpha
     tail_core = amp_core * a * (b - zsc) ** (-n)
     core_cb = np.where(zsc > -alpha, gauss_core, tail_core)
-    
+
     # 2. Broad Pedestal Background Component
     background = amp_bg * np.exp(-0.5 * ((x - mu) / sigma_bg) ** 2)
-    
+
     return core_cb + background
 
 def crystal_ball_model(x, amp, beta, m, loc, scale):
     """
     Wrapper for SciPy's Crystal Ball PDF. 
+    Includes 'amp' to scale the normalized PDF to absolute histogram counts.
     """
+    return amp * crystalball.pdf(x, beta, m, loc=loc, scale=scale)
     # Force SciPy to read your variables correctly using explicit keywords
     return amp * crystalball.pdf(x, beta=beta, m=m, loc=loc, scale=scale)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -263,7 +265,7 @@ def _grouped(chunks, how):
         return {}
     s = pd.concat(chunks)
     g = s.groupby(level=[0, 1])
-    
+
     if how == "min":
         s = g.min()
     elif how == "count":
@@ -274,7 +276,7 @@ def _grouped(chunks, how):
         s = g.apply(lambda x: np.partition(x.values, how - 1)[how - 1] if len(x) >= how else np.nan).dropna()
     else:
         s = g.quantile(how)
-        
+
     return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
 
 def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbose_label: str = ""):
@@ -303,7 +305,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
     v_light = v_eff_for_module(module_name)
-    
+
     v_eff = v_eff_for_module(module_name)
     t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
 
@@ -390,7 +392,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         if up_t_hits_per_ev.get(e, 0) >= MIN_PHOTONS_PER_FACE 
         and dw_t_hits_per_ev.get(e, 0) >= MIN_PHOTONS_PER_FACE
     }
-    
+
     all_bm_raw_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
     clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0) 
     _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
@@ -612,64 +614,66 @@ def main():
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 x_fit = np.linspace(lo, hi, 5000)
-                
+
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
-                
-                # Use Interquartile Range (IQR) for a much more realistic sigma guess
-                # np.std gets heavily inflated by the tails, leading to squat fits
-                q75, q25 = np.percentile(clean, [75, 25])
-                iqr = q75 - q25
-                iqr_sigma = iqr / 1.349 if iqr > 0 else 15.0
+                amp_max = float(counts.max())
 
+                # Estimate standard deviation for the scale parameter
+                std_guess = float(np.std(clean)) if len(clean) > 1 else 15.0
+
+                # 2. Provide an initial guess [amp, beta, m, loc, scale] 
+                # amp guess approximates the area under the peak
+                initial_guess = [amp_max * std_guess * np.sqrt(2 * np.pi), 1.0, 2.0, mu_guess, std_guess]
+
+                # Peak-focused weighting
+                fit_errors = np.sqrt(counts)
+                fit_errors[fit_errors == 0] = 1.0
                 # 1. Exact Amplitude Seeding
+                # A PDF integrates to 1. To match a histogram, we must multiply by (Total Events * Bin Width)
                 bin_width = edges[1] - edges[0]
                 total_events = np.sum(counts)
                 amp_guess = total_events * bin_width
                 
                 # [amp, beta, m, loc, scale]
-                initial_guess = [amp_guess, 1.5, 2.0, mu_guess, iqr_sigma]
+                initial_guess = [amp_guess, 1.0, 2.0, mu_guess, std_guess]
                 
-                # 2. Strict Boundaries to prevent "optimistic" fake cores
-                # - beta >= 1.2 forces at least 1.2 standard deviations of pure Gaussian core.
-                # - scale (sigma) is constrained so it cannot drop to an unphysically small value.
-                min_sigma = max(5.0, iqr_sigma * 0.4)
-                
+                # 2. Strict Boundaries
+                # Prevents SciPy's power-law parameters (beta, m) from wandering into flat degenerate states
                 bounds = (
-                    [amp_guess * 0.5, 1.2, 1.01, lo, min_sigma],
-                    [amp_guess * 2.0, 5.0, 20.0, hi, iqr_sigma * 3.0]
+                    [amp_guess * 0.2, 0.1,  1.01, lo, 1.0],
+                    [amp_guess * 2.0, 10.0, 50.0, hi, std_guess * 4.0]
                 )
 
-                # 3. Peak-Forcing Weights
-                # curve_fit minimizes sum(((y - f(x)) / sigma)^2)
-                # By making the error array inversely proportional to the counts, 
-                # a miss on a 70-count bin carries thousands of times more penalty than a miss on a 1-count bin.
-                fit_sigma = 1.0 / (counts + 1.0)
-
                 try:
+                    # 3. Perform the fit using the SciPy wrapper
+                    # 3. Unweighted Least Squares (Removed the 'sigma' parameter)
+                    # This forces the optimizer to minimize raw absolute distance, making tall bins act like magnets.
                     popt, _ = curve_fit(
                         crystal_ball_model, bin_centers, counts, 
                         p0=initial_guess, 
+                        sigma=fit_errors, absolute_sigma=True, 
                         bounds=bounds,
-                        sigma=fit_sigma,      # Apply the aggressive peak weighting
-                        absolute_sigma=False, # Relative fractional weighting
                         maxfev=30000
                     )
                     amp_f, beta_f, m_f, loc_f, scale_f = popt
-                    
+
+                    # Store the TRUE physical core timing resolution (scale parameter in SciPy)
                     master_summary[mod][ekey]["sigma_t_ps"] = scale_f
 
+                    # 4. Plot the result
                     y_fit = crystal_ball_model(x_fit, *popt)
-                    
+
                     label_text = f"SciPy CB Fit\n$\\mu$ = {loc_f:.1f} ps\n$\\sigma_{{core}}$ = {scale_f:.1f} ps"
                     ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
-                    
+
                 except Exception:
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma
+                    y_fit = standard_gaussian(x_fit, amp_max, mu, sigma)
                     y_fit = standard_gaussian(x_fit, float(counts.max()), mu, sigma)
                     ax.plot(x_fit, y_fit, color="darkred", linestyle="-.", linewidth=2.0, label=f"Fallback Gauss\n$\\sigma$ = {sigma:.1f} ps")
-                
+
                 ax.legend(loc="upper right", fontsize=8)
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
