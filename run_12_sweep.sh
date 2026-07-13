@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_12_sweep_hyper.sh — Maximum CPU Saturation Parallel OpenGATE Sweeper
+# run_12_sweep_512.sh — High-Velocity 512-Core OpenGATE Sweeper
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT_DIR=$(pwd)
@@ -11,46 +11,37 @@ WORLDS=(
     "luagce_radi_cal_energy" "luagce_radi_cal_triple"      "luagce_rc_hex"      "luagce_rc_hex_triple"
 )
 
-# --- Global Parameter Controls ---
 PARTICLE="e-"
 BEAM_RADIUS=0.01
 OPTICAL="on"
 CHERENKOV="off"
 PHYSICS_LIST="QGSP_BERT_EMV"
 
-# --- Extreme Cluster Optimization ---
-N_PARTICLES_PER_RUN=4
-N_RUNS_PER_ENERGY=40
+N_PARTICLES_PER_RUN=24
+N_RUNS_PER_ENERGY=43
 THREADS_PER_RUN=1
-
-# GLOBAL CONCURRENCY LIMIT: Set this to match your total physical core count
-# Since each simulation uses 1 thread, this keeps up to 480 cores saturated at all times.
 MAX_GLOBAL_CONCURRENT_SIMS=480
 
-# Define target sweep energies in keV
 ENERGIES_KEV=(25000000 50000000 100000000 200000000)
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 echo "========================================================================"
-echo " Launching Hyper-Parallel OpenGATE Sweeper [All Models Simultaneous]"
+echo " Launching High-Velocity OpenGATE Sweeper [Active Telemetry]"
 echo "========================================================================"
-echo " Particle Type         : ${PARTICLE}"
-echo " Global Core Pool Limit: ${MAX_GLOBAL_CONCURRENT_SIMS} Single-Threaded Cores"
-echo " Sweep Timestamp       : ${TIMESTAMP}"
+echo " Target Pool Capacity : ${MAX_GLOBAL_CONCURRENT_SIMS} Single-Threaded Cores"
+echo " Total Job Footprint  : 2,064 Simulation Batches"
 echo "========================================================================"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 1: DISPATCH SIMULATIONS (GLOBAL POOL TRAPPING)
+# PHASE 1: HIGH-VELOCITY DISPATCH
 # ─────────────────────────────────────────────────────────────────────────────
-echo " [+] Dispatching all model sweeps into a unified background pool..."
+echo " [+] Rapidly populating core pool..."
+
+TOTAL_LAUNCHED=0
 
 for WORLD in "${WORLDS[@]}"; do
-    if [ ! -d "$WORLD" ]; then
-        echo " [!] Warning: Directory ${WORLD} not found. Skipping."
-        continue
-    fi
+    if [ ! -d "$WORLD" ]; then continue; fi
 
-    # Define the output directory path from the root perspective
     MASTER_BATCH_DIR="${ROOT_DIR}/${WORLD}/runs/sweep_${TIMESTAMP}"
     mkdir -p "${MASTER_BATCH_DIR}/logs"
 
@@ -61,7 +52,7 @@ for WORLD in "${WORLDS[@]}"; do
 
         for RUN_ID in $(seq 0 $((N_RUNS_PER_ENERGY - 1))); do
             
-            # Global throttle: checks ALL background tasks spawned by this script
+            # Pool Throttling: Only stalls if the cluster is genuinely saturated
             while [ $(jobs -rp | wc -l) -ge $MAX_GLOBAL_CONCURRENT_SIMS ]; do
                 sleep 0.05
             done
@@ -69,7 +60,7 @@ for WORLD in "${WORLDS[@]}"; do
             LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
             RUN_OUT_DIR="${ENERGY_DIR}"
 
-            # Execute python inside a subshell context so it retains local file paths natively
+            # Fire instantly with zero mandatory tailing delays
             (
                 cd "$WORLD" || exit
                 python3 simulator.py \
@@ -85,30 +76,33 @@ for WORLD in "${WORLDS[@]}"; do
                     --physics-list "$PHYSICS_LIST" \
                     --run-id       "$RUN_ID" \
                     --output-dir   "$RUN_OUT_DIR" > "$LOG_FILE" 2>&1
-            ) & # Spawns into background globally
+            ) & 
+
+            ((TOTAL_LAUNCHED++))
+
+            # Active Telemetry: Updates line in place so you can watch it climb
+            printf "\r     -> Pipeline Load Status: %4d / 2064 Tasks Allocated" "$TOTAL_LAUNCHED"
         done
     done
 done
 
-echo " [+] All simulation threads across all 12 models successfully queued."
-echo " [+] Keeping cluster saturated. Waiting for final simulation tasks to complete..."
+echo ""
+echo " [✓] Global pool fully saturated. Handing execution over to core group."
+echo " [+] Waiting for background workers to drop to 0..."
 wait
-echo " [✓] Simulation phase complete for all models. Initiating analysis phase..."
+echo " [✓] Simulation phase complete. Running data analysis blocks..."
 echo "------------------------------------------------------------------------"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 2: POST-PROCESSING PIPELINE
+# PHASE 2: SEQUENTIAL POST-PROCESSING
 # ─────────────────────────────────────────────────────────────────────────────
-# Now that simulations are done, we can safely run analysis routines.
-# We do this sequentially per model to ensure python file handling/memory leaks 
-# don't thrash the filesystem or crash the kernel.
 for WORLD in "${WORLDS[@]}"; do
     if [ ! -d "$WORLD" ]; then continue; fi
     
     cd "${ROOT_DIR}/${WORLD}" || continue
     MASTER_BATCH_DIR="runs/sweep_${TIMESTAMP}"
 
-    echo " [+] Processing analytical pipeline for: ${WORLD}"
+    echo " [+] Processing summaries for: ${WORLD}"
 
     for ENERGY in "${ENERGIES_KEV[@]}"; do
         ENERGY_GBS=$(( ENERGY / 1000000 ))
@@ -117,7 +111,7 @@ for WORLD in "${WORLDS[@]}"; do
         touch "$ANALYSIS_LOG"
 
         if [ -f "analyze.py" ]; then
-            python3 analyze.py --batch-dir "$ENERGY_DIR" --workers 64 >> "$ANALYSIS_LOG" 2>&1
+            python3 analyze.py --batch-dir "$ENERGY_DIR" --workers 128 >> "$ANALYSIS_LOG" 2>&1
         fi
 
         if [ -f "timing_res.py" ]; then
@@ -132,6 +126,5 @@ done
 
 cd "$ROOT_DIR" || exit
 echo "========================================================================"
-echo " GLOBAL PIPELINE COMPLETE."
-echo " All outputs have populated their native /runs/ subdirectories."
+echo " PIPELINE RUN COMPLETE."
 echo "========================================================================"
