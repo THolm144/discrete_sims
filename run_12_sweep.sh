@@ -20,7 +20,7 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 
 # --- Extreme Cluster Optimization ---
 N_PARTICLES_PER_RUN=24
-N_RUNS_PER_ENERGY=43
+N_RUNS_PER_ENERGY=40
 THREADS_PER_RUN=1
 
 # GLOBAL CONCURRENCY LIMIT: Set this to match your total physical core count
