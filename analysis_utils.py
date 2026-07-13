@@ -255,24 +255,22 @@ def load_calorimeter_mhd(run_dirs: list[Path],
                          long_glob:  str = "run_Dose_edep.mhd",
                          trans_glob: str = "transverse_shower_max_edep.mhd",
                          ) -> tuple[np.ndarray | None, np.ndarray | None]:
-    """
-    Accumulate longitudinal and transverse calorimeter .mhd files.
-    Returns (long_1d_array, trans_2d_array), either may be None.
-    """
     import itk
 
     long_acc  = None
     trans_acc = None
 
     for rdir in run_dirs:
-        long_candidates = list(rdir.glob(long_glob))
-        if long_candidates:
-            arr = itk.array_from_image(itk.imread(str(long_candidates[0]))).reshape(-1)
+        # FIX: Check for exact file existence directly instead of a restrictive glob match
+        long_file = rdir / long_glob
+        if long_file.exists():
+            arr = itk.array_from_image(itk.imread(str(long_file))).reshape(-1)
             long_acc = arr.astype(np.float64) if long_acc is None else long_acc + arr
 
-        trans_candidates = list(rdir.glob(trans_glob))
-        if trans_candidates:
-            arr = itk.array_from_image(itk.imread(str(trans_candidates[0])))
+        # FIX: Do the same fallback optimization for the transverse data
+        trans_file = rdir / trans_glob
+        if trans_file.exists():
+            arr = itk.array_from_image(itk.imread(str(trans_file)))
             arr2d = arr.reshape(arr.shape[1], arr.shape[2]).astype(np.float64)
             trans_acc = arr2d if trans_acc is None else trans_acc + arr2d
 
