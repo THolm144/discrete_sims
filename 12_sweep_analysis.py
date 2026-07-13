@@ -130,10 +130,18 @@ def _lookup_energy_dict(nested: dict, module_name: str, energy_gev: float, defau
     if not mod_dict:
         return default
     key_int = int(round(energy_gev))
-    if key_int in mod_dict:
-        return mod_dict[key_int]
-    nearest = min(mod_dict.keys(), key=lambda k: abs(k - energy_gev))
-    return mod_dict[nearest]
+    
+    try:
+        if key_int in mod_dict:
+            return mod_dict[key_int]
+        nearest = min(mod_dict.keys(), key=lambda k: abs(k - energy_gev))
+        return mod_dict[nearest]
+    
+    except TypeError:
+        print(f"\n[DEBUG ALERT] Crash incoming!")
+        print(f"Module: {module_name}, Energy: {energy_gev}")
+        print(f"Type of mod_dict: {type(mod_dict)}, Value of mod_dict: {mod_dict}")
+        raise
 
 def v_eff_for_module(mod: str, energy_gev: float) -> float:
     r_index = REFRACTIVE_INDEX.get(mod, 1.60)
