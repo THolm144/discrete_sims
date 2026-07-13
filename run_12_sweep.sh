@@ -24,8 +24,8 @@ N_RUNS_PER_ENERGY=43
 THREADS_PER_RUN=1
 
 # GLOBAL CONCURRENCY LIMIT: Set this to match your total physical core count
-# Since each simulation uses 1 thread, this keeps up to 180 cores saturated at all times.
-MAX_GLOBAL_CONCURRENT_SIMS=180
+# Since each simulation uses 1 thread, this keeps up to 480 cores saturated at all times.
+MAX_GLOBAL_CONCURRENT_SIMS=480
 
 # Define target sweep energies in keV
 ENERGIES_KEV=(25000000 50000000 100000000 200000000)
