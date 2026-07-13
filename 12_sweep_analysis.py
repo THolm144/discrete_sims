@@ -31,7 +31,38 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 C_LIGHT_MM_NS = 299.792
 REFRACTIVE_INDEX = 1.60
 V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
-BOUNCE_FACTOR = 0.92
+
+BOUNCE_FACTOR = {
+    "radi_cal_energy":        0.92,
+    "radi_cal_triple":        0.92,
+    "rc_hex":                 0.92,
+    "rc_hex_triple":          0.92,
+    "dsb1_radi_cal_energy":   0.92,
+    "dsb1_radi_cal_triple":   0.92,
+    "dsb1_rc_hex":            0.92,
+    "dsb1_rc_hex_triple":     0.92,
+    "luagce_radi_cal_energy": 0.92,
+    "luagce_radi_cal_triple": 0.92,
+    "luagce_rc_hex":          0.92,
+    "luagce_rc_hex_triple":   0.92,
+}
+
+T_OFFSET_NS = {
+    "radi_cal_energy":        0.0,
+    "radi_cal_triple":        0.0,
+    "rc_hex":                 0.0,
+    "rc_hex_triple":          0.0,
+    "dsb1_radi_cal_energy":   0.0,
+    "dsb1_radi_cal_triple":   0.0,
+    "dsb1_rc_hex":            0.0,
+    "dsb1_rc_hex_triple":     0.0,
+    "luagce_radi_cal_energy": 0.0,
+    "luagce_radi_cal_triple": 0.0,
+    "luagce_rc_hex":          0.0,
+    "luagce_rc_hex_triple":   0.0,
+}
+
+
 V_EFF_MM_NS = V_LIGHT_MM_NS * BOUNCE_FACTOR
 
 _GT_LO_NS = 0.0
@@ -200,6 +231,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         return None
 
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
+    v_eff = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(module_name, 0.92)
+    t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
@@ -231,6 +264,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
+        gt = np.where(near_dw, gt + t_offset_ns, gt)
 
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
@@ -283,7 +317,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     z_lo, z_hi = -calor_thick_mm / 2 - 15.0, calor_thick_mm / 2 + 15.0
     valid_z_emits = np.array([
         z_est for z_est in (
-            V_EFF_MM_NS * (down_first[k] - up_first[k]) / 2.0 for k in common_e_keys
+            v_eff * (down_first[k] - up_first[k]) / 2.0 for k in common_e_keys
         ) if z_lo <= z_est <= z_hi
     ])
 
@@ -587,7 +621,7 @@ def main():
             lyso_thick = summ["lyso_thick"]
 
             if len(first_times) > 0:
-                distances_mm = first_times * V_EFF_MM_NS
+                distances_mm = first_times * V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92)
                 view_min, view_max = 120.0, 350.0
 
                 counts, edges, _ = ax.hist(distances_mm, bins=80, range=(view_min, view_max), color="#ff9800",
@@ -653,7 +687,7 @@ def main():
             lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
 
             raw_norm_disp = raw_profile / np.sum(raw_profile)
-            s_z = V_EFF_MM_NS * (sigma_t_ps / 1000.0)
+            s_z = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92) * (sigma_t_ps / 1000.0)
             sigma_layer = s_z / pitch_mm if pitch_mm > 0 else 1.0
 
             if utils is not None and hasattr(utils, 'rl_unfold'):
@@ -895,7 +929,7 @@ def main():
             energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
             for ekey in energy_keys:
                 s_t = master_summary[mod][ekey]["sigma_t_ps"]
-                s_z = V_EFF_MM_NS * (s_t / 1000.0)
+                s_z = V_LIGHT_MM_NS * BOUNCE_FACTOR.get(mod, 0.92) * (s_t / 1000.0)
                 pitch = master_summary[mod][ekey]["pitch_mm"]
                 s_layer = s_z / pitch if pitch > 0 else 0
                 n_t = master_summary[mod][ekey]["n_t_coincidences"]
