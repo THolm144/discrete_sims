@@ -616,32 +616,43 @@ def main():
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
                 
-                # Estimate standard deviation for the scale parameter
-                std_guess = float(np.std(clean)) if len(clean) > 1 else 15.0
+                # Use Interquartile Range (IQR) for a much more realistic sigma guess
+                # np.std gets heavily inflated by the tails, leading to squat fits
+                q75, q25 = np.percentile(clean, [75, 25])
+                iqr = q75 - q25
+                iqr_sigma = iqr / 1.349 if iqr > 0 else 15.0
 
                 # 1. Exact Amplitude Seeding
-                # A PDF integrates to 1. To match a histogram, we must multiply by (Total Events * Bin Width)
                 bin_width = edges[1] - edges[0]
                 total_events = np.sum(counts)
                 amp_guess = total_events * bin_width
                 
                 # [amp, beta, m, loc, scale]
-                initial_guess = [amp_guess, 1.0, 2.0, mu_guess, std_guess]
+                initial_guess = [amp_guess, 1.5, 2.0, mu_guess, iqr_sigma]
                 
-                # 2. Strict Boundaries
-                # Prevents SciPy's power-law parameters (beta, m) from wandering into flat degenerate states
+                # 2. Strict Boundaries to prevent "optimistic" fake cores
+                # - beta >= 1.2 forces at least 1.2 standard deviations of pure Gaussian core.
+                # - scale (sigma) is constrained so it cannot drop to an unphysically small value.
+                min_sigma = max(5.0, iqr_sigma * 0.4)
+                
                 bounds = (
-                    [amp_guess * 0.2, 0.1,  1.01, lo, 1.0],
-                    [amp_guess * 2.0, 10.0, 50.0, hi, std_guess * 4.0]
+                    [amp_guess * 0.5, 1.2, 1.01, lo, min_sigma],
+                    [amp_guess * 2.0, 5.0, 20.0, hi, iqr_sigma * 3.0]
                 )
 
+                # 3. Peak-Forcing Weights
+                # curve_fit minimizes sum(((y - f(x)) / sigma)^2)
+                # By making the error array inversely proportional to the counts, 
+                # a miss on a 70-count bin carries thousands of times more penalty than a miss on a 1-count bin.
+                fit_sigma = 1.0 / (counts + 1.0)
+
                 try:
-                    # 3. Unweighted Least Squares (Removed the 'sigma' parameter)
-                    # This forces the optimizer to minimize raw absolute distance, making tall bins act like magnets.
                     popt, _ = curve_fit(
                         crystal_ball_model, bin_centers, counts, 
                         p0=initial_guess, 
                         bounds=bounds,
+                        sigma=fit_sigma,      # Apply the aggressive peak weighting
+                        absolute_sigma=False, # Relative fractional weighting
                         maxfev=30000
                     )
                     amp_f, beta_f, m_f, loc_f, scale_f = popt
