@@ -1,11 +1,11 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_12_sweep_xargs.sh — High-Velocity 512-Core OpenGATE Sweeper (With Counter)
+# run_12_sweep_xargs.sh — High-Velocity 512-Core OpenGATE Sweeper (Single-Proc)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT_DIR=$(pwd)
 JOB_FILE="${ROOT_DIR}/job_list.txt"
-> "$JOB_FILE" # Clear any previous job file
+> "$JOB_FILE"
 
 WORLDS=(
     "radi_cal"               "radi_cal_triple"             "rc_hex"             "rc_hex_triple"
@@ -28,14 +28,14 @@ ENERGIES_KEV=(25000000 50000000 100000000 200000000)
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 echo "========================================================================"
-echo " Launching High-Velocity OpenGATE Sweeper [xargs Cluster Engine]"
+echo " Launching High-Velocity OpenGATE Sweeper [Process-Optimized Engine]"
 echo "========================================================================"
 echo " Max Parallel Workers : ${MAX_GLOBAL_CONCURRENT_SIMS} Cores"
 echo " Total Matrix Size    : 2,064 Simulation Batches"
 echo "========================================================================"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 1: GENERATE JOB LIST
+# PHASE 1: GENERATE PARAMETER MATRIX
 # ─────────────────────────────────────────────────────────────────────────────
 echo " [+] Generating unified cluster execution matrix..."
 
@@ -54,31 +54,27 @@ for WORLD in "${WORLDS[@]}"; do
             LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
             RUN_OUT_DIR="${ENERGY_DIR}"
 
-            # Append the execution command
-            echo "cd ${ROOT_DIR}/${WORLD} && python3 simulator.py --world ${WORLD} --particle ${PARTICLE} --energy-kev ${ENERGY} --n ${N_PARTICLES_PER_RUN} --threads ${THREADS_PER_RUN} --beam-radius ${BEAM_RADIUS} --optical ${OPTICAL} --cherenkov ${CHERENKOV} --hits-optical-only on --physics-list ${PHYSICS_LIST} --run-id ${RUN_ID} --output-dir ${RUN_OUT_DIR} > ${LOG_FILE} 2>&1" >> "$JOB_FILE"
+            # Pass raw space-separated parameters directly to xargs. 
+            # We explicitly target the absolute path to simulator.py to preserve execution context.
+            echo "${ROOT_DIR}/${WORLD} ${WORLD} ${ENERGY} ${RUN_ID} ${RUN_OUT_DIR} ${LOG_FILE}" >> "$JOB_FILE"
         done
     done
 done
 
 TOTAL_JOBS=$(wc -l < "$JOB_FILE")
 echo " [✓] Generated ${TOTAL_JOBS} jobs in job_list.txt."
-echo "--------------------------------────────────────────────────────--------"
+echo "------------------------------------------------------------------------"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 2: MASS PARALLEL EXECUTION WITH LIVE COUNTER
+# PHASE 2: SINGLE-PROCESS PARALLEL EXECUTION VIA XARGS
 # ─────────────────────────────────────────────────────────────────────────────
 echo " [+] Handing execution matrix to xargs engine..."
 echo " [+] Filling 480 processing cores..."
 
-# Start a background loop to track log files and update the screen
 (
-    # Give xargs a moment to spin up and create folders/files
     sleep 2 
     while [ -f "$JOB_FILE" ] || [ $(pgrep -f "simulator.py" | wc -l) -gt 0 ]; do
-        # Count all .log files inside the newly created sweep log directories
         COMPLETED_JOBS=$(find ${ROOT_DIR}/*/runs/sweep_${TIMESTAMP}/logs -name "*.log" 2>/dev/null | wc -l)
-        
-        # Pull how many Python simulations are currently processing
         ACTIVE_CORES=$(pgrep -f "simulator.py" | wc -l)
 
         printf "\r     -> Cluster Status: %4d / %d Done | [%3d Cores Occupied]" "$COMPLETED_JOBS" "$TOTAL_JOBS" "$ACTIVE_CORES"
@@ -87,10 +83,24 @@ echo " [+] Filling 480 processing cores..."
 ) &
 TRACKER_PID=$!
 
-# Run the xargs parallel processing engine smoothly
-xargs -P "$MAX_GLOBAL_CONCURRENT_SIMS" -I {} sh -c "{}" < "$JOB_FILE"
+# -n 6 pulls exactly one row (6 arguments) per execution token.
+# xargs invokes python3 natively as a direct child without launching intermediary shells.
+xargs -P "$MAX_GLOBAL_CONCURRENT_SIMS" -n 6 bash -c '
+    exec python3 "$0/simulator.py" \
+        --world "$1" \
+        --particle "e-" \
+        --energy-kev "$2" \
+        --n 24 \
+        --threads 1 \
+        --beam-radius 0.01 \
+        --optical "on" \
+        --cherenkov "off" \
+        --hits-optical-only on \
+        --physics-list "QGSP_BERT_EMV" \
+        --run-id "$3" \
+        --output-dir "$4" > "$5" 2>&1
+' < "$JOB_FILE"
 
-# Clean up files and close background tracker
 rm -f "$JOB_FILE"
 wait $TRACKER_PID 2>/dev/null
 
