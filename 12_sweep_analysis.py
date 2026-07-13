@@ -624,6 +624,7 @@ def main():
             raw_profile = master_summary[mod][ekey]["tof_profile"]
             sigma_t_ps = master_summary[mod][ekey]["sigma_t_ps"]
             pitch_mm = master_summary[mod][ekey]["pitch_mm"]
+            run_dirs_ek = master_summary[mod][ekey]["run_dirs"]
             
             if np.sum(raw_profile) == 0:
                 continue
@@ -639,7 +640,7 @@ def main():
                 unf_err_disp = np.zeros_like(raw_norm_disp)
 
             if utils is not None and hasattr(utils, 'load_truth_curve'):
-                 truth_curve = utils.load_calorimeter_mhd(run_dirs, long_glob="run_Dose_edep.mhd")
+                truth_curve, _ = utils.load_calorimeter_mhd(run_dirs_ek, long_glob="run_Dose_edep.mhd")
             else:
                 truth_curve = None
 
