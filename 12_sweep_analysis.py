@@ -245,9 +245,9 @@ def cb_plus_broad_bg(x, amp_core, mu, sigma_core, alpha, n, amp_bg, sigma_bg, ri
 def crystal_ball_model(x, amp, beta, m, loc, scale):
     """
     Wrapper for SciPy's Crystal Ball PDF. 
-    Includes 'amp' to scale the normalized PDF to absolute histogram counts.
     """
-    return amp * crystalball.pdf(x, beta, m, loc=loc, scale=scale)
+    # Force SciPy to read your variables correctly using explicit keywords
+    return amp * crystalball.pdf(x, beta=beta, m=m, loc=loc, scale=scale)
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -615,33 +615,39 @@ def main():
                 
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
-                amp_max = float(counts.max())
                 
                 # Estimate standard deviation for the scale parameter
                 std_guess = float(np.std(clean)) if len(clean) > 1 else 15.0
 
-                # 2. Provide an initial guess [amp, beta, m, loc, scale] 
-                # amp guess approximates the area under the peak
-                initial_guess = [amp_max * std_guess * np.sqrt(2 * np.pi), 1.0, 2.0, mu_guess, std_guess]
-
-                # Peak-focused weighting
-                fit_errors = np.sqrt(counts)
-                fit_errors[fit_errors == 0] = 1.0
+                # 1. Exact Amplitude Seeding
+                # A PDF integrates to 1. To match a histogram, we must multiply by (Total Events * Bin Width)
+                bin_width = edges[1] - edges[0]
+                total_events = np.sum(counts)
+                amp_guess = total_events * bin_width
+                
+                # [amp, beta, m, loc, scale]
+                initial_guess = [amp_guess, 1.0, 2.0, mu_guess, std_guess]
+                
+                # 2. Strict Boundaries
+                # Prevents SciPy's power-law parameters (beta, m) from wandering into flat degenerate states
+                bounds = (
+                    [amp_guess * 0.2, 0.1,  1.01, lo, 1.0],
+                    [amp_guess * 2.0, 10.0, 50.0, hi, std_guess * 4.0]
+                )
 
                 try:
-                    # 3. Perform the fit using the SciPy wrapper
+                    # 3. Unweighted Least Squares (Removed the 'sigma' parameter)
+                    # This forces the optimizer to minimize raw absolute distance, making tall bins act like magnets.
                     popt, _ = curve_fit(
                         crystal_ball_model, bin_centers, counts, 
                         p0=initial_guess, 
-                        sigma=fit_errors, absolute_sigma=True, 
+                        bounds=bounds,
                         maxfev=30000
                     )
                     amp_f, beta_f, m_f, loc_f, scale_f = popt
                     
-                    # Store the TRUE physical core timing resolution (scale parameter in SciPy)
                     master_summary[mod][ekey]["sigma_t_ps"] = scale_f
 
-                    # 4. Plot the result
                     y_fit = crystal_ball_model(x_fit, *popt)
                     
                     label_text = f"SciPy CB Fit\n$\\mu$ = {loc_f:.1f} ps\n$\\sigma_{{core}}$ = {scale_f:.1f} ps"
@@ -650,7 +656,7 @@ def main():
                 except Exception:
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma
-                    y_fit = standard_gaussian(x_fit, amp_max, mu, sigma)
+                    y_fit = standard_gaussian(x_fit, float(counts.max()), mu, sigma)
                     ax.plot(x_fit, y_fit, color="darkred", linestyle="-.", linewidth=2.0, label=f"Fallback Gauss\n$\\sigma$ = {sigma:.1f} ps")
                 
                 ax.legend(loc="upper right", fontsize=8)
