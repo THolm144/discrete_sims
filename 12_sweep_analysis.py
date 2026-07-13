@@ -264,7 +264,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
-        gt = np.where(near_dw, gt + t_offset_ns, gt)
+      
 
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
@@ -273,6 +273,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         near_up = np.abs(z + detected_z_sensor) < 2.5
         near_dw = np.abs(z - detected_z_sensor) < 2.5
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
+        gt = np.where(near_dw, gt + t_offset_ns, gt)
 
         is_e = np.isin(channels, e_indices)
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
