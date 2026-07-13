@@ -327,6 +327,17 @@ def main():
     analysis_out = base_dir / "12_sweep_analysis" / f"sweep_summary_{timestamp}"
     analysis_out.mkdir(parents=True, exist_ok=True)
 
+    # ── SUBFOLDER GENERATION HIERARCHY ───────────────────────────────────────
+    timing_dir = analysis_out / "timing_distributions"
+    intensity_dir = analysis_out / "intensity_profiles"
+    spatial_dir = analysis_out / "spatial_correlations"
+    profile_dir = analysis_out / "longitudinal_profiles"
+    energy_dir = analysis_out / "energy_performance"
+    summary_dir = analysis_out / "summary_plots"
+
+    for d in [timing_dir, intensity_dir, spatial_dir, profile_dir, energy_dir, summary_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
     master_summary = {mod: {} for mod in modules}
 
     if args.from_cache:
@@ -511,7 +522,7 @@ def main():
 
         fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
         fig_time.tight_layout()
-        fig_time.savefig(analysis_out / f"{mod}_timing_panels.png", dpi=200)
+        fig_time.savefig(timing_dir / f"{mod}_timing_panels.png", dpi=200)
         plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
@@ -542,7 +553,7 @@ def main():
 
         fig_dw_hits.suptitle(f"Downstream E-Type SiPM Intensity Profiles — {mod}", fontsize=14, fontweight="bold", y=0.98)
         fig_dw_hits.tight_layout()
-        fig_dw_hits.savefig(analysis_out / f"{mod}_dw_e_hits_time.png", dpi=200)
+        fig_dw_hits.savefig(intensity_dir / f"{mod}_dw_e_hits_time.png", dpi=200)
         plt.close(fig_dw_hits)
 
         # ─────────────────────────────────────────────────────────────────────
@@ -603,15 +614,12 @@ def main():
 
         fig_dist.suptitle(f"Downstream Prompt Arrival Spatial Correlation — {mod}", fontsize=14, fontweight="bold", y=0.98)
         fig_dist.tight_layout()
-        fig_dist.savefig(analysis_out / f"{mod}_dw_prompt_distance_cropped.png", dpi=200)
+        fig_dist.savefig(spatial_dir / f"{mod}_dw_prompt_distance_cropped.png", dpi=200)
         plt.close(fig_dist)
 
         # ─────────────────────────────────────────────────────────────────────
         # 4. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
         # ─────────────────────────────────────────────────────────────────────
-        prof_out_dir = analysis_out / "profiles"
-        prof_out_dir.mkdir(exist_ok=True)
-
         for ekey in energy_keys:
             raw_profile = master_summary[mod][ekey]["tof_profile"]
             sigma_t_ps = master_summary[mod][ekey]["sigma_t_ps"]
@@ -682,11 +690,11 @@ def main():
             ax_ratio.grid(True, linestyle=":", alpha=0.6)
             
             fig_prof.tight_layout()
-            fig_prof.savefig(prof_out_dir / f"{mod}_{ekey}_profile.png", dpi=200)
+            fig_prof.savefig(profile_dir / f"{mod}_{ekey}_profile.png", dpi=200)
             plt.close(fig_prof)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 5. ENERGY LINEARITY AND RESOLUTION PANELS (Bug fixes applied)
+        # 5. ENERGY LINEARITY AND RESOLUTION PANELS
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
 
@@ -756,11 +764,11 @@ def main():
 
             fig_er.suptitle(f"Calorimeter Energy Performance — {mod}", fontsize=15, fontweight="bold")
             fig_er.tight_layout()
-            fig_er.savefig(analysis_out / f"{mod}_energy_performance.png", dpi=200)
+            fig_er.savefig(energy_dir / f"{mod}_energy_performance.png", dpi=200)
             plt.close(fig_er)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 6. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH (Now 12 Modules)
+    # 6. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
     # ─────────────────────────────────────────────────────────────────────
     fig_perf, ax_perf = plt.subplots(figsize=(10, 7))
     any_points = False
@@ -811,14 +819,13 @@ def main():
         ax_perf.text(0.5, 0.5, "No modules had sufficient statistics", ha='center', va='center', transform=ax_perf.transAxes)
 
     fig_perf.tight_layout()
-    fig_perf.savefig(analysis_out / "timing_resolution_vs_energy.png", dpi=220)
 
     key_text = (
         "VISUAL ENCODING KEY\n"
         "───────────────────\n"
         "• Colors (Material Class):\n"
         "  Pinks   = BCF92 Baseline\n"
-        "  Navys   = DSB1 Variants\n"
+        "  Navys  = DSB1 Variants\n"
         "  Reds    = LuAG:Ce Variants\n\n"
         "• Line Styles (Thickness):\n"
         "  Dot  = Single (1.5mm LYSO )\n"
@@ -835,6 +842,7 @@ def main():
         verticalalignment='bottom',
         bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', edgecolor='#d3d3d3', alpha=0.9)
     )
+    fig_perf.savefig(summary_dir / "timing_resolution_vs_energy.png", dpi=220, bbox_inches="tight")
     plt.close(fig_perf)
 
     # ─────────────────────────────────────────────────────────────────────
