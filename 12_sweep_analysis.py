@@ -218,6 +218,27 @@ def crystal_ball_adaptive(x, amp, mu, sigma, alpha, n, right_tailed=False):
     b = n / alpha - alpha
     tail = amp * a * (b - zsc) ** (-n)
     return np.where(zsc > -alpha, gauss, tail)
+
+def cb_plus_broad_bg(x, amp_core, mu, sigma_core, alpha, n, amp_bg, sigma_bg, right_tailed=False):
+    """
+    Two-component model: A sharp, tail-adaptive Crystal Ball for the core timing peak,
+    plus a wide Gaussian to absorb the geometric/scattered photon background pedestal.
+    """
+    # 1. Core Crystal Ball Component
+    zsc = (x - mu) / sigma_core
+    if right_tailed:
+        zsc = -zsc
+    
+    gauss_core = amp_core * np.exp(-0.5 * zsc ** 2)
+    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
+    b = n / alpha - alpha
+    tail_core = amp_core * a * (b - zsc) ** (-n)
+    core_cb = np.where(zsc > -alpha, gauss_core, tail_core)
+    
+    # 2. Broad Pedestal Background Component
+    background = amp_bg * np.exp(-0.5 * ((x - mu) / sigma_bg) ** 2)
+    
+    return core_cb + background
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -568,20 +589,14 @@ def main():
                 lo, hi = float(np.min(clean)), float(np.max(clean))
                 total_range = hi - lo
 
-                if hi <= lo:
-                    hi = lo + 1.0
+                if hi <= lo: hi = lo + 1.0
 
-                # Determine the optimal plotting bin width (Freedman-Diaconis)
+                # Bin width calculation (Freedman-Diaconis)
                 q75, q25 = np.percentile(clean, [75, 25])
                 iqr = q75 - q25
-                if iqr > 0 and len(clean) > 1:
-                    fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
-                else:
-                    fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
-                min_width = max(1.0, total_range / 50.0)
-                optimal_width = max(min_width, min(fd_width, 10.0))
+                fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0)) if (iqr > 0 and len(clean) > 1) else 5.0
+                optimal_width = max(max(1.0, total_range / 60.0), min(fd_width, 8.0))
                 plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
-                actual_plot_width = (hi - lo) / plot_bins
 
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
@@ -589,55 +604,60 @@ def main():
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 x_fit = np.linspace(lo, hi, 5000)
 
-                # ── DYNAMIC ASYMMETRY DETECTION ─────────────────────────────
+                # Asymmetry & Parameter Seeding
                 from scipy.stats import skew
                 is_right_tailed = skew(clean) > 0 if len(clean) > 2 else False
-
-                # ── TAIL-IMMUNE SIGMA INITIALIZATION ─────────────────────────
-                # Seeding with IQR/1.349 isolates the true core width,
-                # preventing far-out tail outliers from inflating the initial guess.
-                core_sigma_guess = iqr / 1.349 if iqr > 0 else 15.0
                 
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
+                amp_max = float(counts.max())
 
-                p0 = [float(counts.max()), mu_guess, core_sigma_guess, 1.2, 3.0]
+                # Seeding parameters to separate the sharp core from the wide base
+                # p0 = [amp_core, mu, sigma_core, alpha, n, amp_bg, sigma_bg]
+                p0 = [amp_max * 0.8, mu_guess, 15.0, 1.2, 3.0, amp_max * 0.2, 50.0]
+                
+                # Strict boundaries prevent the background component from trying to fit the peak
                 bounds = (
-                    [counts.max() * 0.2, lo, 1.0, 0.1, 1.05], 
-                    [counts.max() * 3.0, hi, core_sigma_guess * 3.0, 5.0, 40.0]
+                    [amp_max * 0.3, lo,  3.0,  0.1, 1.05, 0.0,            30.0],  # Minimums
+                    [amp_max * 1.5, hi,  35.0, 5.0,  40.0, amp_max * 0.6, 150.0]  # Maximums
                 )
 
-                # Assign Poisson weighting matrix to target the dense peaks
+                # Peak-focused weighting: heavily weights the high-amplitude bins
                 fit_errors = np.sqrt(counts)
                 fit_errors[fit_errors == 0] = 1.0
 
                 try:
-                    # Bind the directional flag using a lambda wrapper
-                    fit_func = lambda x, amp, mu, sigma, alpha, n: crystal_ball_adaptive(
-                        x, amp, mu, sigma, alpha, n, right_tailed=is_right_tailed
+                    fit_func = lambda x, ac, m, sc, al, n, ab, sb: cb_plus_broad_bg(
+                        x, ac, m, sc, al, n, ab, sb, right_tailed=is_right_tailed
                     )
 
                     popt, _ = curve_fit(
                         fit_func, bin_centers, counts, 
                         p0=p0, bounds=bounds, 
                         sigma=fit_errors, absolute_sigma=True, 
-                        maxfev=20000
+                        maxfev=30000
                     )
-                    amp_f, mu_f, sigma_f, alpha_f, n_f = popt
-                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+                    ac_f, mu_f, sc_f, al_f, n_f, ab_f, sb_f = popt
+                    
+                    # Store the TRUE physical core timing resolution, completely ignoring the background width
+                    master_summary[mod][ekey]["sigma_t_ps"] = sc_f
 
-                    y_fit = fit_func(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
-                    label_text = f"Adaptive CB Fit\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps"
+                    y_fit = fit_func(x_fit, ac_f, mu_f, sc_f, al_f, n_f, ab_f, sb_f)
+                    
+                    # Also calculate components individually for high-fidelity visualization
+                    y_core = cb_plus_broad_bg(x_fit, ac_f, mu_f, sc_f, al_f, n_f, 0.0, sb_f, right_tailed=is_right_tailed)
+                    
+                    label_text = f"Two-Component Fit\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sc_f:.1f} ps\n$\\sigma_{{bg}}$ = {sb_f:.1f} ps"
+                    ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
+                    ax.plot(x_fit, y_core, color="red", linestyle=":", linewidth=1.5, label="Extracted Core Peak")
+                    
                 except Exception:
                     _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma
-
-                    amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
-                    y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
-                    label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
+                    y_fit = standard_gaussian(x_fit, amp_max, mu, sigma)
+                    ax.plot(x_fit, y_fit, color="darkred", linestyle="-.", linewidth=2.0, label=f"Fallback Gauss\n$\\sigma$ = {sigma:.1f} ps")
                 
-                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
-                ax.legend(loc="upper right", fontsize=9)
+                ax.legend(loc="upper right", fontsize=8)
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
 
