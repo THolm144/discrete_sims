@@ -1,9 +1,11 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_12_sweep_512.sh — High-Velocity 512-Core OpenGATE Sweeper
+# run_12_sweep_xargs.sh — High-Velocity 512-Core OpenGATE Sweeper (xargs Engine)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT_DIR=$(pwd)
+JOB_FILE="${ROOT_DIR}/job_list.txt"
+> "$JOB_FILE" # Clear any previous job file
 
 WORLDS=(
     "radi_cal"               "radi_cal_triple"             "rc_hex"             "rc_hex_triple"
@@ -26,18 +28,16 @@ ENERGIES_KEV=(25000000 50000000 100000000 200000000)
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 echo "========================================================================"
-echo " Launching High-Velocity OpenGATE Sweeper [Active Telemetry]"
+echo " Launching High-Velocity OpenGATE Sweeper [xargs Cluster Engine]"
 echo "========================================================================"
-echo " Target Pool Capacity : ${MAX_GLOBAL_CONCURRENT_SIMS} Single-Threaded Cores"
-echo " Total Job Footprint  : 2,064 Simulation Batches"
+echo " Max Parallel Workers : ${MAX_GLOBAL_CONCURRENT_SIMS} Cores"
+echo " Total Matrix Size    : 2,064 Simulation Batches"
 echo "========================================================================"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 1: HIGH-VELOCITY DISPATCH
+# PHASE 1: GENERATE JOB LIST (Instantaneous)
 # ─────────────────────────────────────────────────────────────────────────────
-echo " [+] Rapidly populating core pool..."
-
-TOTAL_LAUNCHED=0
+echo " [+] Generating unified cluster execution matrix..."
 
 for WORLD in "${WORLDS[@]}"; do
     if [ ! -d "$WORLD" ]; then continue; fi
@@ -51,50 +51,36 @@ for WORLD in "${WORLDS[@]}"; do
         mkdir -p "$ENERGY_DIR"
 
         for RUN_ID in $(seq 0 $((N_RUNS_PER_ENERGY - 1))); do
-            
-            # Pool Throttling: Only stalls if the cluster is genuinely saturated
-            while [ $(jobs -rp | wc -l) -ge $MAX_GLOBAL_CONCURRENT_SIMS ]; do
-                sleep 0.05
-            done
-
             LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
             RUN_OUT_DIR="${ENERGY_DIR}"
 
-            # Fire instantly with zero mandatory tailing delays
-            (
-                cd "$WORLD" || exit
-                python3 simulator.py \
-                    --world        "$WORLD" \
-                    --particle     "$PARTICLE" \
-                    --energy-kev   "$ENERGY" \
-                    --n            "$N_PARTICLES_PER_RUN" \
-                    --threads      "$THREADS_PER_RUN" \
-                    --beam-radius  "$BEAM_RADIUS" \
-                    --optical      "$OPTICAL" \
-                    --cherenkov    "$CHERENKOV" \
-                    --hits-optical-only on \
-                    --physics-list "$PHYSICS_LIST" \
-                    --run-id       "$RUN_ID" \
-                    --output-dir   "$RUN_OUT_DIR" > "$LOG_FILE" 2>&1
-            ) & 
-
-            ((TOTAL_LAUNCHED++))
-
-            # Active Telemetry: Updates line in place so you can watch it climb
-            printf "\r     -> Pipeline Load Status: %4d / 2064 Tasks Allocated" "$TOTAL_LAUNCHED"
+            # Append an entirely self-contained execution string to our file
+            echo "cd ${ROOT_DIR}/${WORLD} && python3 simulator.py --world ${WORLD} --particle ${PARTICLE} --energy-kev ${ENERGY} --n ${N_PARTICLES_PER_RUN} --threads ${THREADS_PER_RUN} --beam-radius ${BEAM_RADIUS} --optical ${OPTICAL} --cherenkov ${CHERENKOV} --hits-optical-only on --physics-list ${PHYSICS_LIST} --run-id ${RUN_ID} --output-dir ${RUN_OUT_DIR} > ${LOG_FILE} 2>&1" >> "$JOB_FILE"
         done
     done
 done
 
-echo ""
-echo " [✓] Global pool fully saturated. Handing execution over to core group."
-echo " [+] Waiting for background workers to drop to 0..."
-wait
-echo " [✓] Simulation phase complete. Running data analysis blocks..."
-echo "------------------------------------------------------------------------"
+echo " [✓] Generated $(wc -l < "$JOB_FILE") jobs in job_list.txt."
+echo "--------------------------------────────────────────────────────--------"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 2: SEQUENTIAL POST-PROCESSING
+# PHASE 2: MASS PARALLEL EXECUTION VIA XARGS
+# ─────────────────────────────────────────────────────────────────────────────
+echo " [+] Handing execution matrix to xargs engine..."
+echo " [+] Filling 480 processing cores..."
+
+# -P 480 keeps exactly 480 workers active at all times.
+# -I {} passes the line to a new bash shell natively.
+xargs -P "$MAX_GLOBAL_CONCURRENT_SIMS" -I {} sh -c "{}" < "$JOB_FILE"
+
+echo " [✓] All background core pools finished. Proceeding to analytics pipeline..."
+echo "------------------------------------------------------------------------"
+
+# Clean up the temporary job matrix list
+rm -f "$JOB_FILE"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 3: SEQUENTIAL POST-PROCESSING
 # ─────────────────────────────────────────────────────────────────────────────
 for WORLD in "${WORLDS[@]}"; do
     if [ ! -d "$WORLD" ]; then continue; fi
