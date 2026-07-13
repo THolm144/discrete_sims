@@ -597,17 +597,36 @@ def main():
             data = master_summary[mod][ekey]["raw_bm_data"]
             if len(data):
                 clean = clean_around_mode(data, window_ps=500.0)
+                
+                # Raw statistics (currently used for down-stream calculations)
                 mu = float(np.mean(clean)) if len(clean) else 0.0
                 sigma = float(np.std(clean, ddof=1)) if len(clean)>1 else 0.0
                 master_summary[mod][ekey]["mu_t_ps"] = mu
                 master_summary[mod][ekey]["sigma_t_ps"] = sigma
 
+                # Plot the raw histogram
                 ax.hist(clean, bins=60,
                         color=mod_colors.get(mod,"#f708af"),
                         alpha=0.65, edgecolor="black")
-                ax.axvline(mu,color="black",lw=2,label=f"μ = {mu:.1f} ps")
-                ax.axvspan(mu-sigma,mu+sigma,color="gray",alpha=0.25,
-                           label=f"σ = {sigma:.1f} ps")
+                
+                # --- APPLIED FIT OVERLAY ---
+                # Apply your Gaussian fit to the cleaned timing data
+                A_fit, mu_fit, sigma_fit = fit_gaussian_to_peak(clean, n_bins=60)
+                
+                # Generate x values across the range of the data to plot a smooth curve
+                if len(clean) > 1 and sigma_fit > 0:
+                    x_smooth = np.linspace(min(clean), max(clean), 200)
+                    y_fit = standard_gaussian(x_smooth, A_fit, mu_fit, sigma_fit)
+                    
+                    # Plot the fit line
+                    ax.plot(x_smooth, y_fit, color="black", linestyle="--", 
+                            linewidth=2, label=f"Fit σ = {sigma_fit:.1f} ps")
+
+                # Overlay the mean line and 1-sigma span
+                ax.axvline(mu, color="black", lw=1.5, label=f"Data μ = {mu:.1f} ps")
+                ax.axvspan(mu - sigma, mu + sigma, color="gray", alpha=0.25,
+                           label=f"Data σ = {sigma:.1f} ps")
+                
                 ax.set_title(ekey)
                 ax.grid(True, linestyle=":", alpha=0.5)
                 ax.legend(fontsize=8)
