@@ -20,6 +20,7 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 
 import response_kernel as rk
+import calibration_config as cal
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -31,21 +32,13 @@ C_LIGHT_MM_NS = 299.792
 REFRACTIVE_INDEX = 1.60
 V_LIGHT_MM_NS = C_LIGHT_MM_NS / REFRACTIVE_INDEX
 
-DEFAULT_T0_OFFSET_NS = -0.32  
-
-CALIBRATION_T0_OFFSETS = {
-    "radi_cal_energy": {25.0: -0.320, 50.0: -0.300, 100.0: -0.330, 200.0: -0.320},
-    "radi_cal_triple": {25.0: -0.370, 50.0: -0.270, 100.0: -0.250, 200.0: -0.190},
-    "rc_hex":          {25.0: -0.290, 50.0: -0.310, 100.0: -0.180, 200.0: -0.085},
-    "rc_hex_triple":   {25.0: -0.370, 50.0: -0.300, 100.0: -0.220, 200.0: -0.050},
-}
-
-CALIBRATION_BOUNCE_FACTORS = {
-    "radi_cal_energy": {25.0: 1.17, 50.0: 1.20, 100.0: 1.23, 200.0: 1.27},
-    "radi_cal_triple": {25.0: 1.45, 50.0: 1.50, 100.0: 1.55, 200.0: 1.65},
-    "rc_hex":          {25.0: 1.02, 50.0: 1.02, 100.0: 1.01, 200.0: 1.01},
-    "rc_hex_triple":   {25.0: 1.19, 50.0: 1.23, 100.0: 1.33, 200.0: 1.73},
-}
+# Calibration tables now live in calibration_config.py (single shared source
+# with build_empirical_response_matrix.py) so the kernel is always fit
+# against exactly the calibration used here. Kept as module-level aliases so
+# nothing else in this file needs to change.
+DEFAULT_T0_OFFSET_NS = cal.DEFAULT_T0_OFFSET_NS
+CALIBRATION_T0_OFFSETS = cal.CALIBRATION_T0_OFFSETS
+CALIBRATION_BOUNCE_FACTORS = cal.CALIBRATION_BOUNCE_FACTORS
 
 _GT_LO_NS = 0.0
 _GT_HI_NS = 50.0

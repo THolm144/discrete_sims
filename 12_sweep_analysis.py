@@ -370,11 +370,60 @@ def main():
         with open(cache_path, "wb") as fh:
             pickle.dump(master_summary, fh)
 
-    # Automatically map colors and markers for an arbitrary number of modules
-    cmap = cm.get_cmap('tab20', len(modules))
-    mod_colors = {mod: cmap(i) for i, mod in enumerate(modules)}
-    marker_iter = itertools.cycle(['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 'H', '+'])
-    mod_markers = {mod: next(marker_iter) for mod in modules}
+   # ── EXPLICIT DESIGN MAPS FOR THE 12 MODULE VARIANTS ──────────────────────
+    mod_colors = {
+        # Baseline (BCF92) Variants
+        "radi_cal_energy":        "#f708af",  
+        "radi_cal_triple":        "#f708af",  
+        "rc_hex":                 "#f708af",  
+        "rc_hex_triple":          "#f708af",  
+        
+        # DSB1 Variants
+        "dsb1_radi_cal_energy":   "#04207e",  
+        "dsb1_radi_cal_triple":   "#04207e",  
+        "dsb1_rc_hex":            "#04207e", 
+        "dsb1_rc_hex_triple":     "#04207e",  
+        
+        # LuAG:Ce Variants
+        "luagce_radi_cal_energy": "#fa0707",  
+        "luagce_radi_cal_triple": "#fa0707",  
+        "luagce_rc_hex":          "#fa0707",  
+        "luagce_rc_hex_triple":   "#fa0707",  
+    }
+
+    mod_markers = {
+        "radi_cal_energy":        "s", 
+        "radi_cal_triple":        "s",  
+        "rc_hex":                 "h",  
+        "rc_hex_triple":          "h",  
+        
+        "dsb1_radi_cal_energy":   "s",
+        "dsb1_radi_cal_triple":   "s",
+        "dsb1_rc_hex":            "h",
+        "dsb1_rc_hex_triple":     "h",
+        
+        "luagce_radi_cal_energy": "s",
+        "luagce_radi_cal_triple": "s",
+        "luagce_rc_hex":          "h",
+        "luagce_rc_hex_triple":   "h",
+    }
+
+    mod_linestyles = {
+        "radi_cal_energy":        ":",   # Solid
+        "radi_cal_triple":        "--",  # Dashed
+        "rc_hex":                 ":",   
+        "rc_hex_triple":          "--",  
+        
+        "dsb1_radi_cal_energy":   ":",
+        "dsb1_radi_cal_triple":   "--",
+        "dsb1_rc_hex":            ":",
+        "dsb1_rc_hex_triple":     "--",
+        
+        "luagce_radi_cal_energy": ":",
+        "luagce_radi_cal_triple": "--",
+        "luagce_rc_hex":          ":",
+        "luagce_rc_hex_triple":   "--",
+    }
     
     layers = np.arange(1, _N_LYSO + 1)
 
@@ -594,8 +643,17 @@ def main():
 
         if x_energy:
             any_points = True
-            ax_perf.errorbar(x_energy, y_res, yerr=y_err, marker=mod_markers[mod], color=mod_colors[mod],
-                             linewidth=2, markersize=7, capsize=4, capthick=1.5, linestyle="--", label=mod)
+            ax_perf.errorbar(
+                x_energy, y_res, yerr=y_err, 
+                marker=mod_markers.get(mod, 'o'), 
+                color=mod_colors.get(mod, 'black'),
+                linestyle=mod_linestyles.get(mod, '-'),  # <-- Now pulls explicit line styles
+                linewidth=2, 
+                markersize=7, 
+                capsize=4, 
+                capthick=1.5, 
+                label=mod
+            )
 
     ax_perf.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
     ax_perf.set_ylabel(r"BestMinus Timing Resolution $\sigma_t$ (ps)", fontweight="bold")
@@ -606,13 +664,38 @@ def main():
     ax_perf.get_xaxis().set_major_formatter(plt.ScalarFormatter())
     
     if any_points:
-        # Move legend outside the plot for 12 items to avoid overlap
-        ax_perf.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9, frameon=True)
+        
+        ax_perf.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize=9, frameon=True)
     else:
         ax_perf.text(0.5, 0.5, "No modules had sufficient statistics", ha='center', va='center', transform=ax_perf.transAxes)
 
     fig_perf.tight_layout()
     fig_perf.savefig(analysis_out / "timing_resolution_vs_energy.png", dpi=220)
+
+    # ── VISUAL KEY BOX ────────────────────────────────────────────────────────
+    key_text = (
+        "VISUAL ENCODING KEY\n"
+        "───────────────────\n"
+        "• Colors (Material Class):\n"
+        "  Pinks   = BCF92 Baseline\n"
+        "  Navys  = DSB1 Variants\n"
+        "  Reds    = LuAG:Ce Variants\n\n"
+        "• Line Styles (Thickness):\n"
+        "  Dot  = Single (1.5mm LYSO )\n"
+        "  Dash (--) = Triple (4.5mm LYSO)\n\n"
+        "Marker Styles: Shape\n"
+        "Square: square \n" 
+        "Hexagon: hexagon"
+    )
+    
+    # Places the text box neatly under the legend on the right side
+    fig_perf.text(
+        1.02, 0.15, key_text, 
+        fontsize=9, 
+        family='monospace', 
+        verticalalignment='bottom',
+        bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', edgecolor='#d3d3d3', alpha=0.9)
+    )
     plt.close(fig_perf)
 
     # ─────────────────────────────────────────────────────────────────────

@@ -47,10 +47,11 @@ warnings.filterwarnings("ignore")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import response_kernel as rk
+import calibration_config as cal
 
 # Reuse geometry/extraction/truth-loading code so this matrix is built from
 # EXACTLY the same pipeline that will eventually consume it.
-import rl_deconv_profile as base
+import unfold_profile_analysis as base
 
 try:
     import analysis_utils as utils
@@ -64,6 +65,12 @@ MIN_COINCIDENCES = 30       # skip energy points with too few coincidences to tr
 MIN_ENERGY_POINTS = 3       # need >=3 distinct energies to constrain an energy SLOPE
                              # (2 points fits *a* line trivially with zero residual --
                              # not a real constraint)
+
+# params: sigma0, sigma_slope, skew, tail_frac, tail_width_mult, sigma_E_slope
+PARAM_NAMES = ["sigma0", "sigma_slope", "skew", "tail_frac", "tail_mult", "sigma_E_slope"]
+P0        = [2.5,  0.0,   0.0, 0.15, 3.0, 0.0]
+BOUNDS_LO = [0.2, -0.40, -12.0, 0.00, 1.2, -8.0]
+BOUNDS_HI = [15.0,  0.40,  12.0, 0.85, 12.0,  8.0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -80,7 +87,10 @@ def collect_truth_observed_pairs(mod, target_sweep, is_hex):
 
     for edir in energy_dirs:
         energy_val = base.extract_numerical_energy(edir.name)
-        res = base.extract_profile_data_unfold(edir, is_hex, mod)
+        t0_offset, bounce_factor = cal.get_calibration(mod, energy_val)
+        res = base.extract_profile_data_unfold(
+            edir, is_hex, mod, t0_offset=t0_offset, bounce_factor=bounce_factor
+        )
         if res is None or len(res["raw_z_emits"]) < MIN_COINCIDENCES:
             print(f"    [skip] {edir.name}: insufficient coincidences "
                   f"({0 if res is None else len(res['raw_z_emits'])} < {MIN_COINCIDENCES})")
@@ -159,12 +169,7 @@ def fit_response_matrix(pairs, n_reco, pad_layers):
             res.append(weight * (pred_norm - raw_norm))
         return np.concatenate(res)
 
-    # params: sigma0, sigma_slope, skew, tail_frac, tail_width_mult, sigma_E_slope
-    p0        = [1.5,  0.0,   0.0, 0.10, 3.0, 0.0]
-    bounds_lo = [0.2, -0.15, -8.0, 0.00, 1.5, -3.0]
-    bounds_hi = [6.0,  0.15,  8.0, 0.50, 8.0,  3.0]
-
-    return least_squares(residuals, p0, bounds=(bounds_lo, bounds_hi), verbose=0)
+    return least_squares(residuals, P0, bounds=(BOUNDS_LO, BOUNDS_HI), verbose=0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +237,16 @@ def main():
               f"skew={skew:+.2f}  tail_frac={tail_frac:.3f}  tail_mult={tail_mult:.2f}  "
               f"sigma_E_slope={sigma_E_slope:+.4f}")
         print(f"  Final cost={fit.cost:.6f}  residual_norm={np.linalg.norm(fit.fun):.4f}")
+
+        # Flag any parameter that landed within 1% of its bound -- this means
+        # the optimizer wanted to go further and was clamped, so the reported
+        # value is not a true optimum. Don't silently trust a pinned fit.
+        for name, val, lo, hi in zip(PARAM_NAMES, fit.x, BOUNDS_LO, BOUNDS_HI):
+            span = hi - lo
+            if span > 0 and (val - lo < 0.01 * span or hi - val < 0.01 * span):
+                print(f"  [WARN] {name}={val:.4f} is pinned at its bound [{lo}, {hi}] -- "
+                      f"fit did not converge to an interior optimum. Widen bounds or "
+                      f"reconsider the kernel model before trusting this module's matrix.")
 
         meta = {
             "module": mod,
