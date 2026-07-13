@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_12_sweep_xargs.sh — High-Velocity 512-Core OpenGATE Sweeper (xargs Engine)
+# run_12_sweep_xargs.sh — High-Velocity 512-Core OpenGATE Sweeper (With Counter)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT_DIR=$(pwd)
@@ -35,7 +35,7 @@ echo " Total Matrix Size    : 2,064 Simulation Batches"
 echo "========================================================================"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 1: GENERATE JOB LIST (Instantaneous)
+# PHASE 1: GENERATE JOB LIST
 # ─────────────────────────────────────────────────────────────────────────────
 echo " [+] Generating unified cluster execution matrix..."
 
@@ -54,30 +54,49 @@ for WORLD in "${WORLDS[@]}"; do
             LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
             RUN_OUT_DIR="${ENERGY_DIR}"
 
-            # Append an entirely self-contained execution string to our file
+            # Append the execution command
             echo "cd ${ROOT_DIR}/${WORLD} && python3 simulator.py --world ${WORLD} --particle ${PARTICLE} --energy-kev ${ENERGY} --n ${N_PARTICLES_PER_RUN} --threads ${THREADS_PER_RUN} --beam-radius ${BEAM_RADIUS} --optical ${OPTICAL} --cherenkov ${CHERENKOV} --hits-optical-only on --physics-list ${PHYSICS_LIST} --run-id ${RUN_ID} --output-dir ${RUN_OUT_DIR} > ${LOG_FILE} 2>&1" >> "$JOB_FILE"
         done
     done
 done
 
-echo " [✓] Generated $(wc -l < "$JOB_FILE") jobs in job_list.txt."
+TOTAL_JOBS=$(wc -l < "$JOB_FILE")
+echo " [✓] Generated ${TOTAL_JOBS} jobs in job_list.txt."
 echo "--------------------------------────────────────────────────────--------"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 2: MASS PARALLEL EXECUTION VIA XARGS
+# PHASE 2: MASS PARALLEL EXECUTION WITH LIVE COUNTER
 # ─────────────────────────────────────────────────────────────────────────────
 echo " [+] Handing execution matrix to xargs engine..."
 echo " [+] Filling 480 processing cores..."
 
-# -P 480 keeps exactly 480 workers active at all times.
-# -I {} passes the line to a new bash shell natively.
+# Start a background loop to track log files and update the screen
+(
+    # Give xargs a moment to spin up and create folders/files
+    sleep 2 
+    while [ -f "$JOB_FILE" ] || [ $(pgrep -f "simulator.py" | wc -l) -gt 0 ]; do
+        # Count all .log files inside the newly created sweep log directories
+        COMPLETED_JOBS=$(find ${ROOT_DIR}/*/runs/sweep_${TIMESTAMP}/logs -name "*.log" 2>/dev/null | wc -l)
+        
+        # Pull how many Python simulations are currently processing
+        ACTIVE_CORES=$(pgrep -f "simulator.py" | wc -l)
+
+        printf "\r     -> Cluster Status: %4d / %d Done | [%3d Cores Occupied]" "$COMPLETED_JOBS" "$TOTAL_JOBS" "$ACTIVE_CORES"
+        sleep 1
+    done
+) &
+TRACKER_PID=$!
+
+# Run the xargs parallel processing engine smoothly
 xargs -P "$MAX_GLOBAL_CONCURRENT_SIMS" -I {} sh -c "{}" < "$JOB_FILE"
 
+# Clean up files and close background tracker
+rm -f "$JOB_FILE"
+wait $TRACKER_PID 2>/dev/null
+
+echo ""
 echo " [✓] All background core pools finished. Proceeding to analytics pipeline..."
 echo "------------------------------------------------------------------------"
-
-# Clean up the temporary job matrix list
-rm -f "$JOB_FILE"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 3: SEQUENTIAL POST-PROCESSING
