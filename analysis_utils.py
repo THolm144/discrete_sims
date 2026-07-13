@@ -229,6 +229,8 @@ def load_dose_mhd(run_dirs: list[Path], phantom_cm: list[float],
         if not candidates:
             candidates = list(rdir.glob("edep.mhd"))
         if not candidates:
+            candidates = list(rdir.glob("*_Dose_edep.mhd")) 
+        if not candidates:
             continue
         mhd_path = candidates[0]
 
