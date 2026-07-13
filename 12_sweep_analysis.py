@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 unified_sweep_analysis_optimized.py
 =====================================
@@ -394,8 +393,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     }
 
     all_bm_raw_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
-    clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0) 
-    _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
+    clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0)
+    mu_t_ps = float(np.mean(clean_bm)) if len(clean_bm) else 0.0
+    sigma_t_ps = float(np.std(clean_bm, ddof=1)) if len(clean_bm) > 1 else 0.0
 
     common_e_keys = set(up_first) & set(down_first)
     z_lo, z_hi = -calor_thick_mm / 2 - 15.0, calor_thick_mm / 2 + 15.0
@@ -423,6 +423,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
     return {
         "sigma_t_ps": sigma_t_ps,
+        "mu_t_ps": mu_t_ps,
         "raw_bm_data": all_bm_raw_ps,
         "tof_profile": profile_counts,
         "lyso_thick": lyso_thick,
@@ -586,95 +587,31 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — DYNAMIC PER-PANEL BINNING (FREEDMAN-DIACONIS)
+        # 1. SIMPLE TIMING HISTOGRAMS
         # ─────────────────────────────────────────────────────────────────────
-        fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
+        fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6*ncols,4.5*nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
             data = master_summary[mod][ekey]["raw_bm_data"]
-
-            if len(data) > 0:
+            if len(data):
                 clean = clean_around_mode(data, window_ps=500.0)
-                lo, hi = float(np.min(clean)), float(np.max(clean))
-                total_range = hi - lo
+                mu = float(np.mean(clean)) if len(clean) else 0.0
+                sigma = float(np.std(clean, ddof=1)) if len(clean)>1 else 0.0
+                master_summary[mod][ekey]["mu_t_ps"] = mu
+                master_summary[mod][ekey]["sigma_t_ps"] = sigma
 
-                if hi <= lo: hi = lo + 1.0
+                ax.hist(clean, bins=60,
+                        color=mod_colors.get(mod,"#f708af"),
+                        alpha=0.65, edgecolor="black")
+                ax.axvline(mu,color="black",lw=2,label=f"μ = {mu:.1f} ps")
+                ax.axvspan(mu-sigma,mu+sigma,color="gray",alpha=0.25,
+                           label=f"σ = {sigma:.1f} ps")
+                ax.set_title(ekey)
+                ax.grid(True, linestyle=":", alpha=0.5)
+                ax.legend(fontsize=8)
 
-                # Bin width calculation (Freedman-Diaconis)
-                q75, q25 = np.percentile(clean, [75, 25])
-                iqr = q75 - q25
-                fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0)) if (iqr > 0 and len(clean) > 1) else 5.0
-                optimal_width = max(max(1.0, total_range / 60.0), min(fd_width, 8.0))
-                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
-
-                counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
-                                            color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
-
-                bin_centers = (edges[:-1] + edges[1:]) / 2.0
-                x_fit = np.linspace(lo, hi, 5000)
-
-                peak_idx = np.argmax(counts)
-                mu_guess = float(bin_centers[peak_idx])
-                amp_max = float(counts.max())
-
-                # Estimate standard deviation for the scale parameter
-                std_guess = float(np.std(clean)) if len(clean) > 1 else 15.0
-
-                # 2. Provide an initial guess [amp, beta, m, loc, scale] 
-                # amp guess approximates the area under the peak
-                initial_guess = [amp_max * std_guess * np.sqrt(2 * np.pi), 1.0, 2.0, mu_guess, std_guess]
-
-                # Peak-focused weighting
-                fit_errors = np.sqrt(counts)
-                fit_errors[fit_errors == 0] = 1.0
-                # 1. Exact Amplitude Seeding
-                # A PDF integrates to 1. To match a histogram, we must multiply by (Total Events * Bin Width)
-                bin_width = edges[1] - edges[0]
-                total_events = np.sum(counts)
-                amp_guess = total_events * bin_width
-                
-                # [amp, beta, m, loc, scale]
-                initial_guess = [amp_guess, 1.0, 2.0, mu_guess, std_guess]
-                
-                # 2. Strict Boundaries
-                # Prevents SciPy's power-law parameters (beta, m) from wandering into flat degenerate states
-                bounds = (
-                    [amp_guess * 0.2, 0.1,  1.01, lo, 1.0],
-                    [amp_guess * 2.0, 10.0, 50.0, hi, std_guess * 4.0]
-                )
-
-                try:
-                    # 3. Perform the fit using the SciPy wrapper
-                    # 3. Unweighted Least Squares (Removed the 'sigma' parameter)
-                    # This forces the optimizer to minimize raw absolute distance, making tall bins act like magnets.
-                    popt, _ = curve_fit(
-                        crystal_ball_model, bin_centers, counts, 
-                        p0=initial_guess, 
-                        sigma=fit_errors, absolute_sigma=True, 
-                        bounds=bounds,
-                        maxfev=30000
-                    )
-                    amp_f, beta_f, m_f, loc_f, scale_f = popt
-
-                    # Store the TRUE physical core timing resolution (scale parameter in SciPy)
-                    master_summary[mod][ekey]["sigma_t_ps"] = scale_f
-
-                    # 4. Plot the result
-                    y_fit = crystal_ball_model(x_fit, *popt)
-
-                    label_text = f"SciPy CB Fit\n$\\mu$ = {loc_f:.1f} ps\n$\\sigma_{{core}}$ = {scale_f:.1f} ps"
-                    ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
-
-                except Exception:
-                    _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
-                    master_summary[mod][ekey]["sigma_t_ps"] = sigma
-                    y_fit = standard_gaussian(x_fit, amp_max, mu, sigma)
-                    y_fit = standard_gaussian(x_fit, float(counts.max()), mu, sigma)
-                    ax.plot(x_fit, y_fit, color="darkred", linestyle="-.", linewidth=2.0, label=f"Fallback Gauss\n$\\sigma$ = {sigma:.1f} ps")
-
-                ax.legend(loc="upper right", fontsize=8)
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
 
