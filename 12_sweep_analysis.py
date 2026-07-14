@@ -22,6 +22,7 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import gaussian_kde
 from scipy.stats import crystalball
+from scipy.optimize import minimize
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -600,16 +601,25 @@ def main():
                     if len(top_half_raw) < 8:
                         raise ValueError("Not enough points in top-half window for a stable fit")
 
-                    # crystalball's power-law tail sits on the LEFT (low-x) side; our tail is on
-                    # the right, so fit in mirrored space and flip back for reporting/plotting.
-                    mirrored = -top_half_raw
+                    mirrored = -top_half_raw  # tail is on our right, crystalball's tail is on the left
 
-                    beta_f, m_f, mu_f_mirrored, sigma_f = crystalball.fit(
-                        mirrored,
-                        1.5, 3.0,                      # beta0, m0 starting guesses
-                        loc=-mu_guess, scale=std_guess,
-                        bounds=[(0.3, 5.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
-                    )
+                    def neg_log_likelihood(params):
+                        beta, m, loc, scale = params
+                        if scale <= 0 or beta <= 0 or m <= 1.0:
+                            return np.inf
+                        logpdf = crystalball.logpdf(mirrored, beta, m, loc=loc, scale=scale)
+                        if not np.all(np.isfinite(logpdf)):
+                            return np.inf
+                        return -np.sum(logpdf)
+
+                    p0_cb = [1.5, 3.0, -mu_guess, std_guess]
+                    bounds_cb = [(0.3, 5.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
+
+                    result = minimize(neg_log_likelihood, p0_cb, method="L-BFGS-B", bounds=bounds_cb)
+                    if not result.success:
+                        raise RuntimeError(f"MLE did not converge: {result.message}")
+
+                    beta_f, m_f, mu_f_mirrored, sigma_f = result.x
                     mu_f = -mu_f_mirrored
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
@@ -622,6 +632,16 @@ def main():
                                 f"$\\mu$ = {mu_f:.1f} ps\n"
                                 f"$\\sigma_t$ = {sigma_f:.1f} ps\n"
                                 f"$\\beta$={beta_f:.2f}, m={m_f:.1f}")
+
+                except Exception as e:
+                    print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
+                    mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
+                    sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+
+                    x_fit = np.linspace(x_min, x_max, 1000)
+                    y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
+                    label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
                 except Exception as e:
                     print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
@@ -728,7 +748,7 @@ def main():
                         label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
 
             ax_main.set_ylabel("Normalized Intensity", fontsize=10)
-            ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12, fontweight="bold")
+            ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12,fontweight="bold")
             ax_main.grid(True, linestyle=":", alpha=0.6)
             ax_main.legend(fontsize=9)
 
