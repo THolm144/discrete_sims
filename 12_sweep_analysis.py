@@ -21,6 +21,8 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import gaussian_kde
 
+import SimpleITK as sitk
+
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -402,8 +404,9 @@ def main():
     profile_dir = analysis_out / "longitudinal_profiles"
     energy_dir = analysis_out / "energy_performance"
     summary_dir = analysis_out / "summary_plots"
+    transverse_dir = analysis_out / "transverse_profiles"
 
-    for d in [timing_dir, profile_dir, energy_dir, summary_dir]:
+    for d in [timing_dir, profile_dir, energy_dir, summary_dir, transverse_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     master_summary = {mod: {} for mod in modules}
@@ -914,7 +917,49 @@ def main():
     plt.close(fig_perf)
 
     # ─────────────────────────────────────────────────────────────────────
-    # 5. EXPORT MASTER MATRIX TEXT REPORT
+    # 5. Plot Transverse Shower Profiles for Each Module and Energy
+    # ─────────────────────────────────────────────────────────────────────
+    def plot_transverse_profile(npy_file_path, module_name):
+        # Load the 2D energy deposition matrix
+        transverse_data = np.load(npy_file_path)
+        
+        # Create the plot mimicking the image's style
+        fig, ax = plt.subplots(figsize=(6, 5))
+        
+        # 'Greens' colormap closely matches the target image
+        # origin='lower' ensures Y-axis goes bottom-to-top
+        im = ax.imshow(transverse_data, cmap='inferno', origin='lower', interpolation='nearest')
+        
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label("Energy Deposited / Dose", rotation=270, labelpad=15)
+        
+        ax.set_title(f"Transverse Shower Profile — {module_name}", fontweight='bold')
+        ax.set_xlabel("X Bins")
+        ax.set_ylabel("Y Bins")
+        plt.tight_layout()
+
+    
+    for mod in modules:
+        if mod not in master_summary or not master_summary[mod]:
+            continue
+
+        mhd_file = base_dir / mod / "runs" / mod / "sweep_latest" / "transverse_shower_max_edep.mhd"
+        itk_image = sitk.ReadImage(mhd_file)
+        npy_data = sitk.GetArrayFromImage(itk_image)
+        
+        if npy_data.exists():
+            plot_transverse_profile(npy_data, mod)
+            save_path = transverse_dir / f"{mod}_transverse_profile.png"
+            plt.savefig(save_path, dpi=200)
+            plt.close()
+            print(f"[SUCCESS] Saved transverse profile plot for {mod} to: {save_path.resolve()}")
+        else:
+            print(f"[WARNING] Transverse profile data not found for {mod} at {npy_data.resolve()}. Skipping plot.")
+
+
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # 6. EXPORT MASTER MATRIX TEXT REPORT
     # ─────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
