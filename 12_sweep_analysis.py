@@ -693,7 +693,8 @@ def main():
             # Scintillator decay time and extreme optical bouncing make the bulk light
             # spread much wider than the prompt peak. We multiply the kernel to match reality.
             # (Try values between 3.0 and 6.0; 4.0 is a solid starting point for LYSO/W)
-            HEURISTIC_DISPERSION_FACTOR = 4.0 
+            HEURISTIC_DISPERSION_FACTOR = 1.0
+             
             
             sigma_layer = base_sigma_layer * HEURISTIC_DISPERSION_FACTOR
 
