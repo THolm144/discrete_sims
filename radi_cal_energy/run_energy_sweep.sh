@@ -13,8 +13,8 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 # --- MAX SPEED MATH TWEAK ---
 # 10 single-threaded runs dispatched simultaneously per energy.
 # 4 energies * 10 runs = 40 background processes total.
-# 10 runs * 1000 particles = 10,000 total particles per energy.
-N_PARTICLES_PER_RUN=1000
+# 10 runs * 1500 particles = 15,000 total particles per energy.
+N_PARTICLES_PER_RUN=1500
 N_RUNS_PER_ENERGY=10
 THREADS_PER_RUN=1
 
