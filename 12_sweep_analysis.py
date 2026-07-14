@@ -919,42 +919,44 @@ def main():
     # ─────────────────────────────────────────────────────────────────────
     # 5. Plot Transverse Shower Profiles for Each Module and Energy
     # ─────────────────────────────────────────────────────────────────────
-    def plot_transverse_profile(npy_file_path, module_name):
-        # Load the 2D energy deposition matrix
-        transverse_data = np.load(npy_file_path)
-        
-        # Create the plot mimicking the image's style
+    def plot_transverse_profile(transverse_data, module_name):
         fig, ax = plt.subplots(figsize=(6, 5))
-        
-        # 'Greens' colormap closely matches the target image
-        # origin='lower' ensures Y-axis goes bottom-to-top
         im = ax.imshow(transverse_data, cmap='inferno', origin='lower', interpolation='nearest')
-        
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label("Energy Deposited / Dose", rotation=270, labelpad=15)
-        
         ax.set_title(f"Transverse Shower Profile — {module_name}", fontweight='bold')
         ax.set_xlabel("X Bins")
         ax.set_ylabel("Y Bins")
         plt.tight_layout()
 
-    
     for mod in modules:
         if mod not in master_summary or not master_summary[mod]:
             continue
 
-        mhd_file = base_dir / mod / "runs" / mod / "sweep_latest" / "transverse_shower_max_edep.mhd"
-        itk_image = sitk.ReadImage(mhd_file)
-        npy_data = sitk.GetArrayFromImage(itk_image)
-        
-        if npy_data.exists():
-            plot_transverse_profile(npy_data, mod)
-            save_path = transverse_dir / f"{mod}_transverse_profile.png"
-            plt.savefig(save_path, dpi=200)
-            plt.close()
-            print(f"[SUCCESS] Saved transverse profile plot for {mod} to: {save_path.resolve()}")
-        else:
-            print(f"[WARNING] Transverse profile data not found for {mod} at {npy_data.resolve()}. Skipping plot.")
+        mod_path = base_dir / mod / "runs" / mod
+        if not mod_path.exists():
+            mod_path = base_dir / mod
+        sweeps = sorted(mod_path.glob("sweep_*"), key=lambda p: p.name)
+        if not sweeps:
+            print(f"[WARNING] No sweep directories found for {mod}. Skipping transverse profile.")
+            continue
+        target_sweep = sweeps[-1]
+
+        mhd_files = sorted(target_sweep.glob("*GeV/run_*/transverse_shower_max_edep.mhd"))
+        if not mhd_files:
+            print(f"[WARNING] No transverse_shower_max_edep.mhd under {target_sweep}. Skipping {mod}.")
+            continue
+
+        accum = None
+        for mhd_file in mhd_files:
+            arr = sitk.GetArrayFromImage(sitk.ReadImage(str(mhd_file)))
+            accum = arr.astype(np.float64) if accum is None else accum + arr
+
+        plot_transverse_profile(accum, mod)
+        save_path = transverse_dir / f"{mod}_transverse_profile.png"
+        plt.savefig(save_path, dpi=200)
+        plt.close()
+        print(f"[SUCCESS] Saved transverse profile plot for {mod} to: {save_path.resolve()}")
 
 
     
