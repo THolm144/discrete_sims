@@ -521,7 +521,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — DYNAMIC PER-PANEL BINNING (FREEDMAN-DIACONIS)
+        # 1. TIMING HIERARCHY — DIRECT CRYSTAL BALL FIT TO TOP-HALF BINS ONLY
         # ─────────────────────────────────────────────────────────────────────
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
@@ -549,6 +549,7 @@ def main():
                 plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
                 actual_plot_width = (hi - lo) / plot_bins
 
+                # Plot the underlying data histogram
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
@@ -561,54 +562,66 @@ def main():
                     return np.where(zsc > -alpha, gauss, tail)
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
-                x_fit = np.linspace(lo, hi, 5000)
 
+                # ── Isolate Top-Half Bins (>= 50% of peak height) ──
+                threshold_val = counts.max() * 0.5
+                fit_mask = counts >= threshold_val
+                
+                if fit_mask.sum() >= 3:
+                    fit_x = bin_centers[fit_mask]
+                    fit_y = counts[fit_mask]
+                    
+                    # Establish physical left/right boundaries of the top-half bins
+                    bin_lefts = edges[:-1][fit_mask]
+                    bin_rights = edges[1:][fit_mask]
+                    x_min, x_max = bin_lefts.min(), bin_rights.max()
+                else:
+                    # Fallback to entire range if bins are too sparse
+                    fit_x = bin_centers
+                    fit_y = counts
+                    x_min, x_max = lo, hi
+
+                # Generate a restricted domain for the fit visualization (matches your orange line)
+                x_fit = np.linspace(x_min, x_max, 1000)
+
+                # Initialize fit parameters based strictly on the peak
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
                 std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
 
-                p0 = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
-                bounds = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
-
-                # ── Apply Top-Half Threshold Mask (>= 50% of peak height) ──
-                threshold_val = counts.max() * 0.5
-                fit_mask = counts >= threshold_val
-                
-                # Crystal ball has 5 free parameters; ensure we have enough data points
-                if fit_mask.sum() >= 5:
-                    fit_x = bin_centers[fit_mask]
-                    fit_y = counts[fit_mask]
-                else:
-                    fit_x = bin_centers
-                    fit_y = counts
+                p0_cb = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
+                bounds_cb = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
 
                 try:
-                    popt, _ = curve_fit(crystal_ball_binned, fit_x, fit_y, p0=p0, bounds=bounds, maxfev=10000)
+                    # Fit Crystal Ball to ONLY the top-half data points
+                    popt, _ = curve_fit(crystal_ball_binned, fit_x, fit_y, p0=p0_cb, bounds=bounds_cb, maxfev=10000)
                     amp_f, mu_f, sigma_f, alpha_f, n_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
                     y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
-                    label_text = (f"Crystal Ball (Top Half)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
+                    label_text = (f"Crystal Ball (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
                 except Exception:
-                    # Fallback 1: Try a pure Gaussian fit over the restricted top-half data
+                    # Fallback 1: Fit a standard Gaussian to ONLY the top-half data points
+                    p0_g = [float(counts.max()), mu_guess, std_guess * 0.6]
+                    bounds_g = ([0.0, lo, 0.1], [counts.max() * 2.0, hi, (hi - lo)])
                     try:
-                        popt_g, _ = curve_fit(standard_gaussian, fit_x, fit_y, 
-                                              p0=[float(counts.max()), mu_guess, std_guess * 0.6],
-                                              bounds=([0.0, lo, 0.1], [counts.max() * 2.0, hi, (hi - lo)]),
-                                              maxfev=10000)
-                        amp_g, mu_g, sigma_g = popt_g
-                        master_summary[mod][ekey]["sigma_t_ps"] = sigma_g
-                        y_fit = standard_gaussian(x_fit, amp_g, mu_g, sigma_g)
-                        label_text = f"Gaussian (Top Half)\n$\\mu$ = {mu_g:.1f} ps\n$\\sigma_t$ = {sigma_g:.1f} ps"
-                    except Exception:
-                        # Fallback 2: Global peak finder logic
-                        _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
-                        master_summary[mod][ekey]["sigma_t_ps"] = sigma
+                        popt, _ = curve_fit(standard_gaussian, fit_x, fit_y, p0=p0_g, bounds=bounds_g, maxfev=10000)
+                        amp_f, mu_f, sigma_f = popt
+                        master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                        amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
-                        y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
-                        label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
-                
+                        y_fit = standard_gaussian(x_fit, amp_f, mu_f, sigma_f)
+                        label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
+                    except Exception:
+                        # Fallback 2: Direct truncated Standard Deviation of raw values within the top-half window
+                        top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
+                        mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
+                        sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
+                        master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+
+                        y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
+                        label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
+
+                # Plot the resulting fit strictly within the [x_min, x_max] top-half domain
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
                 ax.legend(loc="upper right", fontsize=9)
