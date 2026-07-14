@@ -685,9 +685,20 @@ def main():
 
             raw_norm_disp = raw_profile / np.sum(raw_profile)
             s_z = v_eff_for_module(mod) * (sigma_t_ps / 1000.0)
-            sigma_layer = s_z / pitch_mm if pitch_mm > 0 else 1.0
+            # 1. Calculate the spatial spread based on the prompt timing peak
+            s_z_prompt = v_eff_for_module(mod) * (sigma_t_ps / 1000.0)
+            base_sigma_layer = s_z_prompt / pitch_mm if pitch_mm > 0 else 1.0
+
+            # 2. HEURISTIC KERNEL INFLATION
+            # Scintillator decay time and extreme optical bouncing make the bulk light
+            # spread much wider than the prompt peak. We multiply the kernel to match reality.
+            # (Try values between 3.0 and 6.0; 4.0 is a solid starting point for LYSO/W)
+            HEURISTIC_DISPERSION_FACTOR = 4.0 
+            
+            sigma_layer = base_sigma_layer * HEURISTIC_DISPERSION_FACTOR
 
             if utils is not None and hasattr(utils, 'rl_unfold'):
+                # Pass the inflated kernel to the algorithm
                 unf_norm_disp, unf_err_disp = utils.rl_unfold(raw_norm_disp, sigma_layer)
             else:
                 unf_norm_disp = raw_norm_disp
