@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 unified_sweep_analysis_optimized.py
 =====================================
@@ -205,6 +204,8 @@ def extract_numerical_energy(label: str) -> float:
         return float(''.join(c for c in label if c.isdigit() or c == '.'))
     except ValueError:
         return 0.0
+    
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
@@ -527,13 +528,15 @@ def main():
         # ─────────────────────────────────────────────────────────────────────
         # Ensure the directory physically exists before saving
         timing_dir.mkdir(parents=True, exist_ok=True)
-        
+
         print(f"\n[DEBUG] Processing module {mod}. Total energy keys to plot: {len(energy_keys)}")
 
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
         plotted_count = 0
+
+        from scipy.optimize import curve_fit  # Ensure curve_fit is imported at the top of your script
 
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
@@ -543,15 +546,15 @@ def main():
                 plotted_count += 1
                 # Clean outlier events far from the core
                 clean = clean_around_mode(data, window_ps=500.0)
-                
+
                 # Robustly estimate the peak location and width (ignoring extreme tails)
                 median_val = float(np.median(clean))
                 std_robust = float(np.std(clean)) if len(clean) > 1 else 15.0
-                
+
                 # Auto-focus the histogram range on the active peak region (+/- 3.5 sigma)
                 hist_lo = max(float(np.min(clean)), median_val - 3.5 * std_robust)
                 hist_hi = min(float(np.max(clean)), median_val + 3.5 * std_robust)
-                
+
                 if hist_hi <= hist_lo:
                     hist_hi = hist_lo + 50.0
 
@@ -567,7 +570,7 @@ def main():
                         fd_width = 2.0 * iqr / (n_points ** (1.0 / 3.0))
                     else:
                         fd_width = 3.5 * std_robust / (n_points ** (1.0 / 3.0))
-                    
+
                     # Prevent bins from being ridiculously small or large
                     fd_width = max(2.5, min(fd_width, 15.0)) 
                     plot_bins = max(10, int(np.ceil((hist_hi - hist_lo) / fd_width)))
@@ -582,7 +585,7 @@ def main():
                 bin_width = edges[1] - edges[0]
                 threshold_val = counts.max() * 0.5
 
-                # --- Restrict to top-half domain (same logic as your old fallback path) ---
+                # --- Restrict to top-half domain ---
                 fit_mask = counts >= threshold_val
                 if fit_mask.any():
                     bin_lefts = edges[:-1][fit_mask]
@@ -598,37 +601,36 @@ def main():
                 std_guess = max(std_robust * 0.6, 1.0)
 
                 try:
-                    if len(top_half_raw) < 8:
-                        raise ValueError("Not enough points in top-half window for a stable fit")
+                    # Need at least 3 points to comfortably fit a 3-parameter Gaussian
+                    if np.sum(fit_mask) < 3:
+                        raise ValueError("Not enough binned points in the top-half window for a stable fit")
 
-                    mirrored = -clean  # full cleaned data, not top_half_raw
-                    p0_cb = [1.5, 3.0, -mu_guess, std_guess]
-                    bounds_cb = [(0.3, 10.0), (1.5, 30.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
+                    def straight_gaussian(x, amp, mu, sigma):
+                        return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
-                    def neg_log_likelihood(params):
-                        beta, m, loc, scale = params
-                        if scale <= 0 or beta <= 0 or m <= 1.0:
-                            return np.inf
-                        logpdf = crystalball.logpdf(mirrored, beta, m, loc=loc, scale=scale)
-                        if not np.all(np.isfinite(logpdf)):
-                            return np.inf
-                        return -np.sum(logpdf)   # no truncation term needed — unrestricted domain
+                    p0_g = [float(counts.max()), mu_guess, std_guess]
+                    bounds_g = ([0.0, x_min, 0.1], [counts.max() * 2.0, x_max, (x_max - x_min)])
 
-                    result = minimize(neg_log_likelihood, p0_cb, method="L-BFGS-B", bounds=bounds_cb)
-                    beta_f, m_f, mu_f_mirrored, sigma_f = result.x
-                    mu_f = -mu_f_mirrored
+                    # Fit straight to the histogram bins above the threshold
+                    popt, _ = curve_fit(
+                        straight_gaussian, bin_centers[fit_mask], counts[fit_mask],
+                        p0=p0_g, bounds=bounds_g, maxfev=10000,
+                        sigma=np.sqrt(np.maximum(counts[fit_mask], 1)), absolute_sigma=True
+                    )
+                    amp_f, mu_f, sigma_f = popt
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    x_fit = np.linspace(x_min, x_max, 1000)   # still just plot the top-half window
-                    y_fit = len(clean) * bin_width * crystalball.pdf(-x_fit, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f)
+                    # Generate evaluation coordinates spanning the active fit region
+                    x_fit = np.linspace(x_min, x_max, 1000)
+                    y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
 
-                    label_text = (f"Crystal Ball (Top Half Fit, truncated)\n"
+                    label_text = (f"Gaussian (Top Half Fit)\n"
                                 f"$\\mu$ = {mu_f:.1f} ps\n"
                                 f"$\\sigma_t$ = {sigma_f:.1f} ps\n"
-                                f"$\\beta$={beta_f:.2f}, m={m_f:.1f}")
-                    
-                    
+                                f"Amp = {amp_f:.1f}")
+
                 except Exception as e:
-                    print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
+                    print(f"  [WARNING] Gaussian fit failed for {ekey} ({mod}): {e}. Using fallback.")
                     mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
                     sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
@@ -637,6 +639,7 @@ def main():
                     y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
                     label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
+                # Overlay the fit line, threshold line, and adjust limits
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
                 ax.set_xlim(hist_lo, hist_hi)
@@ -652,13 +655,13 @@ def main():
         if plotted_count > 0:
             fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
             fig_time.tight_layout()
-            
+
             save_path = timing_dir / f"{mod}_timing_panels.png"
             fig_time.savefig(save_path, dpi=200)
             print(f"[SUCCESS] Saved timing plot to: {save_path.resolve()}")
         else:
             print(f"[ERROR] Did not generate plot for {mod} because 0 subplots had data.")
-            
+
         plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
