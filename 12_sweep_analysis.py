@@ -521,7 +521,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — DIRECT GAUSSIAN FIT TO TOP-HALF BINS ONLY
+        # 1. TIMING HIERARCHY — AUTO-FOCUSED FINE BINNING & GAUSSIAN FIT
         # ─────────────────────────────────────────────────────────────────────
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
@@ -531,26 +531,26 @@ def main():
             data = master_summary[mod][ekey]["raw_bm_data"]
 
             if len(data) > 0:
+                # Clean outlier events far from the core
                 clean = clean_around_mode(data, window_ps=500.0)
-                lo, hi = float(np.min(clean)), float(np.max(clean))
-                total_range = hi - lo
+                
+                # Robustly estimate the peak location and width (ignoring extreme tails)
+                median_val = float(np.median(clean))
+                std_robust = float(np.std(clean)) if len(clean) > 1 else 15.0
+                
+                # Auto-focus the histogram range on the active peak region (+/- 3.5 sigma)
+                # This prevents long, empty tails from ruining the bin granularity
+                hist_lo = max(float(np.min(clean)), median_val - 3.5 * std_robust)
+                hist_hi = min(float(np.max(clean)), median_val + 3.5 * std_robust)
+                
+                if hist_hi <= hist_lo:
+                    hist_hi = hist_lo + 50.0
 
-                if hi <= lo:
-                    hi = lo + 1.0
+                # Use a generous, fixed number of bins to ensure the peak has great definition
+                plot_bins = 80 
 
-                q75, q25 = np.percentile(clean, [75, 25])
-                iqr = q75 - q25
-                if iqr > 0 and len(clean) > 1:
-                    fd_width = 2.0 * iqr / (len(clean) ** (1.0 / 3.0))
-                else:
-                    fd_width = 3.5 * np.std(clean) / (len(clean) ** (1.0 / 3.0)) if len(clean) > 1 else 5.0
-                min_width = max(1.0, total_range / 50.0)
-                optimal_width = max(min_width, min(fd_width, 10.0))
-                plot_bins = max(3, int(np.ceil((hi - lo) / optimal_width)))
-                actual_plot_width = (hi - lo) / plot_bins
-
-                # Plot the underlying data histogram
-                counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
+                # Plot the underlying data histogram focused on the peak area
+                counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(hist_lo, hist_hi),
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
                 # Define standard Gaussian equation inline
@@ -572,21 +572,21 @@ def main():
                     bin_rights = edges[1:][fit_mask]
                     x_min, x_max = bin_lefts.min(), bin_rights.max()
                 else:
-                    # Fallback to entire range if bins are too sparse
+                    # Fallback if bins are somehow too sparse
                     fit_x = bin_centers
                     fit_y = counts
-                    x_min, x_max = lo, hi
+                    x_min, x_max = hist_lo, hist_hi
 
-                # Generate a restricted domain for the fit visualization (matches your orange line target)
+                # Generate a restricted domain for the fit visualization (terminates at 50% line)
                 x_fit = np.linspace(x_min, x_max, 1000)
 
                 # Initialize fit parameters based strictly on the peak
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
-                std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
+                std_guess = std_robust * 0.6
 
-                p0_g = [float(counts.max()), mu_guess, std_guess * 0.6]
-                bounds_g = ([0.0, lo, 0.1], [counts.max() * 2.0, hi, (hi - lo)])
+                p0_g = [float(counts.max()), mu_guess, std_guess]
+                bounds_g = ([0.0, hist_lo, 0.1], [counts.max() * 2.0, hist_hi, (hist_hi - hist_lo)])
 
                 try:
                     # Fit straight Gaussian to ONLY the top-half data points
@@ -609,15 +609,8 @@ def main():
                 # Plot the resulting fit strictly within the [x_min, x_max] top-half domain
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
+                ax.set_xlim(hist_lo, hist_hi)  # Lock axis limits to our focused view
                 ax.legend(loc="upper right", fontsize=9)
-                
-        for idx in range(n_energies, len(axs_time)):
-            fig_time.delaxes(axs_time[idx])
-
-        fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
-        fig_time.tight_layout()
-        fig_time.savefig(timing_dir / f"{mod}_timing_panels.png", dpi=200)
-        plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
         # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
