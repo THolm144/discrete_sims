@@ -523,14 +523,22 @@ def main():
         # ─────────────────────────────────────────────────────────────────────
         # 1. TIMING HIERARCHY — AUTO-FOCUSED FINE BINNING & GAUSSIAN FIT
         # ─────────────────────────────────────────────────────────────────────
+        # Ensure the directory physically exists before saving
+        timing_dir.mkdir(parents=True, exist_ok=True)
+        
+        print(f"\n[DEBUG] Processing module {mod}. Total energy keys to plot: {len(energy_keys)}")
+
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
 
+        plotted_count = 0
+
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
-            data = master_summary[mod][ekey]["raw_bm_data"]
+            data = master_summary[mod][ekey].get("raw_bm_data", np.array([]))
 
             if len(data) > 0:
+                plotted_count += 1
                 # Clean outlier events far from the core
                 clean = clean_around_mode(data, window_ps=500.0)
                 
@@ -539,14 +547,12 @@ def main():
                 std_robust = float(np.std(clean)) if len(clean) > 1 else 15.0
                 
                 # Auto-focus the histogram range on the active peak region (+/- 3.5 sigma)
-                # This prevents long, empty tails from ruining the bin granularity
                 hist_lo = max(float(np.min(clean)), median_val - 3.5 * std_robust)
                 hist_hi = min(float(np.max(clean)), median_val + 3.5 * std_robust)
                 
                 if hist_hi <= hist_lo:
                     hist_hi = hist_lo + 50.0
 
-                # Use a generous, fixed number of bins to ensure the peak has great definition
                 plot_bins = 80 
 
                 # Plot the underlying data histogram focused on the peak area
@@ -572,7 +578,6 @@ def main():
                     bin_rights = edges[1:][fit_mask]
                     x_min, x_max = bin_lefts.min(), bin_rights.max()
                 else:
-                    # Fallback if bins are somehow too sparse
                     fit_x = bin_centers
                     fit_y = counts
                     x_min, x_max = hist_lo, hist_hi
@@ -596,7 +601,8 @@ def main():
 
                     y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
                     label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
-                except Exception:
+                except Exception as e:
+                    print(f"  [WARNING] Fit failed for {ekey} ({mod}): {e}. Using fallback.")
                     # Fallback: Direct truncated Standard Deviation of raw values within the top-half window
                     top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
                     mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
@@ -611,6 +617,25 @@ def main():
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
                 ax.set_xlim(hist_lo, hist_hi)  # Lock axis limits to our focused view
                 ax.legend(loc="upper right", fontsize=9)
+            else:
+                print(f"  [WARNING] No raw data found for energy key: {ekey}")
+
+        # Safely remove empty axes using the actual plotted count
+        for idx in range(plotted_count, len(axs_time)):
+            fig_time.delaxes(axs_time[idx])
+
+        # Write out the figure if we actually plotted data
+        if plotted_count > 0:
+            fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
+            fig_time.tight_layout()
+            
+            save_path = timing_dir / f"{mod}_timing_panels.png"
+            fig_time.savefig(save_path, dpi=200)
+            print(f"[SUCCESS] Saved timing plot to: {save_path.resolve()}")
+        else:
+            print(f"[ERROR] Did not generate plot for {mod} because 0 subplots had data.")
+            
+        plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
         # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
