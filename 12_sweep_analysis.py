@@ -204,8 +204,6 @@ def extract_numerical_energy(label: str) -> float:
         return float(''.join(c for c in label if c.isdigit() or c == '.'))
     except ValueError:
         return 0.0
-    
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
@@ -536,8 +534,6 @@ def main():
 
         plotted_count = 0
 
-        from scipy.optimize import curve_fit  # Ensure curve_fit is imported at the top of your script
-
         for idx, ekey in enumerate(energy_keys):
             ax = axs_time[idx]
             data = master_summary[mod][ekey].get("raw_bm_data", np.array([]))
@@ -585,7 +581,7 @@ def main():
                 bin_width = edges[1] - edges[0]
                 threshold_val = counts.max() * 0.5
 
-                # --- Restrict to top-half domain ---
+                # --- Restrict to top-half domain (same logic as your old fallback path) ---
                 fit_mask = counts >= threshold_val
                 if fit_mask.any():
                     bin_lefts = edges[:-1][fit_mask]
@@ -601,36 +597,63 @@ def main():
                 std_guess = max(std_robust * 0.6, 1.0)
 
                 try:
-                    # Need at least 3 points to comfortably fit a 3-parameter Gaussian
-                    if np.sum(fit_mask) < 3:
-                        raise ValueError("Not enough binned points in the top-half window for a stable fit")
+                    if len(top_half_raw) < 8:
+                        raise ValueError("Not enough points in top-half window for a stable fit")
 
-                    def straight_gaussian(x, amp, mu, sigma):
-                        return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+                    mirrored = -top_half_raw  # tail is on our right, crystalball's tail is on the left
+                    mirrored = -top_half_raw
+                    # truncation window in mirrored space (mirroring flips the endpoints)
+                    trunc_lo, trunc_hi = -x_max, -x_min
 
-                    p0_g = [float(counts.max()), mu_guess, std_guess]
-                    bounds_g = ([0.0, x_min, 0.1], [counts.max() * 2.0, x_max, (x_max - x_min)])
+                    def neg_log_likelihood(params):
+                        beta, m, loc, scale = params
+                        if scale <= 0 or beta <= 0 or m <= 1.0:
+                            return np.inf
 
-                    # Fit straight to the histogram bins above the threshold
-                    popt, _ = curve_fit(
-                        straight_gaussian, bin_centers[fit_mask], counts[fit_mask],
-                        p0=p0_g, bounds=bounds_g, maxfev=10000,
-                        sigma=np.sqrt(np.maximum(counts[fit_mask], 1)), absolute_sigma=True
-                    )
-                    amp_f, mu_f, sigma_f = popt
+                        trunc_prob = crystalball.cdf(trunc_hi, beta, m, loc=loc, scale=scale) \
+                                - crystalball.cdf(trunc_lo, beta, m, loc=loc, scale=scale)
+                        if not np.isfinite(trunc_prob) or trunc_prob <= 1e-12:
+                            return np.inf
+
+                        logpdf = crystalball.logpdf(mirrored, beta, m, loc=loc, scale=scale)
+                        if not np.all(np.isfinite(logpdf)):
+                            return np.inf
+                        return -np.sum(logpdf)
+
+                        # conditional (truncated) log-likelihood
+                        return -np.sum(logpdf) + len(mirrored) * np.log(trunc_prob)
+
+                    p0_cb = [1.5, 3.0, -mu_guess, std_guess]
+                    bounds_cb = [(0.3, 5.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
+                    bounds_cb = [(0.3, 10.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
+
+                    result = minimize(neg_log_likelihood, p0_cb, method="L-BFGS-B", bounds=bounds_cb)
+                    if not result.success:
+                        raise RuntimeError(f"MLE did not converge: {result.message}")
+
+                    beta_f, m_f, mu_f_mirrored, sigma_f = result.x
+                    mu_f = -mu_f_mirrored
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    # Generate evaluation coordinates spanning the active fit region
-                    x_fit = np.linspace(x_min, x_max, 1000)
-                    y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
+                    # rescale the overlay by the truncation probability so it matches the windowed data
+                    trunc_prob_f = crystalball.cdf(trunc_hi, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f) \
+                                - crystalball.cdf(trunc_lo, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f)
 
-                    label_text = (f"Gaussian (Top Half Fit)\n"
+                    x_fit = np.linspace(x_min, x_max, 1000)
+                    y_fit = len(top_half_raw) * bin_width * crystalball.pdf(
+                        -x_fit, beta_f, m_f, loc=-mu_f, scale=sigma_f)
+                    y_fit = (len(top_half_raw) * bin_width / trunc_prob_f) * crystalball.pdf(
+                        -x_fit, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f
+                    )
+
+                    label_text = (f"Crystal Ball (Top Half Fit)\n")
+                    label_text = (f"Crystal Ball (Top Half Fit, truncated)\n"
                                 f"$\\mu$ = {mu_f:.1f} ps\n"
                                 f"$\\sigma_t$ = {sigma_f:.1f} ps\n"
-                                f"Amp = {amp_f:.1f}")
+                                f"$\\beta$={beta_f:.2f}, m={m_f:.1f}")
 
                 except Exception as e:
-                    print(f"  [WARNING] Gaussian fit failed for {ekey} ({mod}): {e}. Using fallback.")
+                    print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
                     mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
                     sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
@@ -639,7 +662,18 @@ def main():
                     y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
                     label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
-                # Overlay the fit line, threshold line, and adjust limits
+                    
+                    
+                except Exception as e:
+                    print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
+                    mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
+                    sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+
+                    x_fit = np.linspace(x_min, x_max, 1000)
+                    y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
+                    label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
+
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
                 ax.set_xlim(hist_lo, hist_hi)
