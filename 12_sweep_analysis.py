@@ -570,22 +570,49 @@ def main():
                 p0 = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
                 bounds = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
 
+                # ── Apply Top-Half Threshold Mask (>= 50% of peak height) ──
+                threshold_val = counts.max() * 0.5
+                fit_mask = counts >= threshold_val
+                
+                # Crystal ball has 5 free parameters; ensure we have enough data points
+                if fit_mask.sum() >= 5:
+                    fit_x = bin_centers[fit_mask]
+                    fit_y = counts[fit_mask]
+                else:
+                    fit_x = bin_centers
+                    fit_y = counts
+
                 try:
-                    popt, _ = curve_fit(crystal_ball_binned, bin_centers, counts, p0=p0, bounds=bounds, maxfev=10000)
+                    popt, _ = curve_fit(crystal_ball_binned, fit_x, fit_y, p0=p0, bounds=bounds, maxfev=10000)
                     amp_f, mu_f, sigma_f, alpha_f, n_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
                     y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
-                    label_text = (f"Crystal Ball\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
+                    label_text = (f"Crystal Ball (Top Half)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
                 except Exception:
-                    _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
-                    master_summary[mod][ekey]["sigma_t_ps"] = sigma
+                    # Fallback 1: Try a pure Gaussian fit over the restricted top-half data
+                    try:
+                        popt_g, _ = curve_fit(standard_gaussian, fit_x, fit_y, 
+                                              p0=[float(counts.max()), mu_guess, std_guess * 0.6],
+                                              bounds=([0.0, lo, 0.1], [counts.max() * 2.0, hi, (hi - lo)]),
+                                              maxfev=10000)
+                        amp_g, mu_g, sigma_g = popt_g
+                        master_summary[mod][ekey]["sigma_t_ps"] = sigma_g
+                        y_fit = standard_gaussian(x_fit, amp_g, mu_g, sigma_g)
+                        label_text = f"Gaussian (Top Half)\n$\\mu$ = {mu_g:.1f} ps\n$\\sigma_t$ = {sigma_g:.1f} ps"
+                    except Exception:
+                        # Fallback 2: Global peak finder logic
+                        _, mu, sigma = fit_gaussian_to_peak(clean, n_bins=40)
+                        master_summary[mod][ekey]["sigma_t_ps"] = sigma
 
-                    amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
-                    y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
-                    label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
+                        amplitude = (len(clean) * actual_plot_width) / (sigma * np.sqrt(2 * np.pi)) if sigma > 0 else counts.max()
+                        y_fit = standard_gaussian(x_fit, amplitude, mu, sigma)
+                        label_text = f"Gaussian Fallback\n$\\mu$ = {mu:.1f} ps\n$\\sigma_t$ = {sigma:.1f} ps"
+                
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
+                ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
                 ax.legend(loc="upper right", fontsize=9)
+                
         for idx in range(n_energies, len(axs_time)):
             fig_time.delaxes(axs_time[idx])
 
