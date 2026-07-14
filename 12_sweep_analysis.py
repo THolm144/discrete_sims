@@ -952,7 +952,9 @@ def main():
             arr = sitk.GetArrayFromImage(sitk.ReadImage(str(mhd_file)))
             accum = arr.astype(np.float64) if accum is None else accum + arr
 
-        plot_transverse_profile(accum, mod)
+        accum_squeezed = np.squeeze(accum)
+
+        plot_transverse_profile(accum_squeezed, mod)
         save_path = transverse_dir / f"{mod}_transverse_profile.png"
         plt.savefig(save_path, dpi=200)
         plt.close()
