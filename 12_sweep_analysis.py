@@ -21,6 +21,7 @@ import matplotlib.cm as cm
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import gaussian_kde
+from scipy.stats import crystalball
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -574,47 +575,56 @@ def main():
 
                 # Plot the underlying data histogram with dynamic binning
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(hist_lo, hist_hi),
-                                            color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
-
-                # Define standard Gaussian equation inline
-                def straight_gaussian(x, amp, mu, sigma):
-                    return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+                            color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
+                bin_width = edges[1] - edges[0]
                 threshold_val = counts.max() * 0.5
 
-                # Initialize fit parameters based strictly on the peak
-                peak_idx = np.argmax(counts)
-                mu_guess = float(bin_centers[peak_idx])
-                std_guess = std_robust * 0.6
-
-                p0_g = [float(counts.max()), mu_guess, std_guess]
-                bounds_g = ([0.0, hist_lo, 0.1], [counts.max() * 2.0, hist_hi, (hist_hi - hist_lo)])
-
-                try:
-                    # 1. FIT using the ENTIRE focused range so the optimizer is stable and accurate
-                    popt, _ = curve_fit(straight_gaussian, bin_centers, counts, p0=p0_g, bounds=bounds_g, maxfev=10000)
-                    amp_f, mu_f, sigma_f = popt
-                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
-
-                    # 2. Find the boundaries where the fitted Gaussian is >= 50% of its peak
-                    x_min = mu_f - 1.177 * sigma_f
-                    x_max = mu_f + 1.177 * sigma_f
-
-                    # Clip the visualization domain to just this top half
-                    x_fit = np.linspace(x_min, x_max, 1000)
-                    y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
-                    
-                    label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
-                except Exception as e:
-                    print(f"  [WARNING] Fit failed for {ekey} ({mod}): {e}. Using fallback.")
-                    # Fallback: Direct truncated Standard Deviation
-                    fit_mask = counts >= threshold_val
+                # --- Restrict to top-half domain (same logic as your old fallback path) ---
+                fit_mask = counts >= threshold_val
+                if fit_mask.any():
                     bin_lefts = edges[:-1][fit_mask]
                     bin_rights = edges[1:][fit_mask]
-                    x_min, x_max = bin_lefts.min(), bin_rights.max() if fit_mask.any() else (hist_lo, hist_hi)
-                    
-                    top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
+                    x_min, x_max = bin_lefts.min(), bin_rights.max()
+                else:
+                    peak_idx = np.argmax(counts)
+                    x_min, x_max = edges[peak_idx], edges[peak_idx + 1]
+
+                top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
+                peak_idx = np.argmax(counts)
+                mu_guess = float(bin_centers[peak_idx])
+                std_guess = max(std_robust * 0.6, 1.0)
+
+                try:
+                    if len(top_half_raw) < 8:
+                        raise ValueError("Not enough points in top-half window for a stable fit")
+
+                    # crystalball's power-law tail sits on the LEFT (low-x) side; our tail is on
+                    # the right, so fit in mirrored space and flip back for reporting/plotting.
+                    mirrored = -top_half_raw
+
+                    beta_f, m_f, mu_f_mirrored, sigma_f = crystalball.fit(
+                        mirrored,
+                        1.5, 3.0,                      # beta0, m0 starting guesses
+                        loc=-mu_guess, scale=std_guess,
+                        bounds=[(0.3, 5.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
+                    )
+                    mu_f = -mu_f_mirrored
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+
+                    x_fit = np.linspace(x_min, x_max, 1000)
+                    y_fit = len(top_half_raw) * bin_width * crystalball.pdf(
+                        -x_fit, beta_f, m_f, loc=-mu_f, scale=sigma_f
+                    )
+
+                    label_text = (f"Crystal Ball (Top Half Fit)\n"
+                                f"$\\mu$ = {mu_f:.1f} ps\n"
+                                f"$\\sigma_t$ = {sigma_f:.1f} ps\n"
+                                f"$\\beta$={beta_f:.2f}, m={m_f:.1f}")
+
+                except Exception as e:
+                    print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
                     mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
                     sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
@@ -623,10 +633,9 @@ def main():
                     y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
                     label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
-                # Plot the resulting fit strictly within the top-half domain
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
-                ax.set_xlim(hist_lo, hist_hi)  # Lock axis limits to our focused view
+                ax.set_xlim(hist_lo, hist_hi)
                 ax.legend(loc="upper right", fontsize=9)
             else:
                 print(f"  [WARNING] No raw data found for energy key: {ekey}")
