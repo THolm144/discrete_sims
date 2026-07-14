@@ -286,7 +286,7 @@ def load_calorimeter_mhd(run_dirs: list[Path],
 def load_batch_metadata(run_dirs: list[Path], world_name: str | None
                         ) -> dict:
     """
-    Aggregate sim_metadata.json and stats.json across all run directories.
+    Aggregate sim_metadata_*.json and stats_*.json across all run directories.
     Returns a unified metadata dict.
     """
     total_primaries = 0
@@ -299,11 +299,13 @@ def load_batch_metadata(run_dirs: list[Path], world_name: str | None
     capabilities    = {}
 
     for rdir in run_dirs:
-        meta_path = rdir / "sim_metadata.json"
-        if meta_path.exists():
+        run_primaries_from_events = 0
+        run_primaries_from_meta   = 0
+
+        for meta_path in sorted(rdir.glob("sim_metadata_*.json")):
             with open(meta_path) as f:
                 meta = json.load(f)
-            total_primaries += meta.get("n_primaries", 0)
+            run_primaries_from_meta += meta.get("n_primaries", 0)
             if not phantom_cm:
                 phantom_cm = meta.get("phantom_cm")
             if not w_name:
@@ -314,13 +316,21 @@ def load_batch_metadata(run_dirs: list[Path], world_name: str | None
             if not capabilities:
                 capabilities = meta.get("capabilities", {})
 
-        stats_path = rdir / "stats.json"
-        if stats_path.exists():
+        for stats_path in sorted(rdir.glob("stats_*.json")):
             with open(stats_path) as f:
-                total_optical += _sum_optical_counts(json.load(f))
+                stats = json.load(f)
+            total_optical += _sum_optical_counts(stats)
+            # events = actual primaries Geant4 ran (ground truth, unaffected
+            # by the source.n-per-thread multiplier); prefer this over the
+            # sim_metadata n_primaries field, which reflects the CLI arg.
+            run_primaries_from_events += stats.get("events", {}).get("value", 0)
+
+        total_primaries += (run_primaries_from_events
+                            if run_primaries_from_events
+                            else run_primaries_from_meta)
 
     if not phantom_cm:
-        raise RuntimeError("Could not find phantom_cm in any sim_metadata.json")
+        raise RuntimeError("Could not find phantom_cm in any sim_metadata_*.json")
 
     return {
         "world":            w_name,
