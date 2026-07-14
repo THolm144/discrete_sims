@@ -521,7 +521,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — AUTO-FOCUSED FINE BINNING & GAUSSIAN FIT
+        # 1. TIMING HIERARCHY — STABLE FIT WITH TRUNCATED VISUALIZATION
         # ─────────────────────────────────────────────────────────────────────
         # Ensure the directory physically exists before saving
         timing_dir.mkdir(parents=True, exist_ok=True)
@@ -564,26 +564,7 @@ def main():
                     return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
-
-                # ── Isolate Top-Half Bins (>= 50% of peak height) ──
                 threshold_val = counts.max() * 0.5
-                fit_mask = counts >= threshold_val
-                
-                if fit_mask.sum() >= 3:
-                    fit_x = bin_centers[fit_mask]
-                    fit_y = counts[fit_mask]
-                    
-                    # Establish physical left/right boundaries of the top-half bins
-                    bin_lefts = edges[:-1][fit_mask]
-                    bin_rights = edges[1:][fit_mask]
-                    x_min, x_max = bin_lefts.min(), bin_rights.max()
-                else:
-                    fit_x = bin_centers
-                    fit_y = counts
-                    x_min, x_max = hist_lo, hist_hi
-
-                # Generate a restricted domain for the fit visualization (terminates at 50% line)
-                x_fit = np.linspace(x_min, x_max, 1000)
 
                 # Initialize fit parameters based strictly on the peak
                 peak_idx = np.argmax(counts)
@@ -594,48 +575,45 @@ def main():
                 bounds_g = ([0.0, hist_lo, 0.1], [counts.max() * 2.0, hist_hi, (hist_hi - hist_lo)])
 
                 try:
-                    # Fit straight Gaussian to ONLY the top-half data points
-                    popt, _ = curve_fit(straight_gaussian, fit_x, fit_y, p0=p0_g, bounds=bounds_g, maxfev=10000)
+                    # 1. FIT using the ENTIRE focused range so the optimizer is stable and accurate
+                    popt, _ = curve_fit(straight_gaussian, bin_centers, counts, p0=p0_g, bounds=bounds_g, maxfev=10000)
                     amp_f, mu_f, sigma_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
+                    # 2. Find the boundaries where the fitted Gaussian is >= 50% of its peak
+                    # For a Gaussian, the 50% threshold (FWHM) is at exactly: mu +/- 1.177 * sigma
+                    x_min = mu_f - 1.177 * sigma_f
+                    x_max = mu_f + 1.177 * sigma_f
+
+                    # Clip the visualization domain to just this top half
+                    x_fit = np.linspace(x_min, x_max, 1000)
                     y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
+                    
                     label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
                 except Exception as e:
                     print(f"  [WARNING] Fit failed for {ekey} ({mod}): {e}. Using fallback.")
-                    # Fallback: Direct truncated Standard Deviation of raw values within the top-half window
+                    # Fallback: Direct truncated Standard Deviation
+                    fit_mask = counts >= threshold_val
+                    bin_lefts = edges[:-1][fit_mask]
+                    bin_rights = edges[1:][fit_mask]
+                    x_min, x_max = bin_lefts.min(), bin_rights.max() if fit_mask.any() else (hist_lo, hist_hi)
+                    
                     top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
                     mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
                     sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
+                    x_fit = np.linspace(x_min, x_max, 1000)
                     y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
                     label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
-                # Plot the resulting fit strictly within the [x_min, x_max] top-half domain
+                # Plot the resulting fit strictly within the top-half domain
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
                 ax.set_xlim(hist_lo, hist_hi)  # Lock axis limits to our focused view
                 ax.legend(loc="upper right", fontsize=9)
             else:
                 print(f"  [WARNING] No raw data found for energy key: {ekey}")
-
-        # Safely remove empty axes using the actual plotted count
-        for idx in range(plotted_count, len(axs_time)):
-            fig_time.delaxes(axs_time[idx])
-
-        # Write out the figure if we actually plotted data
-        if plotted_count > 0:
-            fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
-            fig_time.tight_layout()
-            
-            save_path = timing_dir / f"{mod}_timing_panels.png"
-            fig_time.savefig(save_path, dpi=200)
-            print(f"[SUCCESS] Saved timing plot to: {save_path.resolve()}")
-        else:
-            print(f"[ERROR] Did not generate plot for {mod} because 0 subplots had data.")
-            
-        plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
         # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
