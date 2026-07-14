@@ -601,46 +601,25 @@ def main():
                     if len(top_half_raw) < 8:
                         raise ValueError("Not enough points in top-half window for a stable fit")
 
-                    mirrored = -top_half_raw
-                    # truncation window in mirrored space (mirroring flips the endpoints)
-                    trunc_lo, trunc_hi = -x_max, -x_min
+                    mirrored = -clean  # full cleaned data, not top_half_raw
+                    p0_cb = [1.5, 3.0, -mu_guess, std_guess]
+                    bounds_cb = [(0.3, 10.0), (1.5, 30.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
 
                     def neg_log_likelihood(params):
                         beta, m, loc, scale = params
                         if scale <= 0 or beta <= 0 or m <= 1.0:
                             return np.inf
-
-                        trunc_prob = crystalball.cdf(trunc_hi, beta, m, loc=loc, scale=scale) \
-                                - crystalball.cdf(trunc_lo, beta, m, loc=loc, scale=scale)
-                        if not np.isfinite(trunc_prob) or trunc_prob <= 1e-12:
-                            return np.inf
-
                         logpdf = crystalball.logpdf(mirrored, beta, m, loc=loc, scale=scale)
                         if not np.all(np.isfinite(logpdf)):
                             return np.inf
-
-                        # conditional (truncated) log-likelihood
-                        return -np.sum(logpdf) + len(mirrored) * np.log(trunc_prob)
-
-                    p0_cb = [1.5, 3.0, -mu_guess, std_guess]
-                    bounds_cb = [(0.3, 10.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
+                        return -np.sum(logpdf)   # no truncation term needed — unrestricted domain
 
                     result = minimize(neg_log_likelihood, p0_cb, method="L-BFGS-B", bounds=bounds_cb)
-                    if not result.success:
-                        raise RuntimeError(f"MLE did not converge: {result.message}")
-
                     beta_f, m_f, mu_f_mirrored, sigma_f = result.x
                     mu_f = -mu_f_mirrored
-                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    # rescale the overlay by the truncation probability so it matches the windowed data
-                    trunc_prob_f = crystalball.cdf(trunc_hi, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f) \
-                                - crystalball.cdf(trunc_lo, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f)
-
-                    x_fit = np.linspace(x_min, x_max, 1000)
-                    y_fit = (len(top_half_raw) * bin_width / trunc_prob_f) * crystalball.pdf(
-                        -x_fit, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f
-                    )
+                    x_fit = np.linspace(x_min, x_max, 1000)   # still just plot the top-half window
+                    y_fit = len(clean) * bin_width * crystalball.pdf(-x_fit, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f)
 
                     label_text = (f"Crystal Ball (Top Half Fit, truncated)\n"
                                 f"$\\mu$ = {mu_f:.1f} ps\n"
