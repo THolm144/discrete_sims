@@ -615,6 +615,23 @@ def main():
             else:
                 print(f"  [WARNING] No raw data found for energy key: {ekey}")
 
+        # Safely remove empty axes using the actual plotted count
+        for idx in range(plotted_count, len(axs_time)):
+            fig_time.delaxes(axs_time[idx])
+
+        # Write out the figure if we actually plotted data
+        if plotted_count > 0:
+            fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
+            fig_time.tight_layout()
+            
+            save_path = timing_dir / f"{mod}_timing_panels.png"
+            fig_time.savefig(save_path, dpi=200)
+            print(f"[SUCCESS] Saved timing plot to: {save_path.resolve()}")
+        else:
+            print(f"[ERROR] Did not generate plot for {mod} because 0 subplots had data.")
+            
+        plt.close(fig_time)
+
         # ─────────────────────────────────────────────────────────────────────
         # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
         # ─────────────────────────────────────────────────────────────────────
