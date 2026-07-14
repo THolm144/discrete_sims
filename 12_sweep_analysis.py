@@ -594,13 +594,27 @@ def main():
                 bounds_g = ([0.0, hist_lo, 0.1], [counts.max() * 2.0, hist_hi, (hist_hi - hist_lo)])
 
                 try:
-                    # 1. FIT using the ENTIRE focused range so the optimizer is stable and accurate
-                    popt, _ = curve_fit(straight_gaussian, bin_centers, counts, p0=p0_g, bounds=bounds_g, maxfev=10000)
+                    # 1. Create a mask to isolate bins >= 50% of the peak maximum
+                    fit_mask = counts >= threshold_val
+                    
+                    # Ensure we have enough data points to fit 3 parameters (amp, mu, sigma)
+                    if np.sum(fit_mask) < 3:
+                        raise ValueError("Not enough bins in the top-half window for a stable curve_fit")
+
+                    # 2. FIT using ONLY the top half of the peak
+                    popt, _ = curve_fit(
+                        straight_gaussian, 
+                        bin_centers[fit_mask], 
+                        counts[fit_mask], 
+                        p0=p0_g, 
+                        bounds=bounds_g, 
+                        maxfev=10000
+                    )
                     amp_f, mu_f, sigma_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    # 2. Find the boundaries where the fitted Gaussian is >= 50% of its peak
-                    # For a Gaussian, the 50% threshold (FWHM) is at exactly: mu +/- 1.177 * sigma
+                    # 3. Find the boundaries where the fitted Gaussian is >= 50% of its peak
+                    # For a Gaussian, the FWHM is at exactly: mu +/- 1.177 * sigma
                     x_min = mu_f - 1.177 * sigma_f
                     x_max = mu_f + 1.177 * sigma_f
 
@@ -609,6 +623,7 @@ def main():
                     y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
 
                     label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
+                    
                 except Exception as e:
                     print(f"  [WARNING] Fit failed for {ekey} ({mod}): {e}. Using fallback.")
                     # Fallback: Direct truncated Standard Deviation
