@@ -20,8 +20,6 @@ import matplotlib.cm as cm
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import gaussian_kde
-from scipy.stats import crystalball
-from scipy.optimize import minimize
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -522,6 +520,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
+        # 1. TIMING HIERARCHY — STABLE FIT WITH TRUNCATED VISUALIZATION
         # 1. TIMING HIERARCHY — STABLE FIT WITH DYNAMIC FREEDMAN-DIACONIS BINNING
         # ─────────────────────────────────────────────────────────────────────
         # Ensure the directory physically exists before saving
@@ -554,6 +553,7 @@ def main():
                 if hist_hi <= hist_lo:
                     hist_hi = hist_lo + 50.0
 
+                plot_bins = 80 
                 # Focus our data array to just the plotting range to calculate Freedman-Diaconis binning
                 focused_data = clean[(clean >= hist_lo) & (clean <= hist_hi)]
                 n_points = len(focused_data)
@@ -566,94 +566,58 @@ def main():
                         fd_width = 2.0 * iqr / (n_points ** (1.0 / 3.0))
                     else:
                         fd_width = 3.5 * std_robust / (n_points ** (1.0 / 3.0))
-
+                    
                     # Prevent bins from being ridiculously small or large
                     fd_width = max(2.5, min(fd_width, 15.0)) 
                     plot_bins = max(10, int(np.ceil((hist_hi - hist_lo) / fd_width)))
                 else:
                     plot_bins = 25
 
+                # Plot the underlying data histogram focused on the peak area
                 # Plot the underlying data histogram with dynamic binning
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(hist_lo, hist_hi),
-                            color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
+                                            color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
+
+                # Define standard Gaussian equation inline
+                def straight_gaussian(x, amp, mu, sigma):
+                    return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
-                bin_width = edges[1] - edges[0]
                 threshold_val = counts.max() * 0.5
 
-                # --- Restrict to top-half domain (same logic as your old fallback path) ---
-                fit_mask = counts >= threshold_val
-                if fit_mask.any():
-                    bin_lefts = edges[:-1][fit_mask]
-                    bin_rights = edges[1:][fit_mask]
-                    x_min, x_max = bin_lefts.min(), bin_rights.max()
-                else:
-                    peak_idx = np.argmax(counts)
-                    x_min, x_max = edges[peak_idx], edges[peak_idx + 1]
-
-                top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
+                # Initialize fit parameters based strictly on the peak
                 peak_idx = np.argmax(counts)
                 mu_guess = float(bin_centers[peak_idx])
-                std_guess = max(std_robust * 0.6, 1.0)
+                std_guess = std_robust * 0.6
+
+                p0_g = [float(counts.max()), mu_guess, std_guess]
+                bounds_g = ([0.0, hist_lo, 0.1], [counts.max() * 2.0, hist_hi, (hist_hi - hist_lo)])
 
                 try:
-                    if len(top_half_raw) < 8:
-                        raise ValueError("Not enough points in top-half window for a stable fit")
-
-                    mirrored = -top_half_raw  # tail is on our right, crystalball's tail is on the left
-                    mirrored = -top_half_raw
-                    # truncation window in mirrored space (mirroring flips the endpoints)
-                    trunc_lo, trunc_hi = -x_max, -x_min
-
-                    def neg_log_likelihood(params):
-                        beta, m, loc, scale = params
-                        if scale <= 0 or beta <= 0 or m <= 1.0:
-                            return np.inf
-
-                        trunc_prob = crystalball.cdf(trunc_hi, beta, m, loc=loc, scale=scale) \
-                                - crystalball.cdf(trunc_lo, beta, m, loc=loc, scale=scale)
-                        if not np.isfinite(trunc_prob) or trunc_prob <= 1e-12:
-                            return np.inf
-
-                        logpdf = crystalball.logpdf(mirrored, beta, m, loc=loc, scale=scale)
-                        if not np.all(np.isfinite(logpdf)):
-                            return np.inf
-                        return -np.sum(logpdf)
-
-                        # conditional (truncated) log-likelihood
-                        return -np.sum(logpdf) + len(mirrored) * np.log(trunc_prob)
-
-                    p0_cb = [1.5, 3.0, -mu_guess, std_guess]
-                    bounds_cb = [(0.3, 5.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
-                    bounds_cb = [(0.3, 10.0), (1.5, 15.0), (-hist_hi, -hist_lo), (1.0, (hist_hi - hist_lo))]
-
-                    result = minimize(neg_log_likelihood, p0_cb, method="L-BFGS-B", bounds=bounds_cb)
-                    if not result.success:
-                        raise RuntimeError(f"MLE did not converge: {result.message}")
-
-                    beta_f, m_f, mu_f_mirrored, sigma_f = result.x
-                    mu_f = -mu_f_mirrored
+                    # 1. FIT using the ENTIRE focused range so the optimizer is stable and accurate
+                    popt, _ = curve_fit(straight_gaussian, bin_centers, counts, p0=p0_g, bounds=bounds_g, maxfev=10000)
+                    amp_f, mu_f, sigma_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    # rescale the overlay by the truncation probability so it matches the windowed data
-                    trunc_prob_f = crystalball.cdf(trunc_hi, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f) \
-                                - crystalball.cdf(trunc_lo, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f)
+                    # 2. Find the boundaries where the fitted Gaussian is >= 50% of its peak
+                    # For a Gaussian, the 50% threshold (FWHM) is at exactly: mu +/- 1.177 * sigma
+                    x_min = mu_f - 1.177 * sigma_f
+                    x_max = mu_f + 1.177 * sigma_f
 
+                    # Clip the visualization domain to just this top half
                     x_fit = np.linspace(x_min, x_max, 1000)
-                    y_fit = len(top_half_raw) * bin_width * crystalball.pdf(
-                        -x_fit, beta_f, m_f, loc=-mu_f, scale=sigma_f)
-                    y_fit = (len(top_half_raw) * bin_width / trunc_prob_f) * crystalball.pdf(
-                        -x_fit, beta_f, m_f, loc=mu_f_mirrored, scale=sigma_f
-                    )
+                    y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
 
-                    label_text = (f"Crystal Ball (Top Half Fit)\n")
-                    label_text = (f"Crystal Ball (Top Half Fit, truncated)\n"
-                                f"$\\mu$ = {mu_f:.1f} ps\n"
-                                f"$\\sigma_t$ = {sigma_f:.1f} ps\n"
-                                f"$\\beta$={beta_f:.2f}, m={m_f:.1f}")
-
+                    label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
                 except Exception as e:
-                    print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
+                    print(f"  [WARNING] Fit failed for {ekey} ({mod}): {e}. Using fallback.")
+                    # Fallback: Direct truncated Standard Deviation
+                    fit_mask = counts >= threshold_val
+                    bin_lefts = edges[:-1][fit_mask]
+                    bin_rights = edges[1:][fit_mask]
+                    x_min, x_max = bin_lefts.min(), bin_rights.max() if fit_mask.any() else (hist_lo, hist_hi)
+
+                    top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
                     mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
                     sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
@@ -662,21 +626,10 @@ def main():
                     y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
                     label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
-                    
-                    
-                except Exception as e:
-                    print(f"  [WARNING] Crystal Ball fit failed for {ekey} ({mod}): {e}. Using Gaussian fallback.")
-                    mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
-                    sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
-                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
-
-                    x_fit = np.linspace(x_min, x_max, 1000)
-                    y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
-                    label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
-
+                # Plot the resulting fit strictly within the top-half domain
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
                 ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
-                ax.set_xlim(hist_lo, hist_hi)
+                ax.set_xlim(hist_lo, hist_hi)  # Lock axis limits to our focused view
                 ax.legend(loc="upper right", fontsize=9)
             else:
                 print(f"  [WARNING] No raw data found for energy key: {ekey}")
@@ -769,7 +722,7 @@ def main():
                         label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
 
             ax_main.set_ylabel("Normalized Intensity", fontsize=10)
-            ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12,fontweight="bold")
+            ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12, fontweight="bold")
             ax_main.grid(True, linestyle=":", alpha=0.6)
             ax_main.legend(fontsize=9)
 
