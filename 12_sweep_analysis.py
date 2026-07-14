@@ -172,7 +172,7 @@ def fit_gaussian_to_peak(data, n_bins=40):
     if hi <= lo:
         hi = lo + 1.0
 
-    counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi))
+    counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi), density=True)
     mids = 0.5 * (edges[:-1] + edges[1:])
     smoothed = gaussian_filter1d(counts.astype(float), sigma=2.0)
     peak_idx = int(np.argmax(smoothed))
@@ -192,7 +192,7 @@ def fit_gaussian_to_peak(data, n_bins=40):
 def clean_around_mode(arr, window_ps=500.0):
     if len(arr) == 0:
         return arr
-    counts, edges = np.histogram(arr, bins=40)
+    counts, edges = np.histogram(arr, bins=40, density=True)
     peak_bin = np.argmax(gaussian_filter1d(counts.astype(float), sigma=2.0))
     mode_center = 0.5 * (edges[peak_bin] + edges[peak_bin + 1])
     return arr[np.abs(arr - mode_center) < window_ps]
@@ -520,7 +520,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — STABLE FIT WITH TRUNCATED VISUALIZATION
+       
         # 1. TIMING HIERARCHY — STABLE FIT WITH DYNAMIC FREEDMAN-DIACONIS BINNING
         # ─────────────────────────────────────────────────────────────────────
         # Ensure the directory physically exists before saving
