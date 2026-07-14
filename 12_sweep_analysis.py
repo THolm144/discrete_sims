@@ -521,7 +521,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — STABLE FIT WITH TRUNCATED VISUALIZATION
+        # 1. TIMING HIERARCHY — STABLE FIT WITH DYNAMIC FREEDMAN-DIACONIS BINNING
         # ─────────────────────────────────────────────────────────────────────
         # Ensure the directory physically exists before saving
         timing_dir.mkdir(parents=True, exist_ok=True)
@@ -553,9 +553,26 @@ def main():
                 if hist_hi <= hist_lo:
                     hist_hi = hist_lo + 50.0
 
-                plot_bins = 80 
+                # Focus our data array to just the plotting range to calculate Freedman-Diaconis binning
+                focused_data = clean[(clean >= hist_lo) & (clean <= hist_hi)]
+                n_points = len(focused_data)
 
-                # Plot the underlying data histogram focused on the peak area
+                if n_points > 2:
+                    q75, q25 = np.percentile(focused_data, [75, 25])
+                    iqr = q75 - q25
+                    if iqr > 0:
+                        # Freedman-Diaconis bin width formula
+                        fd_width = 2.0 * iqr / (n_points ** (1.0 / 3.0))
+                    else:
+                        fd_width = 3.5 * std_robust / (n_points ** (1.0 / 3.0))
+                    
+                    # Prevent bins from being ridiculously small or large
+                    fd_width = max(2.5, min(fd_width, 15.0)) 
+                    plot_bins = max(10, int(np.ceil((hist_hi - hist_lo) / fd_width)))
+                else:
+                    plot_bins = 25
+
+                # Plot the underlying data histogram with dynamic binning
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(hist_lo, hist_hi),
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
@@ -581,7 +598,6 @@ def main():
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
                     # 2. Find the boundaries where the fitted Gaussian is >= 50% of its peak
-                    # For a Gaussian, the 50% threshold (FWHM) is at exactly: mu +/- 1.177 * sigma
                     x_min = mu_f - 1.177 * sigma_f
                     x_max = mu_f + 1.177 * sigma_f
 
