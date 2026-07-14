@@ -922,7 +922,7 @@ def main():
     def plot_transverse_profile(transverse_data, module_name):
         from matplotlib.colors import LogNorm
         fig, ax = plt.subplots(figsize=(6, 5))
-        im = ax.imshow(transverse_data, cmap='inferno', norm = LogNorm(vmin = transverse_data.min(), vmax = transverse_data.max()), origin='lower', interpolation='nearest')
+        im = ax.imshow(transverse_data, cmap='inferno', norm = LogNorm(), origin='lower', interpolation='nearest')
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label("Energy Deposited / Dose", rotation=270, labelpad=15)
         ax.set_title(f"Transverse Shower Profile — {module_name}", fontweight='bold')
