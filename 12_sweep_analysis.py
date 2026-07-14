@@ -521,7 +521,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-        # 1. TIMING HIERARCHY — DIRECT CRYSTAL BALL FIT TO TOP-HALF BINS ONLY
+        # 1. TIMING HIERARCHY — DIRECT GAUSSIAN FIT TO TOP-HALF BINS ONLY
         # ─────────────────────────────────────────────────────────────────────
         fig_time, axs_time = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
         axs_time = axs_time.flatten()
@@ -553,13 +553,9 @@ def main():
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(lo, hi),
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
-                def crystal_ball_binned(x, amp, mu, sigma, alpha, n):
-                    zsc = (x - mu) / sigma
-                    gauss = amp * np.exp(-0.5 * zsc ** 2)
-                    a = (n / alpha) ** n * np.exp(-0.5 * alpha ** 2)
-                    b = n / alpha - alpha
-                    tail = amp * a * (b - zsc) ** (-n)
-                    return np.where(zsc > -alpha, gauss, tail)
+                # Define standard Gaussian equation inline
+                def straight_gaussian(x, amp, mu, sigma):
+                    return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
 
@@ -581,7 +577,7 @@ def main():
                     fit_y = counts
                     x_min, x_max = lo, hi
 
-                # Generate a restricted domain for the fit visualization (matches your orange line)
+                # Generate a restricted domain for the fit visualization (matches your orange line target)
                 x_fit = np.linspace(x_min, x_max, 1000)
 
                 # Initialize fit parameters based strictly on the peak
@@ -589,37 +585,26 @@ def main():
                 mu_guess = float(bin_centers[peak_idx])
                 std_guess = float(np.std(clean)) if len(clean) > 1 else 10.0
 
-                p0_cb = [float(counts.max()), mu_guess, std_guess * 0.6, 1.0, 3.0]
-                bounds_cb = ([0.0, lo, 0.1, 0.1, 1.05], [counts.max() * 2.0, hi, (hi - lo), 5.0, 20.0])
+                p0_g = [float(counts.max()), mu_guess, std_guess * 0.6]
+                bounds_g = ([0.0, lo, 0.1], [counts.max() * 2.0, hi, (hi - lo)])
 
                 try:
-                    # Fit Crystal Ball to ONLY the top-half data points
-                    popt, _ = curve_fit(crystal_ball_binned, fit_x, fit_y, p0=p0_cb, bounds=bounds_cb, maxfev=10000)
-                    amp_f, mu_f, sigma_f, alpha_f, n_f = popt
+                    # Fit straight Gaussian to ONLY the top-half data points
+                    popt, _ = curve_fit(straight_gaussian, fit_x, fit_y, p0=p0_g, bounds=bounds_g, maxfev=10000)
+                    amp_f, mu_f, sigma_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    y_fit = crystal_ball_binned(x_fit, amp_f, mu_f, sigma_f, alpha_f, n_f)
-                    label_text = (f"Crystal Ball (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{core}}$ = {sigma_f:.1f} ps")
+                    y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
+                    label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
                 except Exception:
-                    # Fallback 1: Fit a standard Gaussian to ONLY the top-half data points
-                    p0_g = [float(counts.max()), mu_guess, std_guess * 0.6]
-                    bounds_g = ([0.0, lo, 0.1], [counts.max() * 2.0, hi, (hi - lo)])
-                    try:
-                        popt, _ = curve_fit(standard_gaussian, fit_x, fit_y, p0=p0_g, bounds=bounds_g, maxfev=10000)
-                        amp_f, mu_f, sigma_f = popt
-                        master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
+                    # Fallback: Direct truncated Standard Deviation of raw values within the top-half window
+                    top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
+                    mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
+                    sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
+                    master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                        y_fit = standard_gaussian(x_fit, amp_f, mu_f, sigma_f)
-                        label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
-                    except Exception:
-                        # Fallback 2: Direct truncated Standard Deviation of raw values within the top-half window
-                        top_half_raw = clean[(clean >= x_min) & (clean <= x_max)]
-                        mu_f = float(np.mean(top_half_raw)) if len(top_half_raw) > 0 else mu_guess
-                        sigma_f = float(np.std(top_half_raw)) if len(top_half_raw) > 1 else std_guess
-                        master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
-
-                        y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
-                        label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
+                    y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
+                    label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
                 # Plot the resulting fit strictly within the [x_min, x_max] top-half domain
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
@@ -830,7 +815,7 @@ def main():
             )
 
     ax_perf.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
-    ax_perf.set_ylabel(r"BestMinus Timing Resolution $\sigma_t$ (ps)", fontweight="bold")
+    ax_perf.set_ylabel(r"Gaussian Timing Resolution $\sigma_t$ (ps)", fontweight="bold")
     ax_perf.set_title("Unified Performance Horizon — Timing Resolution vs Energy", fontsize=12, fontweight="bold")
     ax_perf.grid(True, linestyle=":", alpha=0.6)
     ax_perf.set_xscale("log")
