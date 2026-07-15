@@ -427,7 +427,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     raw_prompt_profile = prompt_counts / max(1, total_events_processed)
 
     # 4. Correct for attenuation by dividing by LCE (boosts the distant upstream layers)
-    corrected_prompt_profile = raw_prompt_profile / lce
+    corrected_prompt_profile = prompt_counts / lce
     # ─────────────────────────────────────────────────────────────────────────
 
     if verbose_label:
@@ -630,7 +630,7 @@ def main():
             ax_truth.plot(layers_x, truth_prof, marker="s", markersize=4, label=ekey, alpha=0.8)
 
         ax_rec.set_xlabel("LYSO Layer Number", fontweight="bold")
-        ax_rec.set_ylabel("Mean Prompt Photons / Event", fontweight="bold")
+        ax_rec.set_ylabel("Total Prompt Photon Strikes", fontweight="bold")
         ax_rec.set_title("Reconstructed Profile (Timing Window Selection)", fontsize=11, fontweight="bold")
         ax_rec.grid(True, linestyle=":", alpha=0.5)
         ax_rec.legend(title="Beam Energy")
