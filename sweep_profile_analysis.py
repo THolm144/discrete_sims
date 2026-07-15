@@ -372,7 +372,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ── GRAPH 4: Prompt Photon Weighted-Centroid Assignment ──────────────
         # Soft-assign each downstream optical photon to nearby layers using a
         # Gaussian kernel in flight-time space, rather than a hard in/out cut.
-        diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
+        diff = gt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
         weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
         weights[np.abs(diff) > 4.0 * SIGMA_NS] = 0.0   # truncate negligible tails, keeps it cheap
 
