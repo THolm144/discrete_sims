@@ -55,6 +55,22 @@ BOUNCE_FACTOR = {
     "luagce_rc_hex_triple":   1.0,
 }
 
+# Map the effective attenuation length (in mm) to each module type
+EFFECTIVE_ATT_LENGTH = {
+    "radi_cal_energy":        300.0,   # BCF92 bulk (3500mm) scaled by geometric trapping
+    "radi_cal_triple":        300.0,
+    "rc_hex":                 300.0,
+    "rc_hex_triple":          300.0,
+    "dsb1_radi_cal_energy":   800.0,   # DSB1 bulk (10000mm) scaled
+    "dsb1_radi_cal_triple":   800.0,
+    "dsb1_rc_hex":            800.0,
+    "dsb1_rc_hex_triple":     800.0,
+    "luagce_radi_cal_energy": 450.0,   # LuAG bulk (5000mm) scaled
+    "luagce_radi_cal_triple": 450.0,
+    "luagce_rc_hex":          450.0,
+    "luagce_rc_hex_triple":   450.0,
+}
+
 T_OFFSET_NS = {mod: 0.0 for mod in REFRACTIVE_INDEX.keys()}
 
 _GT_LO_NS = 0.0
@@ -277,7 +293,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     for rdir in run_dirs:
         mhd_files = list(rdir.glob("run_Dose_edep.mhd"))
         if not mhd_files:
-            mhd_files = list(rdir.glob("*Dose_edep.mhd"))  # fallback wildcard search
+            mhd_files = list(rdir.glob("*Dose_edep.mhd"))
             
         if mhd_files:
             fine_profile = load_mhd_z_profile(mhd_files[0])
@@ -285,13 +301,13 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                 rebinned = rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm)
                 truth_profiles.append(rebinned)
 
-    # Pre-allocate histograms for raw timing profiles (prevent RAM overflow)
+    # Pre-allocate histograms for raw timing profiles
     gt_bins = np.linspace(0.0, 100.0, 501)
     lt_bins = np.linspace(0.0, 25.0, 501)
     gt_counts = np.zeros(500)
     lt_counts = np.zeros(500)
 
-    # Pre-calculate downstream flight times per layer
+    # Pre-calculate expected downstream flight times per layer (distance / v_eff)
     expected_times = []
     for z_lo, z_hi in lyso_bounds:
         z_center = (z_lo + z_hi) / 2.0
@@ -337,7 +353,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
         if c is not None: dw_q_chunks.append(c)
 
-        # ── GRAPHS 2 & 3: Downstream Strike Spectrums ─────────────────────────
+        # Downstream Strike Spectrums
         m_dw_opt = near_dw & is_optical
         gt_downstream_opt = gt[m_dw_opt]
         lt_downstream_opt = lt[m_dw_opt]
@@ -348,11 +364,12 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         hist_lt, _ = np.histogram(lt_downstream_opt, bins=lt_bins)
         lt_counts += hist_lt
 
-        # ── GRAPH 4: Prompt Photon Reconstruction ─────────────────────────────
+        # ── GRAPH 4: Prompt Photon Counting (Native Spatial Loop) ────────────
         for layer_idx, t_exp in enumerate(expected_times):
-            # Window check: tolerance on calculated flight time
-            prompt_mask = (lt_downstream_opt >= (t_exp - 0.015)) & (lt_downstream_opt <= (t_exp + 0.015))
+            # Window check: ±150 ps tolerance on calculated LocalTime flight time
+            prompt_mask = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
             
+            # Record directly into the forward layer index (no mirroring index here!)
             prompt_counts[layer_idx] += np.sum(prompt_mask)
 
     # Two-ended timing calculations
@@ -364,14 +381,48 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
     # Handle final truth profile scaling and averaging
     if truth_profiles:
-        # Scale each run's fine profile to the average per-event output
         events_per_run = max(1, total_events_processed / len(run_dirs))
         mean_truth_profile = np.mean(truth_profiles, axis=0) / events_per_run
-        # Use sum of deposition values per run for energy analysis
         active_edep_list = [np.sum(p) for p in truth_profiles]
     else:
         mean_truth_profile = np.zeros(_N_LYSO)
         active_edep_list = []
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # NEW: PHYSICAL LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
+    # ─────────────────────────────────────────────────────────────────────────
+    # Map the effective attenuation lengths (in mm) based on your bulk material XML specs
+    effective_att_lengths = {
+        "radi_cal_energy":        300.0,   # BCF92 (3.5m bulk)
+        "radi_cal_triple":        300.0,
+        "rc_hex":                 300.0,
+        "rc_hex_triple":          300.0,
+        "dsb1_radi_cal_energy":   800.0,   # DSB1 (10m bulk)
+        "dsb1_radi_cal_triple":   800.0,
+        "dsb1_rc_hex":            800.0,
+        "dsb1_rc_hex_triple":     800.0,
+        "luagce_radi_cal_energy": 450.0,   # LuAG:Ce (5m bulk)
+        "luagce_radi_cal_triple": 450.0,
+        "luagce_rc_hex":          450.0,
+        "luagce_rc_hex_triple":   450.0,
+    }
+    lambda_eff = effective_att_lengths.get(module_name, 300.0)
+
+    # 1. Distances from each layer center to the active downstream sensor (in mm)
+    distances = np.array([
+        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
+        for z_lo, z_hi in lyso_bounds
+    ])
+
+    # 2. Compute the LCE profile (geometric exponential decay)
+    lce = np.exp(-distances / lambda_eff)
+
+    # 3. Calculate raw prompt profile per event (keeping natural forward order)
+    raw_prompt_profile = prompt_counts / max(1, total_events_processed)
+
+    # 4. Correct for attenuation by dividing by LCE (boosts the distant upstream layers)
+    corrected_prompt_profile = raw_prompt_profile / lce
+    # ─────────────────────────────────────────────────────────────────────────
 
     if verbose_label:
         print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
@@ -384,7 +435,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        "prompt_profile": prompt_counts[::-1] / max(1, total_events_processed), # [::-1] reverses the array to match the physical setup
+        # physical LCE corrected prompt profile
+        "prompt_profile": corrected_prompt_profile, 
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
