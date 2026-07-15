@@ -350,8 +350,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
         # ── GRAPH 4: Prompt Photon Reconstruction ─────────────────────────────
         for layer_idx, t_exp in enumerate(expected_times):
-            # Window check: ±150 ps tolerance on calculated flight time
-            prompt_mask = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
+            # Window check: tolerance on calculated flight time
+            prompt_mask = (lt_downstream_opt >= (t_exp - 0.015)) & (lt_downstream_opt <= (t_exp + 0.015))
             
             prompt_counts[layer_idx] += np.sum(prompt_mask)
 
