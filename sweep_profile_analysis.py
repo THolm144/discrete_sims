@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # ─────────────────────────────────────────────────────────────────────────────
 C_LIGHT_MM_NS = 299.792
 
-SIGMA_NS = 0.04
+SIGMA_NS = 0.08
 
 REFRACTIVE_INDEX = {
     "radi_cal_energy":        1.60,   # BCF92 baseline
