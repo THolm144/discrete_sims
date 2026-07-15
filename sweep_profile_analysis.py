@@ -367,7 +367,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ── GRAPH 4: Prompt Photon Counting (Native Spatial Loop) ────────────
         for layer_idx, t_exp in enumerate(expected_times):
             # Window check: ±150 ps tolerance on calculated LocalTime flight time
-            prompt_mask = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
+            prompt_mask = (lt_downstream_opt >= (t_exp - 0.015)) & (lt_downstream_opt <= (t_exp + 0.015))
             
             # Record directly into the forward layer index (no mirroring index here!)
             prompt_counts[layer_idx] += np.sum(prompt_mask)
