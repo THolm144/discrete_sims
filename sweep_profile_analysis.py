@@ -372,7 +372,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ── GRAPH 4: Prompt Photon Weighted-Centroid Assignment ──────────────
         # Soft-assign each downstream optical photon to nearby layers using a
         # Gaussian kernel in flight-time space, rather than a hard in/out cut.
-        diff = gt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
+        diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
         weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
         weights[np.abs(diff) > 4.0 * SIGMA_NS] = 0.0   # truncate negligible tails, keeps it cheap
 
@@ -398,21 +398,48 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     # NEW: PHYSICAL LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
     # ─────────────────────────────────────────────────────────────────────────
     # Map the effective attenuation lengths (in mm) based on your bulk material XML specs
-    effective_att_lengths = {
-        "radi_cal_energy":        3500.0,   # BCF92 (3.5m bulk)
+    # ─────────────────────────────────────────────────────────────────────────
+    # ANALYTICAL LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
+    # ─────────────────────────────────────────────────────────────────────────
+    # 1. Fetch bulk properties
+    bulk_att_lengths = {
+        "radi_cal_energy":        3500.0,
         "radi_cal_triple":        3500.0,
         "rc_hex":                 3500.0,
         "rc_hex_triple":          3500.0,
-        "dsb1_radi_cal_energy":   10000.0,   # DSB1 (10m bulk)
+        "dsb1_radi_cal_energy":   10000.0,
         "dsb1_radi_cal_triple":   10000.0,
         "dsb1_rc_hex":            10000.0,
         "dsb1_rc_hex_triple":     10000.0,
-        "luagce_radi_cal_energy": 5000.0,   # LuAG:Ce (5m bulk)
+        "luagce_radi_cal_energy": 5000.0,
         "luagce_radi_cal_triple": 5000.0,
         "luagce_rc_hex":          5000.0,
         "luagce_rc_hex_triple":   5000.0,
     }
-    lambda_eff = effective_att_lengths.get(module_name, 3500.0)
+    
+    lambda_bulk = bulk_att_lengths.get(module_name, 3500.0)
+    
+    # 2. Define physics parameters
+    c_speed = 299.792 # mm/ns
+    n_index = REFRACTIVE_INDEX.get(module_name, 1.60)
+    v_medium = c_speed / n_index
+    
+    timing_window_ns = 0.50  # Must match your SIGMA_NS or absolute timing cut
+    characteristic_z = calor_thick_mm / 2.0  # Evaluate at the center of the detector
+    
+    # 3. Calculate Analytical Effective Attenuation
+    inverse_lambda_eff = (1.0 / lambda_bulk) + (1.0 / (characteristic_z + v_medium * timing_window_ns))
+    lambda_eff = 1.0 / inverse_lambda_eff
+    
+    # 4. Apply to distance array
+    distances = np.array([
+        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
+        for z_lo, z_hi in lyso_bounds
+    ])
+    lce = np.exp(-distances / lambda_eff)
+    corrected_prompt_profile = prompt_counts / lce
+
+    
 
     # 1. Distances from each layer center to the active downstream sensor (in mm)
     distances = np.array([
