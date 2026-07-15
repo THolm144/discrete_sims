@@ -57,19 +57,19 @@ BOUNCE_FACTOR = {
 
 # Map the effective attenuation length (in mm) to each module type
 EFFECTIVE_ATT_LENGTH = {
-    "radi_cal_energy":        300.0,   # BCF92 bulk (3500mm) scaled by geometric trapping
-    "radi_cal_triple":        300.0,
-    "rc_hex":                 300.0,
-    "rc_hex_triple":          300.0,
-    "dsb1_radi_cal_energy":   800.0,   # DSB1 bulk (10000mm) scaled
-    "dsb1_radi_cal_triple":   800.0,
-    "dsb1_rc_hex":            800.0,
-    "dsb1_rc_hex_triple":     800.0,
-    "luagce_radi_cal_energy": 450.0,   # LuAG bulk (5000mm) scaled
-    "luagce_radi_cal_triple": 450.0,
-    "luagce_rc_hex":          450.0,
-    "luagce_rc_hex_triple":   450.0,
-}
+    "radi_cal_energy":        3500.0,   # BCF92 (3.5m bulk)
+        "radi_cal_triple":        3500.0,
+        "rc_hex":                 3500.0,
+        "rc_hex_triple":          3500.0,
+        "dsb1_radi_cal_energy":   10000.0,   # DSB1 (10m bulk)
+        "dsb1_radi_cal_triple":   10000.0,
+        "dsb1_rc_hex":            10000.0,
+        "dsb1_rc_hex_triple":     10000.0,
+        "luagce_radi_cal_energy": 5000.0,   # LuAG:Ce (5m bulk)
+        "luagce_radi_cal_triple": 5000.0,
+        "luagce_rc_hex":          5000.0,
+        "luagce_rc_hex_triple":   5000.0,
+    }
 
 T_OFFSET_NS = {mod: 0.0 for mod in REFRACTIVE_INDEX.keys()}
 
@@ -406,7 +406,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "luagce_rc_hex":          5000.0,
         "luagce_rc_hex_triple":   5000.0,
     }
-    lambda_eff = effective_att_lengths.get(module_name, 300.0)
+    lambda_eff = effective_att_lengths.get(module_name, 3500.0)
 
     # 1. Distances from each layer center to the active downstream sensor (in mm)
     distances = np.array([
@@ -436,7 +436,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
         # physical LCE corrected prompt profile
-        "prompt_profile": corrected_prompt_profile,  
+        "prompt_profile": corrected_prompt_profile[::-1],  # Reverse to match physical layer order (upstream to downstream)
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
