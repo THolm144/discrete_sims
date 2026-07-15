@@ -442,7 +442,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
         # physical LCE corrected prompt profile
-        "prompt_profile": corrected_prompt_profile,  # Reverse to match physical layer order (upstream to downstream)
+        "prompt_profile": corrected_prompt_profile[::-1],  # Reverse to match physical layer order (upstream to downstream)
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
