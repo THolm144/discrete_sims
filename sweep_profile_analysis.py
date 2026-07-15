@@ -1,8 +1,8 @@
 """
 unified_profile_analysis.py
 ================================================================================
-Advanced spatial, temporal, and prompt reconstruction analysis for RADiCAL 
-geometry variants, utilizing accurate stepping-level truth extraction 
+Advanced spatial, temporal, and prompt reconstruction analysis for RADiCal 
+geometry variants, utilizing native Gate DoseActor (.mhd) truth extraction 
 and natural timestamp/numerical directory sorting.
 """
 import argparse
@@ -108,79 +108,67 @@ def get_lyso_layer_bounds(lyso_thick, calor_thick):
     return bounds
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEPPING / TRUTH DATA EXTRACTION ENGINE (From RL Unfolding Workflows)
+# DOSEACTOR MHD/RAW PARSER ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
-def extract_stepping_truth(hits_filepath: Path, lyso_bounds):
+def load_mhd_z_profile(mhd_path: Path):
     """
-    Finds the stepping file associated with a hits file, extracts the true 
-    energy depositions (Edep), and returns the total active Edep per event
-    along with the average longitudinal profile binned across the 29 LYSO layers.
+    Parses a Gate DoseActor .mhd header and loads its binary .raw counterpart,
+    projecting the 3D grid into a 1D longitudinal Z-profile.
     """
-    parent_dir = hits_filepath.parent
-    hits_name = hits_filepath.name
-    stepping_file = None
+    if not mhd_path.exists():
+        return None
     
-    # Try direct name replacement first (detector_hits_run_X.root -> stepping_run_X.root)
-    if "detector_hits" in hits_name:
-        step_name = hits_name.replace("detector_hits", "stepping")
-        candidate = parent_dir / step_name
-        if candidate.exists():
-            stepping_file = candidate
-
-    # Fallback to finding any stepping files in the folder
-    if not stepping_file:
-        step_candidates = sorted(parent_dir.glob("stepping_*.root"), key=get_natural_sort_key)
-        if step_candidates:
-            stepping_file = step_candidates[-1]
-
-    # If no separate file, search inside the hits file itself for a stepping tree
-    file_to_query = stepping_file if stepping_file else hits_filepath
-
+    meta = {}
     try:
-        with uproot.open(file_to_query) as f:
-            # Look for stepping or steps tree keys
-            tree_key = next((k for k in f.keys() if any(x in k.lower() for x in ["stepping", "step", "sim"])), None)
-            if not tree_key:
-                return None, None
-
-            tree = f[tree_key]
-            branches = tree.keys()
-            
-            # Map dynamic branch names
-            edep_branch = next((b for b in branches if any(x in b.lower() for x in ["edep", "energydeposit", "step_edep", "energy"])), None)
-            z_branch = next((b for b in branches if any(x in b.lower() for x in ["positionz", "position_z", "step_z", "z"])), None)
-            event_branch = next((b for b in branches if any(x in b.lower() for x in ["eventid", "event_id", "event"])), None)
-
-            if not edep_branch or not z_branch:
-                return None, None
-
-            # Extract arrays
-            read_cols = [edep_branch, z_branch]
-            if event_branch:
-                read_cols.append(event_branch)
-            data = tree.arrays(read_cols, library="np")
-
-            edeps = data[edep_branch]
-            z_coords = data[z_branch]
-            events = data[event_branch] if event_branch else np.zeros_like(edeps)
-
-            # Calculate total active energy deposition per event
-            unique_evs, ev_counts = np.unique(events, return_counts=True)
-            total_edep_per_ev = np.bincount(events.astype(int), weights=edeps)
-            valid_active_edeps = total_edep_per_ev[total_edep_per_ev > 0.0]
-
-            # Reconstruct longitudinal truth profile binned into the 29 LYSO layers
-            layer_energy_profile = np.zeros(_N_LYSO)
-            for idx, (z_lo, z_hi) in enumerate(lyso_bounds):
-                in_layer_mask = (z_coords >= z_lo) & (z_coords <= z_hi)
-                layer_energy_profile[idx] = np.sum(edeps[in_layer_mask])
-
-            # Normalize to mean energy deposited per event
-            layer_energy_profile /= max(1, len(unique_evs))
-            return valid_active_edeps, layer_energy_profile
-
+        with open(mhd_path, "r") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    meta[k.strip()] = v.strip()
+        
+        raw_file = meta.get("ElementDataFile")
+        if not raw_file:
+            return None
+        
+        raw_path = mhd_path.parent / raw_file
+        if not raw_path.exists():
+            return None
+        
+        dim_size = [int(x) for x in meta.get("DimSize", "1 1 1").split()]
+        dtype = np.float32 if meta.get("ElementType") == "MET_FLOAT" else np.float64
+        
+        # Load the raw binary matrix
+        data = np.fromfile(raw_path, dtype=dtype)
+        
+        # Squeeze/reshape array depending on its dimensions
+        if len(dim_size) == 3:
+            # Gate 3D DoseActor matrices are saved in C-contiguous format: (Z, Y, X)
+            data = data.reshape((dim_size[2], dim_size[1], dim_size[0]))
+            # Project/sum over lateral axes (X and Y) to extract the longitudinal profile
+            z_profile = np.sum(data, axis=(1, 2))
+            return z_profile
+        elif len(dim_size) == 1:
+            return data
+        else:
+            return data
     except Exception:
-        return None, None
+        return None
+
+def rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm):
+    """
+    Maps and aggregates a fine-grained longitudinal Z-profile to the 29 physical LYSO layers.
+    """
+    n_bins = len(fine_profile)
+    # Gate centers DoseActor coordinate grid symmetrically around Z = 0
+    z_edges = np.linspace(-calor_thick_mm / 2.0, calor_thick_mm / 2.0, n_bins + 1)
+    z_mids = 0.5 * (z_edges[:-1] + z_edges[1:])
+    
+    layer_profile = np.zeros(len(lyso_bounds))
+    for idx, (z_lo, z_hi) in enumerate(lyso_bounds):
+        mask = (z_mids >= z_lo) & (z_mids <= z_hi)
+        layer_profile[idx] = np.sum(fine_profile[mask])
+        
+    return layer_profile
 
 # ─────────────────────────────────────────────────────────────────────────────
 # COINCIDENCE FIT UTILITIES
@@ -282,7 +270,20 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     e_indices = list({0, 2, 4} if is_hex else {2, 3})
 
     up_q_chunks, dw_q_chunks = [], []
-    run_dirs = set()
+    run_dirs = set(fpath.parent for fpath in hit_files)
+
+    # Extract DoseActor Truth Data (.mhd/.raw files)
+    truth_profiles = []
+    for rdir in run_dirs:
+        mhd_files = list(rdir.glob("run_Dose_edep.mhd"))
+        if not mhd_files:
+            mhd_files = list(rdir.glob("*Dose_edep.mhd"))  # fallback wildcard search
+            
+        if mhd_files:
+            fine_profile = load_mhd_z_profile(mhd_files[0])
+            if fine_profile is not None:
+                rebinned = rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm)
+                truth_profiles.append(rebinned)
 
     # Pre-allocate histograms for raw timing profiles (prevent RAM overflow)
     gt_bins = np.linspace(0.0, 100.0, 501)
@@ -299,21 +300,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
     prompt_counts = np.zeros(_N_LYSO)
     total_events_processed = 0
-    
-    # Active stepping tracking lists
-    active_edep_list = []
-    truth_energy_profiles = []
 
     for fpath in hit_files:
         run_tag = fpath.parent.name
-        run_dirs.add(fpath.parent)
         
-        # Pull Stepping Level Truths (Shower Edep)
-        valid_edeps, truth_profile = extract_stepping_truth(fpath, lyso_bounds)
-        if valid_edeps is not None:
-            active_edep_list.extend(valid_edeps)
-            truth_energy_profiles.append(truth_profile)
-
         try:
             with uproot.open(fpath) as f:
                 tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
@@ -371,11 +361,20 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     common_t_evs = set(up_q) & set(dw_q)
     t_two_end_list = [(dw_q[e] + up_q[e]) / 2.0 for e in common_t_evs]
 
-    mean_truth_profile = np.mean(truth_energy_profiles, axis=0) if truth_energy_profiles else np.zeros(_N_LYSO)
+    # Handle final truth profile scaling and averaging
+    if truth_profiles:
+        # Scale each run's fine profile to the average per-event output
+        events_per_run = max(1, total_events_processed / len(run_dirs))
+        mean_truth_profile = np.mean(truth_profiles, axis=0) / events_per_run
+        # Use sum of deposition values per run for energy analysis
+        active_edep_list = [np.sum(p) for p in truth_profiles]
+    else:
+        mean_truth_profile = np.zeros(_N_LYSO)
+        active_edep_list = []
 
     if verbose_label:
         print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
-              f"Step Edep Mean: {np.mean(active_edep_list) if active_edep_list else 0.0:.2f} MeV")
+              f"DoseActor Truth Mean: {np.mean(active_edep_list) if active_edep_list else 0.0:.2f} MeV/run")
 
     return {
         "active_edep_total": np.array(active_edep_list),
@@ -453,7 +452,7 @@ def main():
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
         if not energy_keys: continue
 
-        # ── GRAPH 1: ENERGY PERFORMANCE (Using True Stepping Level Energy) ────
+        # ── GRAPH 1: ENERGY PERFORMANCE (Using True DoseActor Energy) ─────────
         energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
 
         for ekey in energy_keys:
@@ -461,9 +460,10 @@ def main():
             if E_val <= 0: continue
 
             active_edeps = master_summary[mod][ekey].get("active_edep_total", np.array([]))
-            if len(active_edeps) < 5: continue
+            if len(active_edeps) < 2: continue  # MHD statistics might be lower (one per run)
 
-            _, mu_val, sigma_val = fit_gaussian_to_peak(active_edeps, n_bins=40)
+            # Standard fitting for dose totals
+            _, mu_val, sigma_val = fit_gaussian_to_peak(active_edeps, n_bins=10)
 
             if mu_val > 0:
                 energies_gev.append(E_val)
@@ -483,13 +483,13 @@ def main():
             popt_lin, _ = curve_fit(linear_func, energies_gev, mu_e_list)
 
             ax_lin.errorbar(energies_gev, mu_e_list, yerr=mu_e_err, fmt=mod_markers.get(mod, 'o'),
-                            color=mod_colors.get(mod, 'black'), label=f"Data ({mod})")
+                            color=mod_colors.get(mod, 'black'), label=f"DoseActor ({mod})")
             x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
             ax_lin.plot(x_lin_smooth, linear_func(x_lin_smooth, *popt_lin),
                         color="black", linestyle="--", label=f"Fit: {popt_lin[0]:.3e} MeV/GeV")
 
             ax_lin.set_xlabel("Beam Energy (GeV)", fontweight="bold")
-            ax_lin.set_ylabel("True Active Edep (MeV)", fontweight="bold")
+            ax_lin.set_ylabel("Integrated Dose Energy (MeV)", fontweight="bold")
             ax_lin.set_title("Calorimeter Energy Linearity", fontsize=11, fontweight="bold")
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=9)
@@ -518,7 +518,7 @@ def main():
             ax_res.grid(True, linestyle=":", alpha=0.6)
             ax_res.legend(fontsize=9)
 
-            fig_er.suptitle(f"Active Stepping-Level Calorimetry — {mod}", fontsize=12, fontweight="bold")
+            fig_er.suptitle(f"Active Gate DoseActor Calorimetry — {mod}", fontsize=12, fontweight="bold")
             fig_er.tight_layout()
             fig_er.savefig(energy_dir / f"{mod}_energy_performance.png", dpi=200)
             plt.close(fig_er)
@@ -575,8 +575,8 @@ def main():
         ax_rec.legend(title="Beam Energy")
 
         ax_truth.set_xlabel("LYSO Layer Number", fontweight="bold")
-        ax_truth.set_ylabel("Mean Active Energy Deposited (MeV)", fontweight="bold")
-        ax_truth.set_title("Simulated Truth Shower Profile (Stepping Edep)", fontsize=11, fontweight="bold")
+        ax_truth.set_ylabel("Mean Active Energy Deposited (MeV / Event)", fontweight="bold")
+        ax_truth.set_title("Simulated Truth Shower Profile (DoseActor MHD)", fontsize=11, fontweight="bold")
         ax_truth.grid(True, linestyle=":", alpha=0.5)
         ax_truth.legend(title="Beam Energy")
 
