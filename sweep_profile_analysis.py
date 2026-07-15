@@ -352,7 +352,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         for layer_idx, t_exp in enumerate(expected_times):
             # Window check: ±150 ps tolerance on calculated flight time
             prompt_mask_mirrored = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
-            prompt_mask = - prompt_mask_mirrored  # Invert for downstream timing
+            prompt_mask = prompt_mask_mirrored[::-1]  # Invert for downstream timing
             prompt_counts[layer_idx] += np.sum(prompt_mask)
 
     # Two-ended timing calculations
