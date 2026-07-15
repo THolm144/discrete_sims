@@ -623,19 +623,57 @@ def main():
 
                 # Plot the underlying data histogram focused on the peak area
                 # Plot the underlying data histogram with dynamic binning
+                # Plot the underlying data histogram with dynamic binning
                 counts, edges, _ = ax.hist(clean, bins=plot_bins, range=(hist_lo, hist_hi),
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
+
+                bin_centers = (edges[:-1] + edges[1:]) / 2.0
+                
+                # -----------------------------------------------------------------
+                # NEW: EMPIRICAL FWHM CALCULATION & VISUAL MARKER
+                # -----------------------------------------------------------------
+                max_idx = np.argmax(counts)
+                max_val = counts[max_idx]
+                half_max = max_val / 2.0
+                
+                # Find left crossing
+                left_slice = counts[:max_idx]
+                if len(left_slice) > 0 and np.any(left_slice < half_max):
+                    l_idx = np.where(left_slice < half_max)[0][-1]
+                    x0, y0 = bin_centers[l_idx], counts[l_idx]
+                    x1, y1 = bin_centers[l_idx + 1], counts[l_idx + 1]
+                    x_left = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
+                else:
+                    x_left = bin_centers[0]
+                    
+                # Find right crossing
+                right_slice = counts[max_idx:]
+                if len(right_slice) > 0 and np.any(right_slice < half_max):
+                    r_idx_rel = np.where(right_slice < half_max)[0][0]
+                    r_idx = max_idx + r_idx_rel
+                    x0, y0 = bin_centers[r_idx - 1], counts[r_idx - 1]
+                    x1, y1 = bin_centers[r_idx], counts[r_idx]
+                    x_right = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
+                else:
+                    x_right = bin_centers[-1]
+                    
+                emp_fwhm = x_right - x_left
+                
+                # Draw Empirical FWHM Dimension Line (Blue)
+                ax.annotate('', xy=(x_left, half_max), xytext=(x_right, half_max),
+                            arrowprops=dict(arrowstyle='<|-|>', color='#004488', lw=1.5, shrinkA=0, shrinkB=0))
+                ax.text(bin_centers[max_idx], half_max + max_val * 0.03, f"Emp. FWHM: {emp_fwhm:.1f} ps", 
+                        ha='center', va='bottom', color='#004488', fontsize=8, fontweight='bold')
+                # -----------------------------------------------------------------
 
                 # Define standard Gaussian equation inline
                 def straight_gaussian(x, amp, mu, sigma):
                     return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
-                bin_centers = (edges[:-1] + edges[1:]) / 2.0
                 threshold_val = counts.max() * 0.5
 
                 # Initialize fit parameters based strictly on the peak
-                peak_idx = np.argmax(counts)
-                mu_guess = float(bin_centers[peak_idx])
+                mu_guess = float(bin_centers[max_idx])
                 std_guess = std_robust * 0.6
 
                 p0_g = [float(counts.max()), mu_guess, std_guess]
@@ -645,7 +683,6 @@ def main():
                     # 1. Create a mask to isolate bins >= 50% of the peak maximum
                     fit_mask = counts >= threshold_val
                     
-                    # Ensure we have enough data points to fit 3 parameters (amp, mu, sigma)
                     if np.sum(fit_mask) < 3:
                         raise ValueError("Not enough bins in the top-half window for a stable curve_fit")
 
@@ -661,20 +698,24 @@ def main():
                     amp_f, mu_f, sigma_f = popt
                     master_summary[mod][ekey]["sigma_t_ps"] = sigma_f
 
-                    # 3. Find the boundaries where the fitted Gaussian is >= 50% of its peak
-                    # For a Gaussian, the FWHM is at exactly: mu +/- 1.177 * sigma
+                    # 3. Find boundaries for visualization and Fit FWHM marker
                     x_min = mu_f - 1.177 * sigma_f
                     x_max = mu_f + 1.177 * sigma_f
 
-                    # Clip the visualization domain to just this top half
                     x_fit = np.linspace(x_min, x_max, 1000)
                     y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
 
-                    label_text = f"Gaussian (Top Half Fit)\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_t$ = {sigma_f:.1f} ps"
+                    label_text = f"Gaussian (Top Half Fit)\n$\\sigma_t$ = {sigma_f:.1f} ps"
+                    
+                    # Draw Fit FWHM Dimension Line (Black, dashed) slightly lower to prevent overlap
+                    fit_half_max = amp_f / 2.0
+                    ax.annotate('', xy=(x_min, fit_half_max * 0.95), xytext=(x_max, fit_half_max * 0.95),
+                                arrowprops=dict(arrowstyle='<|-|>', color='black', lw=1.2, linestyle='--', shrinkA=0, shrinkB=0))
+                    ax.text(mu_f, fit_half_max * 0.95 - max_val * 0.05, f"Fit FWHM: {(2.355*sigma_f):.1f} ps", 
+                            ha='center', va='top', color='black', fontsize=8)
                     
                 except Exception as e:
                     print(f"  [WARNING] Fit failed for {ekey} ({mod}): {e}. Using fallback.")
-                    # Fallback: Direct truncated Standard Deviation
                     fit_mask = counts >= threshold_val
                     bin_lefts = edges[:-1][fit_mask]
                     bin_rights = edges[1:][fit_mask]
@@ -687,12 +728,11 @@ def main():
 
                     x_fit = np.linspace(x_min, x_max, 1000)
                     y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
-                    label_text = f"RMS Fallback\n$\\mu$ = {mu_f:.1f} ps\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
+                    label_text = f"RMS Fallback\n$\\sigma_{{top\\,half}}$ = {sigma_f:.1f} ps"
 
                 # Plot the resulting fit strictly within the top-half domain
                 ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=2.5, label=label_text)
-                ax.axhline(threshold_val, color="black", linestyle=":", alpha=0.3, label="Fit Threshold (50%)")
-                ax.set_xlim(hist_lo, hist_hi)  # Lock axis limits to our focused view
+                ax.set_xlim(hist_lo, hist_hi)
                 ax.legend(loc="upper right", fontsize=9)
             else:
                 print(f"  [WARNING] No raw data found for energy key: {ekey}")
