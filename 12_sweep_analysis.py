@@ -204,6 +204,51 @@ def extract_numerical_energy(label: str) -> float:
         return float(''.join(c for c in label if c.isdigit() or c == '.'))
     except ValueError:
         return 0.0
+    
+def calculate_empirical_fwhm(data, bins=100):
+    """
+    Calculates the Full-Width at Half-Maximum (FWHM) empirically from data 
+    without applying any analytical fits. Uses linear interpolation between 
+    bin centers crossing the half-maximum threshold.
+    """
+    if len(data) < 10:
+        return 0.0
+
+    med = float(np.median(data))
+    std = float(np.std(data))
+    
+    # Restrict to a reasonable window to avoid extreme outliers stretching the bins
+    hist_lo, hist_hi = med - 4 * std, med + 4 * std
+    
+    counts, edges = np.histogram(data, bins=bins, range=(hist_lo, hist_hi))
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    
+    max_idx = np.argmax(counts)
+    max_val = counts[max_idx]
+    half_max = max_val / 2.0
+    
+    # 1. Find Left Crossing
+    left_slice = counts[:max_idx]
+    if len(left_slice) == 0 or not np.any(left_slice < half_max):
+        x_left = centers[0]
+    else:
+        l_idx = np.where(left_slice < half_max)[0][-1]
+        x0, y0 = centers[l_idx], counts[l_idx]
+        x1, y1 = centers[l_idx + 1], counts[l_idx + 1]
+        x_left = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
+        
+    # 2. Find Right Crossing
+    right_slice = counts[max_idx:]
+    if len(right_slice) == 0 or not np.any(right_slice < half_max):
+        x_right = centers[-1]
+    else:
+        r_idx_rel = np.where(right_slice < half_max)[0][0]
+        r_idx = max_idx + r_idx_rel
+        x0, y0 = centers[r_idx - 1], counts[r_idx - 1]
+        x1, y1 = centers[r_idx], counts[r_idx]
+        x_right = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
+        
+    return float(x_right - x_left)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
@@ -915,6 +960,77 @@ def main():
     )
     fig_perf.savefig(summary_dir / "timing_resolution_vs_energy.png", dpi=220, bbox_inches="tight")
     plt.close(fig_perf)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 4B. UNIFIED PERFORMANCE HORIZON — EMPIRICAL FWHM (NO FIT)
+    # ─────────────────────────────────────────────────────────────────────
+    fig_fwhm, ax_fwhm = plt.subplots(figsize=(10, 7))
+    any_fwhm_points = False
+
+    for mod in modules:
+        if mod not in master_summary or not master_summary[mod]:
+            continue
+
+        energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
+        if not energy_keys:
+            continue
+
+        x_energy_fwhm, y_fwhm = [], []
+        for ekey in energy_keys:
+            raw_data = master_summary[mod][ekey].get("raw_bm_data", np.array([]))
+            n_ev = master_summary[mod][ekey].get("n_t_coincidences", 0)
+            
+            if n_ev < 8 or len(raw_data) < 10:
+                continue
+                
+            # Clean outliers using your existing methodology
+            clean_data = clean_around_mode(raw_data, window_ps=500.0)
+            fwhm_val = calculate_empirical_fwhm(clean_data, bins=80)
+            
+            if fwhm_val > 0:
+                x_energy_fwhm.append(extract_numerical_energy(ekey))
+                y_fwhm.append(fwhm_val)
+
+        if x_energy_fwhm:
+            any_fwhm_points = True
+            ax_fwhm.plot(
+                x_energy_fwhm, y_fwhm, 
+                marker=mod_markers.get(mod, 'o'), 
+                color=mod_colors.get(mod, 'black'),
+                linestyle=mod_linestyles.get(mod, '-'),  
+                linewidth=2, 
+                markersize=7, 
+                label=mod
+            )
+
+    ax_fwhm.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
+    ax_fwhm.set_ylabel("Empirical FWHM (ps)", fontweight="bold")
+    ax_fwhm.set_title("Unified Performance Horizon — Empirical FWHM vs Energy", fontsize=12, fontweight="bold")
+    ax_fwhm.grid(True, linestyle=":", alpha=0.6)
+    ax_fwhm.set_xscale("log")
+    ax_fwhm.set_xticks([25, 50, 100, 200])
+    ax_fwhm.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+
+    if any_fwhm_points:
+        ax_fwhm.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize=9, frameon=True)
+    else:
+        ax_fwhm.text(0.5, 0.5, "No modules had sufficient statistics", ha='center', va='center', transform=ax_fwhm.transAxes)
+
+    fig_fwhm.tight_layout()
+
+    # Re-use the existing visual encoding key text
+    fig_fwhm.text(
+        1.02, 0.15, key_text, 
+        fontsize=9, 
+        family='monospace', 
+        verticalalignment='bottom',
+        bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', edgecolor='#d3d3d3', alpha=0.9)
+    )
+    
+    fwhm_save_path = summary_dir / "timing_fwhm_vs_energy.png"
+    fig_fwhm.savefig(fwhm_save_path, dpi=220, bbox_inches="tight")
+    plt.close(fig_fwhm)
+    print(f"[SUCCESS] Saved Empirical FWHM vs Energy plot to: {fwhm_save_path.resolve()}")
 
     # ─────────────────────────────────────────────────────────────────────
     # 5. Plot Transverse Shower Profiles for Each Module and Energy
