@@ -41,18 +41,18 @@ REFRACTIVE_INDEX = {
 }
 
 BOUNCE_FACTOR = {
-    "radi_cal_energy":        0.92,
-    "radi_cal_triple":        0.92,
-    "rc_hex":                 0.92,
-    "rc_hex_triple":          0.92,
-    "dsb1_radi_cal_energy":   0.92,
-    "dsb1_radi_cal_triple":   0.92,
-    "dsb1_rc_hex":            0.92,
-    "dsb1_rc_hex_triple":     0.92,
-    "luagce_radi_cal_energy": 0.92,
-    "luagce_radi_cal_triple": 0.92,
-    "luagce_rc_hex":          0.92,
-    "luagce_rc_hex_triple":   0.92,
+    "radi_cal_energy":        1.0,
+    "radi_cal_triple":        1.0,
+    "rc_hex":                 1.0,
+    "rc_hex_triple":          1.0,
+    "dsb1_radi_cal_energy":   1.0,
+    "dsb1_radi_cal_triple":   1.0,
+    "dsb1_rc_hex":            1.0,
+    "dsb1_rc_hex_triple":     1.0,
+    "luagce_radi_cal_energy": 1.0,
+    "luagce_radi_cal_triple": 1.0,
+    "luagce_rc_hex":          1.0,
+    "luagce_rc_hex_triple":   1.0,
 }
 
 T_OFFSET_NS = {mod: 0.0 for mod in REFRACTIVE_INDEX.keys()}
@@ -351,7 +351,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ── GRAPH 4: Prompt Photon Reconstruction ─────────────────────────────
         for layer_idx, t_exp in enumerate(expected_times):
             # Window check: ±150 ps tolerance on calculated flight time
-            prompt_mask = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
+            prompt_mask_mirrored = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
+            prompt_mask = - prompt_mask_mirrored  # Invert for downstream timing
             prompt_counts[layer_idx] += np.sum(prompt_mask)
 
     # Two-ended timing calculations
@@ -541,6 +542,8 @@ def main():
         plt.close(fig_gt)
 
         # ── GRAPH 3: LOCAL TIME VS STRIP STRIKES ──────────────────────────────
+        
+        
         fig_lt, ax_lt = plt.subplots(figsize=(8, 5))
         for ekey in energy_keys:
             counts = master_summary[mod][ekey]["lt_counts"]
