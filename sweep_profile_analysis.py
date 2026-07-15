@@ -357,7 +357,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if c is not None: dw_q_chunks.append(c)
 
         # Downstream Strike Spectrums
-        m_dw_opt = near_dw & is_optical
+        is_e = np.isin(channels, e_indices)
+        m_dw_opt = near_dw & is_optical & is_e   # only channels with full-depth active fiber
         gt_downstream_opt = gt[m_dw_opt]
         lt_downstream_opt = lt[m_dw_opt]
 
