@@ -25,6 +25,8 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # ─────────────────────────────────────────────────────────────────────────────
 C_LIGHT_MM_NS = 299.792
 
+SIGMA_NS = 0.04
+
 REFRACTIVE_INDEX = {
     "radi_cal_energy":        1.60,   # BCF92 baseline
     "radi_cal_triple":        1.60,
@@ -316,7 +318,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
     prompt_counts = np.zeros(_N_LYSO)
     total_events_processed = 0
-
+    
+    expected_times_arr = np.array(expected_times)
     for fpath in hit_files:
         run_tag = fpath.parent.name
         
@@ -365,12 +368,14 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         lt_counts += hist_lt
 
         # ── GRAPH 4: Prompt Photon Counting (Native Spatial Loop) ────────────
-        for layer_idx, t_exp in enumerate(expected_times):
-            # Window check: ±150 ps tolerance on calculated LocalTime flight time
-            prompt_mask = (lt_downstream_opt >= (t_exp - 0.001)) & (lt_downstream_opt <= (t_exp + 0.001))
-            
-            # Record directly into the forward layer index (no mirroring index here!)
-            prompt_counts[layer_idx] += np.sum(prompt_mask)
+        # ── GRAPH 4: Prompt Photon Weighted-Centroid Assignment ──────────────
+        # Soft-assign each downstream optical photon to nearby layers using a
+        # Gaussian kernel in flight-time space, rather than a hard in/out cut.
+        diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
+        weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
+        weights[np.abs(diff) > 4.0 * SIGMA_NS] = 0.0   # truncate negligible tails, keeps it cheap
+
+        prompt_counts += weights.sum(axis=0)
 
     # Two-ended timing calculations
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
