@@ -351,8 +351,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ── GRAPH 4: Prompt Photon Reconstruction ─────────────────────────────
         for layer_idx, t_exp in enumerate(expected_times):
             # Window check: ±150 ps tolerance on calculated flight time
-            prompt_mask_mirrored = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
-            prompt_mask = prompt_mask_mirrored[::-1]  # Invert for downstream timing
+            prompt_mask = (lt_downstream_opt >= (t_exp - 0.15)) & (lt_downstream_opt <= (t_exp + 0.15))
+            
             prompt_counts[layer_idx] += np.sum(prompt_mask)
 
     # Two-ended timing calculations
@@ -384,7 +384,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        "prompt_profile": prompt_counts / max(1, total_events_processed),
+        "prompt_profile": prompt_counts[::-1] / max(1, total_events_processed), # [::-1] reverses the array to match the physical setup
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
