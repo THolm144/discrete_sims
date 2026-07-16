@@ -5,9 +5,10 @@ run_integrated_attenuation.py
 A completely self-contained, high-fidelity optical attenuation simulation 
 for the RADiCAL capillary structure.
 
-Corrected:
-- Swapped '.parent' to '.mother' to properly nest Geant4 geometries and fix
-  all overlap failures.
+Updates:
+- Fixed material naming mismatch ('LuAg_Ce_WLS' -> 'LuAgCe')
+- Automatically links to your local 'GateMaterials.db' 
+- Built-in dynamic database fallback matching your exact configuration 
 ================================================================================
 """
 
@@ -43,7 +44,7 @@ MATERIALS_XML = """<?xml version="1.0" encoding="UTF-8"?>
       </propertyvector>
     </propertiestable>
   </material>
-  <material name="LuAg_Ce_WLS">
+  <material name="LuAgCe">
     <propertiestable>
       <property name="WLSTIMECONSTANT" value="70" unit="ns"/>
       <propertyvector name="RINDEX" energyunit="eV">
@@ -405,67 +406,145 @@ SURFACES_XML = """<?xml version="1.0" encoding="utf-8"?>
 
 WLS_PEAK_ENERGY_EV = {
     "DSB1": 2.51,         # 494nm
-    "LuAg_Ce_WLS": 2.31,  # 535nm
+    "LuAgCe": 2.31,       # 535nm (Matches your LuAgCe DB composition)
     "BCF92": 2.52         # 492nm
 }
 
-N_PHOTONS_PER_RUN = 20000  # Number of optical photons injected per step
-THREADS = 8                # CPU threads to allocate local runs
+N_PHOTONS_PER_RUN = 20000  # Total optical photons generated
+THREADS = 8                # Execution threads
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. GEOMETRY BUILDER (FIXED)
+# 3. ROBUST DATABASE ROUTING & FALLBACK
+# ─────────────────────────────────────────────────────────────────────────────
+
+def handle_material_database(sim):
+    """
+    Hooks directly into your existing GateMaterials.db file.
+    If it isn't found locally, it automatically writes a perfect fallback file.
+    """
+    script_dir = Path(__file__).resolve().parent
+    db_paths = [script_dir / "GateMaterials.db", Path("GateMaterials.db")]
+    
+    selected_db = None
+    for p in db_paths:
+        if p.exists():
+            selected_db = p
+            break
+            
+    if selected_db:
+        sim.volume_manager.add_material_database(str(selected_db))
+        return None  # No cleanup needed
+        
+    # Write dynamic fallback containing your exact database configurations
+    fallback_content = """[Elements]
+Hydrogen:   S= H   ; Z=  1. ; A=   1.01  g/mole
+Carbon:     S= C   ; Z=  6. ; A=  12.01  g/mole
+Nitrogen:   S= N   ; Z=  7. ; A=  14.01  g/mole
+Oxygen:     S= O   ; Z=  8. ; A=  16.00  g/mole
+Aluminum:   S= Al  ; Z= 13. ; A=  26.98  g/mole
+Silicon:    S= Si  ; Z= 14. ; A=  28.09  g/mole
+Argon:      S= Ar  ; Z= 18. ; A=  39.95  g/mole
+Yttrium:    S= Y   ; Z= 39. ; A=  88.91  g/mole
+Cerium:     S= Ce  ; Z= 58. ; A= 140.12  g/mole
+Lutetium:   S= Lu  ; Z= 71. ; A= 174.97  g/mole
+Tungsten:   S= W   ; Z= 74. ; A= 183.84  g/mole
+
+[Materials]
+Vacuum: d=0.000001 mg/cm3 ; n=1
+        +el: name=Hydrogen   ; n=1
+
+Air: d=1.29 mg/cm3 ; n=4 ; state=gas
+        +el: name=Nitrogen   ; f=0.755268
+        +el: name=Oxygen     ; f=0.231781
+        +el: name=Argon      ; f=0.012827
+        +el: name=Carbon     ; f=0.000124
+
+Tungsten: d=19.3 g/cm3 ; n=1 ; state=solid
+        +el: name=auto       ; n=1
+
+Quartz: d=2.2 g/cm3; n=2 ; state=Solid
+        +el: name=Silicon    ; n=1
+        +el: name=Oxygen     ; n=2
+
+LYSO:   d=7.36 g/cm3; n=4 ; state=Solid
+        +el: name=Lutetium ; f=0.714467891
+        +el: name=Yttrium  ; f=0.04033805
+        +el: name=Silicon  ; f=0.063714272
+        +el: name=Oxygen   ; f=0.181479788
+
+DSB1: d=0.959 g/cm3; n=2 ; state=Liquid
+        +el: name=Carbon   ; f=0.90
+        +el: name=Hydrogen ; f=0.10
+
+LuAgCe: d=6.73 g/cm3; n=4 ; state=Solid
+        +el: name=Lutetium ; f=0.6139
+        +el: name=Aluminum ; f=0.1585
+        +el: name=Oxygen   ; f=0.2255
+        +el: name=Cerium   ; f=0.0021
+
+ScintX: d=1.10 g/cm3 ; n=4 ; state=Solid
+        +el: name=Carbon   ; n=7
+        +el: name=Hydrogen ; n=8
+        +el: name=Oxygen   ; n=1
+        +el: name=Silicon  ; n=1
+
+Tyvek: d=0.96 g/cm3 ; n=2 ; state=Solid
+        +el: name=Carbon     ; n=2
+
+BCF92: d=1.05 g/cm3 ; n=2 ; state=Solid
+        +el: name=Carbon     ; n=8
+        +el: name=Hydrogen   ; n=8
+
+Galactic: d=1e-18 g/cm3 ; n=1 ; state=Gas
+        +el: name=Hydrogen   ; n=1
+"""
+    temp_db_path = Path("temp_materials.db")
+    temp_db_path.write_text(fallback_content)
+    sim.volume_manager.add_material_database(str(temp_db_path))
+    return temp_db_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. GEOMETRY BUILDER
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_capillary_world(sim, length_mm, wls_material, units):
     """
-    Constructs a high-fidelity isolated capillary system embedded inside
-    an absorbing Tungsten matrix. Fixed hierarchal mother-daughter properties.
+    Constructs a capillary detector setup suspended in an absorbing Tungsten matrix.
     """
-    script_dir = Path(__file__).resolve().parent
-    db_path = script_dir / "GateMaterials.db"
-    
-    if db_path.exists():
-        db_str = str(db_path)
-        loaded_dbs = [str(f) for f in sim.volume_manager.material_database.filenames]
-        if db_str not in loaded_dbs and "GateMaterials.db" not in [Path(f).name for f in loaded_dbs]:
-            sim.volume_manager.add_material_database(db_str)
-    else:
-        print(f"[Warning] Could not find local GateMaterials.db at: {db_path}")
-
-    # 1. Expand the master world coordinates
     world = sim.world
     world.size = [30.0 * units.mm, 30.0 * units.mm, (length_mm + 20.0) * units.mm]
     world.material = "Air"
     
-    # 2. Surround the capillary with dense, absorbent Tungsten
+    # Absorber Envelope
     absorber = sim.add_volume("Box", "absorber")
-    absorber.mother = "world"                  # FIXED: Swapped from .parent to .mother
+    absorber.mother = "world"
     absorber.material = "Tungsten"
     absorber.size = [10.0 * units.mm, 10.0 * units.mm, length_mm * units.mm]
     absorber.translation = [0, 0, 0]
     
-    # 3. Nest the Quartz capillary shell inside the Tungsten absorber
+    # Quartz Capillary
     quartz_sleeve = sim.add_volume("Tubs", "quartz_sleeve")
-    quartz_sleeve.mother = "absorber"          # FIXED: Swapped from .parent to .mother
+    quartz_sleeve.mother = "absorber"
     quartz_sleeve.material = "Quartz"
     quartz_sleeve.rmax = 0.5 * units.mm
     quartz_sleeve.rmin = 0.0 * units.mm
     quartz_sleeve.dz = (length_mm / 2.0) * units.mm
     quartz_sleeve.translation = [0, 0, 0]
     
-    # 4. Nest the Core wavelength shifting (WLS) filament inside the Quartz
+    # Wavelength Shifting (WLS) active fiber core
     wls_core = sim.add_volume("Tubs", "wls_core")
-    wls_core.mother = "quartz_sleeve"          # FIXED: Swapped from .parent to .mother
+    wls_core.mother = "quartz_sleeve"
     wls_core.material = wls_material
     wls_core.rmax = 0.3 * units.mm
     wls_core.rmin = 0.0 * units.mm
     wls_core.dz = (length_mm / 2.0) * units.mm
     wls_core.translation = [0, 0, 0]
     
-    # 5. Position the Downstream Sensor directly inside the World (outside the absorber)
+    # Active Downstream Silicon PM Surface
     sipm_down = sim.add_volume("Tubs", "sipm_down")
-    sipm_down.mother = "world"                 # FIXED: Swapped from .parent to .mother
+    sipm_down.mother = "world"
     sipm_down.material = "G4_Si"
     sipm_down.rmax = 0.5 * units.mm
     sipm_down.rmin = 0.0 * units.mm
@@ -474,13 +553,12 @@ def build_capillary_world(sim, length_mm, wls_material, units):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. CORE ENGINE WORKER (EXECUTED BY SPAWNED SUBPROCESS)
+# 5. CORE ENGINE WORKER (EXECUTED BY SPAWNED SUBPROCESS)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def execute_actual_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
+def execute_actual_simulation(length_mm, wls_material, z_offset_mm, peak_val):
     """
-    Constructs and starts the simulation thread. Since Geant4 utilizes an un-destroyable
-    C++ singleton system in memory, this is handled within spawned worker processes.
+    Configures and runs an isolated, single simulation point.
     """
     sim = gate.Simulation()
     sim.output_dir = "temp_attenuation_run"
@@ -489,17 +567,16 @@ def execute_actual_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
     
     units = gate.g4_units
     
-    # Load custom materials dynamically
-    if os.path.exists("GateMaterials.db"):
-        sim.volume_manager.add_material_database("GateMaterials.db")
-        
+    # Connect standard/fallback materials database
+    temp_db_path = handle_material_database(sim)
+    
     build_capillary_world(sim, length_mm, wls_material, units)
     
-    # Inject isotropic optical photons inside the WLS core at the dynamic Z offset
+    # Optical Isotropic Source Configuration
     source = sim.add_source("GenericSource", "isotropic_optical_source")
     source.particle = "opticalphoton"
-    source.polarization = [1, 0, 0]  # Suppresses ZeroPolarization warning block
-    source.energy.mono = peak_ev * units.eV
+    source.polarization = [1, 0, 0]  # Avoid G4ZeroPolarization warning loops
+    source.energy.mono = peak_val * units.eV
     source.position.type = "cylinder"
     source.position.radius = 0.28 * units.mm
     source.position.dz = 0.1 * units.mm
@@ -507,13 +584,13 @@ def execute_actual_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
     source.direction.type = "iso"
     source.n = max(1, int(N_PHOTONS_PER_RUN / THREADS))
     
-    # Assign physics list and bind custom property tables
+    # Optical Properties Setup
     sim.physics_manager.physics_list_name = "G4EmStandardPhysics_option4"
     sim.physics_manager.special_physics_constructors.G4OpticalPhysics = True
     sim.physics_manager.optical_properties_file = "Materials_Att.xml"
     sim.physics_manager.surface_properties_file = "Surfaces_Att.xml"
     
-    # Configure detectors and count output hits
+    # Signal Recording
     hits_down = sim.add_actor("PhaseSpaceActor", "hits_down")
     hits_down.attached_to = "sipm_down"
     hits_down.output_filename = "hits_down.root"
@@ -523,31 +600,31 @@ def execute_actual_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
     hits_down.filter = (F.ParticleName == "opticalphoton")
     hits_down.attributes = ["EventID", "GlobalTime"]
     
-    # Absorb photons striking the SiPM immediately to prevent back-reflection loops
+    # Photon Lifespan Controls (Optimization)
     killer = sim.add_actor("KillActor", "sipm_kill")
     killer.attached_to = "sipm_down"
     killer.filter = (F.ParticleName == "opticalphoton")
     
-    # Global optical photon lifetime safety limit (50ns) to kill trapped infinite modes
     global_cut = sim.add_actor("KillActor", "optical_time_breaker")
     global_cut.attached_to = "world"
     global_cut.filter = (F.ParticleName == "opticalphoton") & (F.GlobalTime > 50.0 * units.ns)
     
-    # Run simulation
     sim.run()
+    
+    # Fallback DB Cleanup
+    if temp_db_path and temp_db_path.exists():
+        temp_db_path.unlink()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. SUBPROCESS ORCHESTRATOR
+# 6. SUBPROCESS ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
+def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_val):
     """
-    Bypasses Geant4's SimulationEngine singleton crash by spinning up
-    individual clean Python processes for every iteration point.
+    Launches points inside dynamic subprocesses to avoid G4 RunManager collisions.
     """
     import subprocess
-    
     cmd = [
         sys.executable,
         __file__,
@@ -555,20 +632,18 @@ def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
         str(length_mm),
         str(wls_material),
         str(z_offset_mm),
-        str(peak_ev)
+        str(peak_val)
     ]
-    
-    # Synchronously blocks parent until output is generated cleanly
     subprocess.run(cmd, check=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. DATA EXTRACTION & ATTENUATION FITTING
+# 7. DATA EXTRACTION & ATTENUATION FITTING
 # ─────────────────────────────────────────────────────────────────────────────
 
 def extract_sipm_hits():
     """
-    Parses active hits directly from the output ROOT tree.
+    Parses total registered hits from the output root files.
     """
     root_path = Path("temp_attenuation_run/hits_down.root")
     if not root_path.exists():
@@ -582,19 +657,17 @@ def extract_sipm_hits():
             tree = file[tree_name]
             return len(tree["EventID"].array(library="np"))
     except Exception as e:
-        print(f"  [!] Failed to read hits: {e}")
+        print(f"  [!] Failed to extract hits: {e}")
         return 0
 
 
 def calculate_attenuation_length(distances_mm, hit_counts):
     """
-    Solves for effective attenuation length using a log-linear fit:
-    ln(I) = ln(I_0) - d / lambda_eff
+    Computes effective attenuation length (1/e slope) via linear fit.
     """
     d = np.array(distances_mm, dtype=float)
     I = np.array(hit_counts, dtype=float)
     
-    # Only fit parameters where hits were successfully detected
     valid = (d > 0) & (I > 0)
     if np.sum(valid) < 2:
         return np.nan, np.nan, np.nan
@@ -607,7 +680,6 @@ def calculate_attenuation_length(distances_mm, hit_counts):
     lambda_eff_mm = -1.0 / slope if slope != 0 else np.nan
     I0 = np.exp(intercept)
     
-    # Determine R²
     y_pred = slope * d_fit + intercept
     ss_res = np.sum((y_fit - y_pred) ** 2)
     ss_tot = np.sum((y_fit - np.mean(y_fit)) ** 2)
@@ -617,7 +689,7 @@ def calculate_attenuation_length(distances_mm, hit_counts):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. MAIN CONTROLLER & SWEEP EXECUTION LOOP
+# 8. MAIN SCRIPT ENTRYPOINT
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -625,13 +697,14 @@ def main():
     print("      Executing Integrated Calibration Attenuation Sweep Core           ")
     print("========================================================================")
     
-    # Write dynamic configuration profiles
+    # Save optical profiles dynamically
     Path("Materials_Att.xml").write_text(MATERIALS_XML)
     Path("Surfaces_Att.xml").write_text(SURFACES_XML)
-    print("[✓] Dynamic property configuration files initialized locally.")
+    print("[✓] Dynamic XML property configurations compiled successfully.")
     
-    wls_materials = ["DSB1", "LuAg_Ce_WLS", "BCF92"]
-    lengths = [120, 360]  # Normal (12cm) vs. Triple-Stack (36cm)
+    # Use exact database material names
+    wls_materials = ["DSB1", "LuAgCe", "BCF92"]
+    lengths = [120, 360]
     
     final_results = {}
     
@@ -643,7 +716,6 @@ def main():
             print(f"\n[*] Processing configuration: Material={mat} | Length={L}mm")
             print("-" * 72)
             
-            # Construct a wide spatial sweep (from deep in the core up to the downstream end)
             half_L = L / 2.0
             z_points = np.linspace(-0.8 * half_L, 0.8 * half_L, 6)
             
@@ -651,21 +723,17 @@ def main():
             hit_counts = []
             
             for idx, z_val in enumerate(z_points):
-                # Calculate the exact distance to the downstream SiPM surface
                 dist_to_sensor = half_L - z_val
                 distances_mm.append(dist_to_sensor)
                 
-                # Execute simulated run
                 shutil.rmtree("temp_attenuation_run", ignore_errors=True)
                 run_point_simulation(L, mat, z_val, peak_ev)
                 
-                # Retrieve stats
                 hits = extract_sipm_hits()
                 hit_counts.append(hits)
                 
                 print(f"  -> Run {idx+1}/6: Source Z={z_val:6.1f} mm | Distance to SiPM={dist_to_sensor:6.1f} mm | Hits Collected={hits:6d}")
                 
-            # Compute exponential metrics
             lambda_mm, I0, r_sq = calculate_attenuation_length(distances_mm, hit_counts)
             final_results[mat][L] = {
                 "lambda_mm": lambda_mm,
@@ -676,9 +744,9 @@ def main():
             lambda_cm_str = f"{lambda_mm / 10.0:6.2f} cm" if not np.isnan(lambda_mm) else "Failed Fit"
             print(f"  [✓] Fit Completed: Effective Attenuation Length = {lambda_cm_str} (R² = {r_sq:.5f})")
             
-    # Cleaning environment footprint
+    # Environmental cleanup
     shutil.rmtree("temp_attenuation_run", ignore_errors=True)
-    for f in ["Materials_Att.xml", "Surfaces_Att.xml"]:
+    for f in ["Materials_Att.xml", "Surfaces_Att.xml", "temp_materials.db"]:
         if os.path.exists(f):
             os.remove(f)
             
@@ -691,7 +759,6 @@ def main():
     print(f"| {'WLS Material':<15} | {'Length (mm)':<12} | {'λ_eff (mm)':<12} | {'λ_eff (cm)':<12} | {'R² Fit':<8} |")
     print("-" * 72)
     
-    table_rows = []
     for mat in wls_materials:
         for L in lengths:
             metrics = final_results[mat][L]
@@ -699,34 +766,24 @@ def main():
             r2 = metrics["r_squared"]
             
             if np.isnan(l_mm):
-                l_mm_str = "N/A"
-                l_cm_str = "N/A"
-                r2_str = "N/A"
+                l_mm_str, l_cm_str, r2_str = "N/A", "N/A", "N/A"
             else:
                 l_mm_str = f"{l_mm:8.2f}"
                 l_cm_str = f"{l_mm/10.0:8.2f}"
                 r2_str = f"{r2:.5f}"
                 
             print(f"| {mat:<15} | {L:<12} | {l_mm_str:<12} | {l_cm_str:<12} | {r2_str:<8} |")
-            table_rows.append({
-                "material": mat,
-                "length_mm": L,
-                "lambda_mm": l_mm,
-                "r_squared": r2
-            })
             
     print("=" * 72)
     
-    # Save a JSON log for safe record-keeping
     with open("capillary_attenuation_results.json", "w") as jf:
         json.dump(final_results, jf, indent=4)
-    print("[✓] Raw fitting array structures backed up to: 'capillary_attenuation_results.json'")
+    print("[✓] Raw fitting structures backed up to 'capillary_attenuation_results.json'")
     print("[✓] Process complete!\n")
 
 
 if __name__ == "__main__":
     # --- SUBPROCESS WORKER INTERCEPT ---
-    # Intercept spawned worker tasks cleanly before triggering master loops.
     if len(sys.argv) > 1 and sys.argv[1] == "--worker":
         L_val = float(sys.argv[2])
         mat_val = sys.argv[3]
