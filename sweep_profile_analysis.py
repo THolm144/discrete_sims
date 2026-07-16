@@ -525,9 +525,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
         # Physical LCE corrected prompt profiles (with your requested [::-1] reversal!)
-        "prompt_profile": corrected_prompt_profile[::-1],  # Legacy key
-        "prompt_profile_target": corrected_prompt_target[::-1],
-        "prompt_profile_bounced": corrected_prompt_bounced[::-1],
+        "prompt_profile": corrected_prompt_profile,  # Legacy key
+        "prompt_profile_target": corrected_prompt_target,
+        "prompt_profile_bounced": corrected_prompt_bounced,
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
