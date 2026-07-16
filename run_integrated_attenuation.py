@@ -433,14 +433,14 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     
     # 2. Surround the capillary with dense, absorbent Tungsten
     absorber = sim.add_volume("Box", "absorber")
-    absorber.parent = world  # <--- FIXED: Passed the 'world' object, not "world" string
+    absorber.parent = world
     absorber.material = "Tungsten"
     absorber.size = [10.0 * units.mm, 10.0 * units.mm, length_mm * units.mm]
     absorber.translation = [0, 0, 0]
     
     # 3. Nest the Quartz capillary shell (Outer cladding)
-    quartz_sleeve = sim.add_volume("Cylinder", "quartz_sleeve")
-    quartz_sleeve.parent = absorber  # <--- FIXED: Passed the 'absorber' object
+    quartz_sleeve = sim.add_volume("Tubs", "quartz_sleeve")  # <--- FIXED: "Tubs" primitive
+    quartz_sleeve.parent = absorber
     quartz_sleeve.material = "Quartz"
     quartz_sleeve.rmax = 0.5 * units.mm
     quartz_sleeve.rmin = 0.0 * units.mm
@@ -448,8 +448,8 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     quartz_sleeve.translation = [0, 0, 0]
     
     # 4. Nest the Core wavelength shifting (WLS) filament inside the Quartz
-    wls_core = sim.add_volume("Cylinder", "wls_core")
-    wls_core.parent = quartz_sleeve  # <--- FIXED: Passed the 'quartz_sleeve' object
+    wls_core = sim.add_volume("Tubs", "wls_core")  # <--- FIXED: "Tubs" primitive
+    wls_core.parent = quartz_sleeve
     wls_core.material = wls_material
     wls_core.rmax = 0.3 * units.mm
     wls_core.rmin = 0.0 * units.mm
@@ -457,10 +457,11 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     wls_core.translation = [0, 0, 0]
     
     # 5. Position the Downstream Sensor
-    sipm_down = sim.add_volume("Cylinder", "sipm_down")
-    sipm_down.parent = world  # <--- FIXED: Passed the 'world' object
+    sipm_down = sim.add_volume("Tubs", "sipm_down")  # <--- FIXED: "Tubs" primitive
+    sipm_down.parent = world
     sipm_down.material = "G4_Si"
     sipm_down.rmax = 0.5 * units.mm
+    sipm_down.rmin = 0.0 * units.mm                 # <--- Added explicit inner radius (0.0)
     sipm_down.size_z = 0.2 * units.mm
     sipm_down.translation = [0, 0, (length_mm / 2.0 + 0.1) * units.mm]
 
