@@ -9,7 +9,7 @@ for offset in "${OFFSETS[@]}"; do
     OUT_DIR="./calib_runs/offset_${offset}"
     mkdir -p "$OUT_DIR"
     
-    python3 simulator.py \
+ python3 simulator.py --beam-x 0.00000 --beam-y 0.35000 \
         --world luagce_rc_hex \
         --particle opticalphoton \
         --energy-kev 0.003 \

@@ -28,7 +28,7 @@ PIDS=()
 for i in $(seq 0 $((N_RUNS - 1))); do
     echo "  Launching run ${i}..."
     # We remove 'setsid' here so the shell keeps ownership of the PID tracker
-    python3 simulator.py \
+ python3 simulator.py --beam-x -0.37032 --beam-y 0.37032 \
         --world        $WORLD \
         --particle     $PARTICLE \
         --energy-kev   $ENERGY_KEV \
