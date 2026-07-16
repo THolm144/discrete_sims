@@ -983,17 +983,22 @@ def main():
             _, mu_val, sigma_val = fit_gaussian_to_peak(e_totals, n_bins=40)
             print_channel_diagnostics("E-type", mod, ekey, e_totals, mu_val, sigma_val)
 
+            # --- NEW FILTERING LOGIC ---
             if mu_val > 0:
-                energies_gev.append(E_val)
-                mu_e_list.append(mu_val)
-                res_e_list.append(sigma_val / mu_val)
-                mu_e_err.append(sigma_val / np.sqrt(len(e_totals)))
-                res_e_err.append((sigma_val / mu_val) * (1.0 / np.sqrt(len(e_totals))))
+                res_val = sigma_val / mu_val
+                
+                # Filter: Require at least 2 photons average, and resolution under 100%
+                if mu_val > 2.0 and res_val < 1.0:
+                    energies_gev.append(E_val)
+                    mu_e_list.append(mu_val)
+                    res_e_list.append(res_val)
+                    mu_e_err.append(sigma_val / np.sqrt(len(e_totals)))
+                    res_e_err.append(res_val * (1.0 / np.sqrt(len(e_totals))))
+                else:
+                    print(f"  [FILTERED] E-type {mod} @ {E_val} GeV rejected (mu={mu_val:.1f}, res={res_val*100:.1f}%)")
 
         # ─────────────────────────────────────────────────────────────────────
         # 3-T. SHOWER-MAX RESOLUTION INPUT (T-type channels)
-        # Same procedure as above but built from dw_t_total, which is already
-        # computed in analyze_energy_batch but was previously unused here.
         # ─────────────────────────────────────────────────────────────────────
         energies_gev_t, mu_t_list, res_t_list, mu_t_err, res_t_err = [], [], [], [], []
 
@@ -1007,12 +1012,20 @@ def main():
             _, mu_val, sigma_val = fit_gaussian_to_peak(t_totals, n_bins=40)
             print_channel_diagnostics("T-type", mod, ekey, t_totals, mu_val, sigma_val)
 
+            # --- NEW FILTERING LOGIC ---
             if mu_val > 0:
-                energies_gev_t.append(E_val)
-                mu_t_list.append(mu_val)
-                res_t_list.append(sigma_val / mu_val)
-                mu_t_err.append(sigma_val / np.sqrt(len(t_totals)))
-                res_t_err.append((sigma_val / mu_val) * (1.0 / np.sqrt(len(t_totals))))
+                res_t_val = sigma_val / mu_val
+                
+                # Filter: Require at least 2 photons average, and resolution under 150% 
+                # (T-channels might have inherently worse resolution, adjust threshold if needed)
+                if mu_val > 2.0 and res_t_val < 1.5:
+                    energies_gev_t.append(E_val)
+                    mu_t_list.append(mu_val)
+                    res_t_list.append(res_t_val)
+                    mu_t_err.append(sigma_val / np.sqrt(len(t_totals)))
+                    res_t_err.append(res_t_val * (1.0 / np.sqrt(len(t_totals))))
+                else:
+                    print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (mu={mu_val:.1f}, res={res_t_val*100:.1f}%)")
 
         def resolution_func(E, c, s, n):
             return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
