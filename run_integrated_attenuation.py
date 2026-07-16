@@ -11,6 +11,7 @@ Includes:
 - Optical photon direct injection sweeps
 - Clean-up automation for intermediate ROOT files
 - Exponential curve fitting with R² quality scoring
+- Subprocess pattern execution to circumvent the SimulationEngine singleton limitation.
 ================================================================================
 """
 
@@ -406,7 +407,6 @@ SURFACES_XML = """<?xml version="1.0" encoding="utf-8"?>
 # 2. PHYSICAL PARAMETERS & CALIBRATION MAP
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Peak emission energy (eV) parsed from WLSCOMPONENT properties 
 WLS_PEAK_ENERGY_EV = {
     "DSB1": 2.51,         # 494nm
     "LuAg_Ce_WLS": 2.31,  # 535nm
@@ -430,60 +430,61 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     db_path = script_dir / "GateMaterials.db"
     
     if db_path.exists():
-        # Avoid crashing OpenGATE if the database is already registered
         db_str = str(db_path)
         loaded_dbs = [str(f) for f in sim.volume_manager.material_database.filenames]
         if db_str not in loaded_dbs and "GateMaterials.db" not in [Path(f).name for f in loaded_dbs]:
             sim.volume_manager.add_material_database(db_str)
     else:
         print(f"[Warning] Could not find local GateMaterials.db at: {db_path}")
+
     # 1. Expand the master world coordinates to envelope the active capillary
     world = sim.world
     world.size = [30.0 * units.mm, 30.0 * units.mm, (length_mm + 20.0) * units.mm]
     world.material = "Air"
     
-    # 2. Surround the capillary with dense, absorbent Tungsten
+    # 2. Surround the capillary with dense, absorbent Tungsten (Box uses full dimensions)
     absorber = sim.add_volume("Box", "absorber")
     absorber.parent = world
     absorber.material = "Tungsten"
     absorber.size = [10.0 * units.mm, 10.0 * units.mm, length_mm * units.mm]
     absorber.translation = [0, 0, 0]
     
-    # 3. Nest the Quartz capillary shell (Outer cladding)
-    quartz_sleeve = sim.add_volume("Tubs", "quartz_sleeve")  # <--- FIXED: "Tubs" primitive
+    # 3. Nest the Quartz capillary shell (Tubs uses half-length dz)
+    quartz_sleeve = sim.add_volume("Tubs", "quartz_sleeve")
     quartz_sleeve.parent = absorber
     quartz_sleeve.material = "Quartz"
     quartz_sleeve.rmax = 0.5 * units.mm
     quartz_sleeve.rmin = 0.0 * units.mm
-    quartz_sleeve.size_z = length_mm * units.mm
+    quartz_sleeve.dz = (length_mm / 2.0) * units.mm  # FIXED: dz is half-length
     quartz_sleeve.translation = [0, 0, 0]
     
-    # 4. Nest the Core wavelength shifting (WLS) filament inside the Quartz
-    wls_core = sim.add_volume("Tubs", "wls_core")  # <--- FIXED: "Tubs" primitive
+    # 4. Nest the Core wavelength shifting (WLS) filament inside the Quartz (Tubs uses half-length dz)
+    wls_core = sim.add_volume("Tubs", "wls_core")
     wls_core.parent = quartz_sleeve
     wls_core.material = wls_material
     wls_core.rmax = 0.3 * units.mm
     wls_core.rmin = 0.0 * units.mm
-    wls_core.dz = length_mm * units.mm
+    wls_core.dz = (length_mm / 2.0) * units.mm  # FIXED: dz is half-length
     wls_core.translation = [0, 0, 0]
     
-    # 5. Position the Downstream Sensor
-    sipm_down = sim.add_volume("Tubs", "sipm_down")  # <--- FIXED: "Tubs" primitive
+    # 5. Position the Downstream Sensor (Tubs uses half-length dz)
+    sipm_down = sim.add_volume("Tubs", "sipm_down")
     sipm_down.parent = world
     sipm_down.material = "G4_Si"
     sipm_down.rmax = 0.5 * units.mm
-    sipm_down.rmin = 0.0 * units.mm                 # <--- Added explicit inner radius (0.0)
-    sipm_down.dz = 0.2 * units.mm
+    sipm_down.rmin = 0.0 * units.mm
+    sipm_down.dz = 0.1 * units.mm  # FIXED: dz is half-length (0.2mm total thickness)
     sipm_down.translation = [0, 0, (length_mm / 2.0 + 0.1) * units.mm]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. CORE ENGINE SWEEPER
+# 4. CORE ENGINE WORKER (EXECUTED BY SPAWNED SUBPROCESS)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
+def execute_actual_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
     """
-    Spawns and executes a single OpenGATE thread to gather WLS core attenuation hits.
+    Constructs and starts the simulation thread. Since Geant4 utilizes an un-destroyable
+    C++ singleton system in memory, this is handled within spawned worker processes.
     """
     sim = gate.Simulation()
     sim.output_dir = "temp_attenuation_run"
@@ -501,6 +502,7 @@ def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
     # Inject isotropic optical photons inside the WLS core at the dynamic Z offset
     source = sim.add_source("GenericSource", "isotropic_optical_source")
     source.particle = "opticalphoton"
+    source.polarization = [1, 0, 0]  # FIXED: Suppresses ZeroPolarization warning block!
     source.energy.mono = peak_ev * units.eV
     source.position.type = "cylinder"
     source.position.radius = 0.28 * units.mm
@@ -540,7 +542,32 @@ def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. DATA EXTRACTION & ATTENUATION FITTING
+# 5. SUBPROCESS ORCHESTRATOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
+    """
+    Bypasses Geant4's SimulationEngine singleton crash by spinning up
+    individual clean Python processes for every iteration point.
+    """
+    import subprocess
+    
+    cmd = [
+        sys.executable,
+        __file__,
+        "--worker",
+        str(length_mm),
+        str(wls_material),
+        str(z_offset_mm),
+        str(peak_ev)
+    ]
+    
+    # Synchronously blocks parent until output is generated cleanly
+    subprocess.run(cmd, check=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. DATA EXTRACTION & ATTENUATION FITTING
 # ─────────────────────────────────────────────────────────────────────────────
 
 def extract_sipm_hits():
@@ -594,7 +621,7 @@ def calculate_attenuation_length(distances_mm, hit_counts):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. MAIN CONTROLLER & SWEEP EXECUTION LOOP
+# 7. MAIN CONTROLLER & SWEEP EXECUTION LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -694,7 +721,7 @@ def main():
             
     print("=" * 72)
     
-    # Save a CSV log for safe record-keeping
+    # Save a JSON log for safe record-keeping
     with open("capillary_attenuation_results.json", "w") as jf:
         json.dump(final_results, jf, indent=4)
     print("[✓] Raw fitting array structures backed up to: 'capillary_attenuation_results.json'")
@@ -702,4 +729,15 @@ def main():
 
 
 if __name__ == "__main__":
+    # --- SUBPROCESS WORKER INTERCEPT ---
+    # Intercept spawned worker tasks cleanly before triggering master loops.
+    if len(sys.argv) > 1 and sys.argv[1] == "--worker":
+        L_val = float(sys.argv[2])
+        mat_val = sys.argv[3]
+        z_val = float(sys.argv[4])
+        peak_val = float(sys.argv[5])
+        
+        execute_actual_simulation(L_val, mat_val, z_val, peak_val)
+        sys.exit(0)
+        
     main()
