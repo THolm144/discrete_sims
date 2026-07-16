@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-distribute_calibration.py
-=========================
-Generates an optimized parallel calibration matrix queue for Discovery.
-Configured for exactly 20 concurrent execution cores.
+distribute_calibration.py (Local Bash Edition)
+==============================================
+Generates a local, parallel calibration queue optimized for interactive Bash.
+Captures your active environment's Python path automatically.
 """
 
 import sys
-import importlib.util
 from pathlib import Path
+import importlib.util
 import numpy as np
 
 SWEEP_STEPS = 11            # Z-sweep resolution points
-CALIB_ENERGY_KEV = 50000000  # Default calibration beam energy (50 GeV)
+CALIB_ENERGY_KEV = 50000000  # 50 GeV
+MAX_CONCURRENT_SIMS = 20    # Keep to exactly 20 local cores
+PYTHON_PATH = sys.executable # Captures your exact conda/venv python interpreter!
 
 
 def discover_worlds():
@@ -56,35 +58,28 @@ def load_world_metadata(filepath):
             "sweep_limit": sweep_limit_cm,
             "sensor_z_cm": sensor_z_cm,
         }
-    except Exception as e:
+    except Exception:
         return None
     finally:
         sys.path.pop(0)
 
 
-def generate_slurm_runner(worlds):
+def generate_local_runner(worlds):
     bash_content = []
     bash_content.append(f"""#!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# run_calibration_discovery.sh — Parallel Multi-World Calibration (20 Cores)
+# run_calibration_local.sh — Parallel Multi-World Calibration (Interactive Bash)
 # ─────────────────────────────────────────────────────────────────────────────
-#SBATCH --job-name=gate_calib_20
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=20
-#SBATCH --time=04:00:00
-#SBATCH --partition=express
-#SBATCH --output=calib_pool_%j.log
-
 ROOT_DIR=$(pwd)
 JOB_FILE="${{ROOT_DIR}}/calib_job_list.txt"
 > "$JOB_FILE"
 
-MAX_CONCURRENT_SIMS=20
+MAX_CONCURRENT_SIMS={MAX_CONCURRENT_SIMS}
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 echo "========================================================================"
-echo " Preparing Execution Matrix for Multi-World Calibration Queue"
+echo " Preparing Local Calibration Queue on Host: $(hostname)"
+echo " Environment Python: {PYTHON_PATH}"
 echo "========================================================================"
 """)
 
@@ -92,7 +87,7 @@ echo "========================================================================"
         z_vals = np.linspace(-w['sweep_limit'], w['sweep_limit'], SWEEP_STEPS)
         z_vals_str = " ".join([f"{z:.2f}" for z in z_vals])
         
-        bash_content.append(f"""# --- Queue setup for {w['name']} ---
+        bash_content.append(f"""# --- Setup for {w['name']} ---
 WORLD_DIR="${{ROOT_DIR}}/{w['world_dir']}"
 if [ -d "$WORLD_DIR" ]; then
     MASTER_BATCH_DIR="${{WORLD_DIR}}/runs/calib_${{TIMESTAMP}}"
@@ -104,31 +99,31 @@ if [ -d "$WORLD_DIR" ]; then
         mkdir -p "$RUN_OUT_DIR"
         LOG_FILE="${{MASTER_BATCH_DIR}}/logs/z_${{Z_VAL}}.log"
 
-        # Parameters written to job list (9 arguments per task row):
-        # 0:WorldDir 1:WorldPath 2:X 3:Y 4:Z 5:OutputDir 6:LogFile 7:SensorZ 8:WorldName
+        # 9 arguments per task row:
         echo "${{WORLD_DIR}} {w['path_str']} {w['x']:.5f} {w['y']:.5f} ${{Z_VAL}} ${{RUN_OUT_DIR}} ${{LOG_FILE}} {w['sensor_z_cm']:.5f} {w['name']}" >> "$JOB_FILE"
     done
 fi
 """)
 
-    bash_content.append("""
+    bash_content.append(f"""
 TOTAL_JOBS=$(wc -l < "$JOB_FILE")
-echo " [✓] Generated ${TOTAL_JOBS} calibration runs inside calib_job_list.txt."
+echo " [✓] Generated ${{TOTAL_JOBS}} calibration runs inside calib_job_list.txt."
 echo "------------------------------------------------------------------------"
-echo " [+] Handing execution queue to xargs pool (Concurrency = 20 Cores)..."
+echo " [+] Initiating local execution pool (Limit: ${{MAX_CONCURRENT_SIMS}} cores)..."
 
+# Active process tracker: monitors ONLY your processes on this machine
 (
     sleep 2 
-    while [ -f "$JOB_FILE" ] || [ $(pgrep -f "simulator.py" | wc -l) -gt 0 ]; do
-        COMPLETED_JOBS=$(find ${ROOT_DIR}/*/runs/calib_${TIMESTAMP}/logs -name "*.log" 2>/dev/null | wc -l)
-        ACTIVE_CORES=$(pgrep -f "simulator.py" | wc -l)
-        printf "\\r     -> Queue Progress: %4d / %d completed | [%2d Cores Occupied]" "$COMPLETED_JOBS" "$TOTAL_JOBS" "$ACTIVE_CORES"
+    while [ -f "$JOB_FILE" ] || [ $(pgrep -u $USER -f "simulator.py" | wc -l) -gt 0 ]; do
+        COMPLETED_JOBS=$(find ${{ROOT_DIR}}/*/runs/calib_${{TIMESTAMP}}/logs -name "*.log" 2>/dev/null | wc -l)
+        ACTIVE_CORES=$(pgrep -u $USER -f "simulator.py" | wc -l)
+        printf "\\r     -> Progress: %4d / %d completed | [%2d Cores Occupied]" "$COMPLETED_JOBS" "$TOTAL_JOBS" "$ACTIVE_CORES"
         sleep 1
     done
 ) &
 TRACKER_PID=$!
 
-# Execute tasks. We pull exactly 9 arguments per row.
+# Execute tasks using the exact environment Python interpreter
 xargs -P "$MAX_CONCURRENT_SIMS" -n 9 bash -c '
     WORLD_DIR="$0"
     WORLD_PATH="$1"
@@ -140,11 +135,11 @@ xargs -P "$MAX_CONCURRENT_SIMS" -n 9 bash -c '
     SENSOR_Z="$7"
     WORLD_NAME="$8"
 
-    # 1. Execute OpenGATE simulation targeting the specific capillary fiber path
-    python3 "${WORLD_DIR}/simulator.py" \\
+    # 1. Execute OpenGATE simulation using the dynamic Python binary path
+    "{PYTHON_PATH}" "${{WORLD_DIR}}/simulator.py" \\
         --world "$WORLD_PATH" \\
         --particle "e-" \\
-        --energy-kev """ + str(CALIB_ENERGY_KEV) + """ \\
+        --energy-kev {CALIB_ENERGY_KEV} \\
         --n 24 \\
         --threads 1 \\
         --beam-radius 0.01 \\
@@ -158,14 +153,14 @@ xargs -P "$MAX_CONCURRENT_SIMS" -n 9 bash -c '
         --run-id 0 \\
         --output-dir "$OUT_DIR" > "$LOG_FILE" 2>&1
 
-    # 2. Immediately execute analysis within the isolated thread environment
+    # 2. Execute analysis using the exact same Python binary path
     if [ $? -eq 0 ]; then
-        python3 extract_prompt_attenuation.py \\
+        "{PYTHON_PATH}" "${{WORLD_DIR}}/extract_prompt_attenuation.py" \\
             --run_dir "$OUT_DIR" \\
             --z_offset "$BEAM_Z" \\
             --sensor_z "$SENSOR_Z" >> "$LOG_FILE" 2>&1
     else
-        echo "[-] Run failed for ${WORLD_NAME} at Z=${BEAM_Z}" >> "$LOG_FILE"
+        echo "[-] Run failed for ${{WORLD_NAME}} at Z=${{BEAM_Z}}" >> "$LOG_FILE"
     fi
 ' < "$JOB_FILE"
 
@@ -178,10 +173,10 @@ echo " [✓] ALL CALIBRATION SIMULATIONS AND ANALYSIS PILES COMPLETE."
 echo "========================================================================"
 """)
 
-    output_path = Path("run_calibration_discovery.sh")
+    output_path = Path("run_calibration_local.sh")
     output_path.write_text("\n".join(bash_content))
     output_path.chmod(0o755)
-    print(f"[+] Multi-world calibration runner script created: '{output_path}'")
+    print(f"[+] Local calibration runner script created: '{output_path}'")
 
 
 if __name__ == "__main__":
@@ -191,4 +186,4 @@ if __name__ == "__main__":
         m = load_world_metadata(w)
         if m:
             meta_list.append(m)
-    generate_slurm_runner(meta_list)
+    generate_local_runner(meta_list)
