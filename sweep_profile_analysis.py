@@ -256,6 +256,24 @@ def _grouped(chunks, how):
         s = g.quantile(how)
     return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
 
+def get_bar_colors(ekey, idx):
+    # Cohesive color families (Darker for target hits, lighter for bounced)
+    energy_colors = {
+        "25GeV":  {"target": "#1f77b4", "bounced": "#aec7e8"}, # Blue
+        "50GeV":  {"target": "#ff7f0e", "bounced": "#ffbb78"}, # Orange
+        "100GeV": {"target": "#2ca02c", "bounced": "#98df8a"}  # Green
+    }
+    if ekey in energy_colors:
+        return energy_colors[ekey]["target"], energy_colors[ekey]["bounced"]
+    
+    # Fallback palette builder
+    import matplotlib.colors as mcolors
+    base_colors = list(mcolors.TABLEAU_COLORS.values())
+    base_col = base_colors[idx % len(base_colors)]
+    rgb = mcolors.to_rgb(base_col)
+    light_col = tuple(0.4 * c + 0.6 for c in rgb) # blend with white
+    return base_col, light_col
+
 def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbose_label: str = ""):
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"), key=get_natural_sort_key)
     if not hit_files:
@@ -375,15 +393,46 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         hist_lt, _ = np.histogram(lt_downstream_opt, bins=lt_bins)
         lt_counts += hist_lt
 
-        # ── GRAPH 4: Prompt Photon Counting (Native Spatial Loop) ────────────
         # ── GRAPH 4: Prompt Photon Weighted-Centroid Assignment ──────────────
         # Soft-assign each downstream optical photon to nearby layers using a
         # Gaussian kernel in flight-time space, rather than a hard in/out cut.
         diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
-        diff = gt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
         weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
         weights[np.abs(diff) > 4.0 * SIGMA_NS] = 0.0   # truncate negligible tails, keeps it cheap
 
+        # ─────────────────────────────────────────────────────────────────
+        # IDENTIFY TRUE ORIGIN LAYER (for stacked histogram)
+        # ─────────────────────────────────────────────────────────────────
+        # We find where each photon was generated. This works with standard GATE branches:
+        birth_z = None
+        for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth"]:
+            if branch_name in tree:
+                try:
+                    birth_z = tree[branch_name].array(library="np")[m_dw_opt]
+                    break
+                except Exception:
+                    continue
+
+        if birth_z is not None:
+            # Map birth coordinates directly to physical LYSO layer boundaries
+            true_layer_idx = np.full(len(lt_downstream_opt), -1, dtype=int)
+            for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
+                true_layer_idx[(birth_z >= z_lo) & (birth_z <= z_hi)] = lyr_idx
+        else:
+            # Alternate fallback: check for standard volumeID branch (e.g. volumeID[1] for layers)
+            try:
+                vol_array = tree["volumeID"].array(library="np")
+                true_layer_idx = (vol_array[:, 1][m_dw_opt] if vol_array.ndim > 1 else vol_array[m_dw_opt])
+            except Exception:
+                # Fallback: if no tracking info exists, estimate using closest temporal match
+                true_layer_idx = np.argmin(np.abs(lt_downstream_opt[:, None] - expected_times_arr[None, :]), axis=1)
+
+        # Compare true birth index against each target reconstructed index (1-to-1 broadcasting)
+        is_target_layer = (true_layer_idx[:, None] == np.arange(_N_LYSO)[None, :])
+
+        # Accumulate target and bounced counts separately
+        prompt_counts_target += (weights * is_target_layer).sum(axis=0)
+        prompt_counts_bounced += (weights * (~is_target_layer)).sum(axis=0)
         prompt_counts += weights.sum(axis=0)
 
     # Two-ended timing calculations
@@ -448,12 +497,15 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         for z_lo, z_hi in lyso_bounds
     ])
 
-    # 2. Compute the LCE profile (geometric exponential decay along the capillary)
+  # 2. Compute the LCE profile (geometric exponential decay along the capillary)
     lce = np.exp(-distances / lambda_eff)
 
     # 3. Correct for attenuation by dividing raw prompt counts by LCE
-    # (This boosts the signal from distant upstream layers to reconstruct the true shower profile)
     corrected_prompt_profile = prompt_counts / lce
+    corrected_prompt_target = prompt_counts_target / lce
+    corrected_prompt_bounced = prompt_counts_bounced / lce
+
+    
     # ─────────────────────────────────────────────────────────────────────────
 
 
@@ -471,8 +523,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        # physical LCE corrected prompt profile
-        "prompt_profile": corrected_prompt_profile[::-1],  # Reverse to match physical layer order (upstream to downstream)
+        # Physical LCE corrected prompt profiles (with your requested [::-1] reversal!)
+        "prompt_profile": corrected_prompt_profile[::-1],  # Legacy key
+        "prompt_profile_target": corrected_prompt_target[::-1],
+        "prompt_profile_bounced": corrected_prompt_bounced[::-1],
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
@@ -652,22 +706,48 @@ def main():
         fig_rec, (ax_rec, ax_truth) = plt.subplots(1, 2, figsize=(15, 5.5))
         layers_x = np.arange(1, _N_LYSO + 1)
 
-        for ekey in energy_keys:
-            profile = master_summary[mod][ekey]["prompt_profile"]
-            ax_rec.plot(layers_x, profile, marker="o", markersize=4, label=ekey, alpha=0.8)
+        # Set up spacing parameters to stack and group the bars side-by-side
+        n_energies = len(energy_keys)
+        total_width = 0.8
+        width = total_width / max(1, n_energies)
 
+        for idx, ekey in enumerate(energy_keys):
+            # Calculate grouped horizontal shift
+            offset = (idx - (n_energies - 1) / 2.0) * width
+            x_coords = layers_x + offset
+
+            # Fetch the reversed profiles
+            target_profile = master_summary[mod][ekey].get("prompt_profile_target", np.zeros(_N_LYSO))
+            bounced_profile = master_summary[mod][ekey].get("prompt_profile_bounced", np.zeros(_N_LYSO))
+
+            col_target, col_bounced = get_bar_colors(ekey, idx)
+
+            # Plot stacked parts: target (bottom), bounced (top)
+            ax_rec.bar(x_coords, target_profile, width=width, color=col_target, 
+                       edgecolor="black", linewidth=0.3, alpha=0.9, 
+                       label=f"{ekey} (Target Layer Hits)")
+            
+            ax_rec.bar(x_coords, bounced_profile, width=width, bottom=target_profile, 
+                       color=col_bounced, edgecolor="black", linewidth=0.3, alpha=0.6, 
+                       label=f"{ekey} (Bounced Photons)")
+
+            # Standard truth line plot for clean comparison
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
             ax_truth.plot(layers_x, truth_prof, marker="s", markersize=4, label=ekey, alpha=0.8)
 
         ax_rec.set_xlabel("LYSO Layer Number", fontweight="bold")
         ax_rec.set_ylabel("Total Prompt Photon Strikes", fontweight="bold")
-        ax_rec.set_title("Reconstructed Profile (Timing Window Selection)", fontsize=11, fontweight="bold")
+        ax_rec.set_title("Reconstructed Profile (Target vs. Bounced)", fontsize=11, fontweight="bold")
+        ax_rec.set_xlim(0, _N_LYSO + 1)
         ax_rec.grid(True, linestyle=":", alpha=0.5)
-        ax_rec.legend(title="Beam Energy")
+        # Clean legend to avoid duplicates
+        handles, labels = ax_rec.get_legend_handles_labels()
+        ax_rec.legend(handles, labels, title="Beam Energy Components", fontsize=8, loc="upper left")
 
         ax_truth.set_xlabel("LYSO Layer Number", fontweight="bold")
         ax_truth.set_ylabel("Mean Active Energy Deposited (MeV / Event)", fontweight="bold")
         ax_truth.set_title("Simulated Truth Shower Profile (DoseActor MHD)", fontsize=11, fontweight="bold")
+        ax_truth.set_xlim(0, _N_LYSO + 1)
         ax_truth.grid(True, linestyle=":", alpha=0.5)
         ax_truth.legend(title="Beam Energy")
 
