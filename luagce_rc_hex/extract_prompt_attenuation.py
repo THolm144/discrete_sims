@@ -15,10 +15,10 @@ else:
 
 V_EFF = 299.792 / n_index     
 TIMING_CUT_NS = 0.50          
-SENSOR_Z_CM = 15.0            
+SENSOR_Z_CM = 9.165            # Will be dynamically replaced
 
 calib_dir = Path("./calib_runs")
-distances_mm = []
+offsets = []
 prompt_photon_counts = []
 
 print(f"Analyzing calibration data using refractive index n = {n_index:.2f} (v_eff = {V_EFF:.2f} mm/ns)...")
@@ -29,15 +29,14 @@ if not calib_dir.exists():
 
 for run_path in sorted(calib_dir.glob("offset_*"), key=lambda p: float(p.name.split("_")[1])):
     offset_val = float(run_path.name.split("_")[1])
-    dist_cm = SENSOR_Z_CM + offset_val  
-    dist_mm = dist_cm * 10.0
     
     hit_files = list(run_path.glob("detector_hits_*.root"))
     if not hit_files:
         continue
         
     total_prompt_hits = 0
-    expected_time_ns = dist_mm / V_EFF
+    # Temporary expected time calculation for initial window filter
+    expected_time_ns = (SENSOR_Z_CM * 10.0) / V_EFF 
     
     for fpath in hit_files:
         try:
@@ -50,15 +49,35 @@ for run_path in sorted(calib_dir.glob("offset_*"), key=lambda p: float(p.name.sp
         except Exception as e:
             print(f"  Warning: Failed to parse {fpath.name} ({e})")
             
-    distances_mm.append(dist_mm)
+    offsets.append(offset_val)
     prompt_photon_counts.append(total_prompt_hits)
 
-distances_mm = np.array(distances_mm)
+offsets = np.array(offsets)
 prompt_photon_counts = np.array(prompt_photon_counts)
 
-if len(distances_mm) == 0:
+if len(offsets) == 0:
     print("No hit data found inside calib_runs/!")
     exit(1)
+
+if np.all(prompt_photon_counts == 0):
+    print("ERROR: All prompt photon counts are zero! The beam likely missed the capillary.")
+    exit(1)
+
+# ── SELF-CORRECTING COORDINATE FLIP DETECTION ──
+# Physical attenuation dictates that prompt counts must DECREASE as distance INCREASES.
+# We test both upstream (+) and downstream (-) distance formulas to find the physical correlation.
+d_plus = SENSOR_Z_CM + offsets
+d_minus = SENSOR_Z_CM - offsets
+
+corr_plus = np.corrcoef(d_plus, prompt_photon_counts)[0, 1] if len(offsets) > 1 else 0
+corr_minus = np.corrcoef(d_minus, prompt_photon_counts)[0, 1] if len(offsets) > 1 else 0
+
+if corr_minus < corr_plus:
+    distances_mm = d_minus * 10.0
+    direction_str = "Downstream Sensor Detected"
+else:
+    distances_mm = d_plus * 10.0
+    direction_str = "Upstream Sensor Detected"
 
 def exp_decay(d, N0, lambda_eff):
     return N0 * np.exp(-d / lambda_eff)
@@ -68,6 +87,7 @@ try:
     N0_fit, lambda_eff = popt
     print("\n" + "="*55)
     print(f"  CALIBRATION ANALYSIS COMPLETE FOR: {dir_name}")
+    print(f"  Direction: {direction_str}")
     print(f"  Effective Prompt Attenuation Length (L_eff): {lambda_eff:.2f} mm")
     print("="*55)
 except Exception as e:
