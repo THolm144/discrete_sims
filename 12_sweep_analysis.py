@@ -935,7 +935,7 @@ def main():
             print(f"[WARNING] Not enough DoseActor truth curves to build longitudinal overlay for {mod}")
 
         # ─────────────────────────────────────────────────────────────────────
-        # 3. ENERGY LINEARITY AND RESOLUTION PANELS
+        # 3. ENERGY LINEARITY AND RESOLUTION PANELS (E-type channels)
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
 
@@ -954,6 +954,32 @@ def main():
                 res_e_list.append(sigma_val / mu_val)
                 mu_e_err.append(sigma_val / np.sqrt(len(e_totals)))
                 res_e_err.append((sigma_val / mu_val) * (1.0 / np.sqrt(len(e_totals))))
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 3-T. SHOWER-MAX RESOLUTION INPUT (T-type channels)
+        # Same procedure as above but built from dw_t_total, which is already
+        # computed in analyze_energy_batch but was previously unused here.
+        # ─────────────────────────────────────────────────────────────────────
+        energies_gev_t, mu_t_list, res_t_list, mu_t_err, res_t_err = [], [], [], [], []
+
+        for ekey in energy_keys:
+            E_val = extract_numerical_energy(ekey)
+            if E_val <= 0: continue
+
+            t_totals = master_summary[mod][ekey].get("dw_t_total", np.array([]))
+            if len(t_totals) < 5: continue
+
+            _, mu_val, sigma_val = fit_gaussian_to_peak(t_totals, n_bins=40)
+
+            if mu_val > 0:
+                energies_gev_t.append(E_val)
+                mu_t_list.append(mu_val)
+                res_t_list.append(sigma_val / mu_val)
+                mu_t_err.append(sigma_val / np.sqrt(len(t_totals)))
+                res_t_err.append((sigma_val / mu_val) * (1.0 / np.sqrt(len(t_totals))))
+
+        def resolution_func(E, c, s, n):
+            return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
 
         if len(energies_gev) >= 3:
             energies_gev = np.array(energies_gev)
@@ -980,9 +1006,6 @@ def main():
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
 
-            def resolution_func(E, c, s, n):
-                return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
-
             try:
                 popt_res, _ = curve_fit(resolution_func, energies_gev, res_e_list,
                                         p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
@@ -993,7 +1016,7 @@ def main():
                 fit_label = "Fit failed"
 
             ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
-                            color=mod_colors.get(mod, 'black'), label="Simulated Resolution")
+                            color=mod_colors.get(mod, 'black'), label="Simulated Resolution (E-type)")
 
             x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
             ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
@@ -1010,7 +1033,7 @@ def main():
 
             ax_res.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_res.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
-            ax_res.set_title("Energy Resolution", fontsize=13, fontweight="bold")
+            ax_res.set_title("Energy Resolution (E-type channels)", fontsize=13, fontweight="bold")
             ax_res.grid(True, linestyle=":", alpha=0.6)
             ax_res.legend(fontsize=10)
 
@@ -1018,23 +1041,40 @@ def main():
             fig_er.tight_layout()
             fig_er.savefig(mod_dir / f"{mod}_energy_performance.png", dpi=200)
             plt.close(fig_er)
+        else:
+            print(f"  [WARNING] Not enough E-type energy points for {mod} energy_performance plot.")
 
-            # ─────────────────────────────────────────────────────────────────
-            # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
-            # NOTE: only the "photon count, real analog" flavor is plotted —
-            # the "dE/dx, no photon stats" curve from the reference image needs
-            # per-event energy deposits this pipeline doesn't extract (only the
-            # accumulated DoseActor dose maps used for the longitudinal profile).
-            # ─────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────
+        # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
+        # Uses T-type channel photon counts (dw_t_total) rather than E-type,
+        # as a separate measurement of shower-max-region light collection.
+        # NOTE: only the "photon count, real analog" flavor is plotted —
+        # the "dE/dx, no photon stats" curve from the reference image needs
+        # per-event energy deposits this pipeline doesn't extract (only the
+        # accumulated DoseActor dose maps used for the longitudinal profile).
+        # ─────────────────────────────────────────────────────────────────
+        if len(energies_gev_t) >= 3:
+            energies_gev_t = np.array(energies_gev_t)
+            res_t_list = np.array(res_t_list)
+            res_t_err_arr = np.array(res_t_err)
+
+            try:
+                popt_res_t, _ = curve_fit(resolution_func, energies_gev_t, res_t_list,
+                                          p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
+                c_ft, s_ft, n_ft = popt_res_t
+            except Exception:
+                popt_res_t = [0.0, 0.0, 0.0]
+                c_ft, s_ft, n_ft = popt_res_t
+
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
-            ax_sm.errorbar(energies_gev, res_e_list * 100.0, yerr=res_e_err_arr * 100.0,
+            ax_sm.errorbar(energies_gev_t, res_t_list * 100.0, yerr=res_t_err_arr * 100.0,
                            fmt=mod_markers.get(mod, 'o'), color=mod_colors.get(mod, 'blue'),
                            markersize=7, capsize=4, capthick=1.2,
-                           label="sim (photon count, real analog)")
+                           label="sim (photon count, T-type channels)")
 
-            x_sm_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 200)
-            ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res) * 100.0,
+            x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
+            ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t) * 100.0,
                        color=mod_colors.get(mod, 'blue'), linestyle=':', linewidth=1.5)
 
             for ref_name, ref_p in ENERGY_REF_CURVES.items():
@@ -1042,8 +1082,8 @@ def main():
                 ax_sm.plot(x_sm_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5)
 
             fit_text = (
-                f"sim (photon count, real analog): "
-                f"{c_f*100:.2f} $\\oplus$ {s_f*100:.2f}/$\\sqrt{{E}}$ $\\oplus$ {n_f*100:.2f}/E\n"
+                f"sim (photon count, T-type channels): "
+                f"{c_ft*100:.2f} $\\oplus$ {s_ft*100:.2f}/$\\sqrt{{E}}$ $\\oplus$ {n_ft*100:.2f}/E\n"
             )
             for ref_name, ref_p in ENERGY_REF_CURVES.items():
                 fit_text += (
@@ -1055,13 +1095,15 @@ def main():
 
             ax_sm.set_xlabel("E$_{beam}$ (GeV)", fontsize=11)
             ax_sm.set_ylabel(r"$\sigma$/mean (%)", fontsize=11)
-            ax_sm.set_title(f"Shower-max energy resolution — {mod}", fontsize=13, fontweight="bold")
+            ax_sm.set_title(f"Shower-max energy resolution (T-type) — {mod}", fontsize=13, fontweight="bold")
             ax_sm.grid(True, linestyle=":", alpha=0.6)
             ax_sm.legend(fontsize=9, loc='lower right')
 
             fig_sm.tight_layout()
             fig_sm.savefig(mod_dir / f"{mod}_showermax_energy_resolution.png", dpi=200)
             plt.close(fig_sm)
+        else:
+            print(f"  [WARNING] Not enough T-type energy points for {mod} shower-max plot.")
 
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
@@ -1190,6 +1232,12 @@ def main():
                 markersize=7, 
                 label=mod
             )
+    if any_points:
+        x_ref = np.linspace(4.0, 200.0, 200)
+        for ref_name, ref_p in TIMING_REF_CURVES.items():
+            y_ref = timing_ref_curve(x_ref, ref_p["stoch"], ref_p["const"])
+            ax_perf.plot(x_ref, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=2.0,
+                         label=f"{ref_name}: {ref_p['stoch']:.0f}/$\\sqrt{{E}}$ $\\oplus$ {ref_p['const']:.1f} ps")
 
     ax_fwhm.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
     ax_fwhm.set_ylabel("Empirical FWHM (ps)", fontweight="bold")
