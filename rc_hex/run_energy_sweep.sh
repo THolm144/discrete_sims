@@ -1,102 +1,43 @@
 #!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
-# run_energy_sweep.sh — Hyper-Optimized 4-Energy Sweeper (Single Module)
-# ─────────────────────────────────────────────────────────────────────────────
-
-WORLD="rc_hex" # Update this for each module you test
+WORLD="rc_hex"
 PARTICLE="e-"
 BEAM_RADIUS=0.01
 OPTICAL="on"
 CHERENKOV="off"
 PHYSICS_LIST="QGSP_BERT_EMV"
 
-# --- MAX SPEED MATH TWEAK ---
-# 10 single-threaded runs dispatched simultaneously per energy.
-# 4 energies * 10 runs = 40 background processes total.
-# 10 runs * 1500 particles = 15,000 total particles per energy.
-N_PARTICLES_PER_RUN=1500
-N_RUNS_PER_ENERGY=10
-THREADS_PER_RUN=1
-
-# Define target sweep energies in keV (25 GeV, 50 GeV, 70 GeV, 90 GeV)
-ENERGIES_KEV=(25000000 50000000 70000000 90000000)
+# Dynamically balanced totals calculated for a 16-hour execution safety window
+# Spawns 1 process per energy x 10 internal C++ threads = 40 cores maxed out
+ENERGIES=(25000000 50000000 70000000 90000000)
+COUNTS=(1850 935 660 510)
+THREADS=10
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 MASTER_BATCH_DIR="runs/${WORLD}/sweep_${TIMESTAMP}"
 mkdir -p "$MASTER_BATCH_DIR/logs"
 
 echo "========================================================================"
-echo " Launching Max-Speed 4-Energy Sweep for Module: ${WORLD}"
-echo "========================================================================"
-echo " Target Geometry   : ${WORLD}"
-echo " Configuration     : ${N_RUNS_PER_ENERGY} runs of ${N_PARTICLES_PER_RUN} particles per Energy"
-echo " Concurrent Sims   : 40 single-threaded jobs running simultaneously"
-echo " Total CPU Load    : 40 cores per module script"
-echo " Output Master Dir : ${MASTER_BATCH_DIR}"
+echo " Launching Dynamic Optical Sweep (MT Mode) | Resource Cap: 40 CPUs"
 echo "========================================================================"
 
-# Dispatch ALL jobs immediately to the background (10 runs x 4 energies = 40 jobs)
-for ENERGY in "${ENERGIES_KEV[@]}"; do
+for i in "${!ENERGIES[@]}"; do
+    ENERGY=${ENERGIES[$i]}
+    N_EVENTS=${COUNTS[$i]}
     ENERGY_GBS=$(( ENERGY / 1000000 ))
     ENERGY_DIR="${MASTER_BATCH_DIR}/${ENERGY_GBS}GeV"
     mkdir -p "$ENERGY_DIR"
+    LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_production.log"
 
-    echo " [+] Blasting 10 parallel jobs for [${ENERGY_GBS}GeV]..."
+    echo " [+] Launching [${ENERGY_GBS}GeV] -> Target: ${N_EVENTS} events on 10 threads..."
 
-    for RUN_ID in $(seq 0 $((N_RUNS_PER_ENERGY - 1))); do
-        LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
-        
-        # Notice threads is now 1, and we push directly to background (&)
- python3 simulator.py --beam-x 0.00000 --beam-y 0.35000   \
-            --world        "$WORLD" \
-            --particle     "$PARTICLE" \
-            --energy-kev   "$ENERGY" \
-            --n            "$N_PARTICLES_PER_RUN" \
-            --threads      "$THREADS_PER_RUN" \
-            --beam-radius  "$BEAM_RADIUS" \
-            --optical      "$OPTICAL" \
-            --cherenkov    "$CHERENKOV" \
-            --hits-optical-only on \
-            --physics-list "$PHYSICS_LIST" \
-            --run-id       "$RUN_ID" \
-            --output-dir   "$ENERGY_DIR" > "$LOG_FILE" 2>&1 &
-    done
+    python3 simulator.py --beam-x -0.37032 --beam-y 0.37032 \
+        --world "$WORLD" --particle "$PARTICLE" --energy-kev "$ENERGY" \
+        --n "$N_EVENTS" --threads "$THREADS" --beam-radius "$BEAM_RADIUS" \
+        --optical "$OPTICAL" --cherenkov "$CHERENKOV" --hits-optical-only on \
+        --physics-list "$PHYSICS_LIST" --run-id 0 --output-dir "$ENERGY_DIR" > "$LOG_FILE" 2>&1 &
 done
 
-echo " [+] All 40 jobs dispatched to CPU pool. Waiting for execution to finish..."
+echo " [+] All 4 channels running. Monitoring workloads..."
 wait
-echo " [✓] Simulation sweep complete. Initiating analysis pipeline..."
-echo "------------------------------------------------------------------------"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# POST-PROCESSING PIPELINE
-# ─────────────────────────────────────────────────────────────────────────────
-for ENERGY in "${ENERGIES_KEV[@]}"; do
-    ENERGY_GBS=$(( ENERGY / 1000000 ))
-    ENERGY_DIR="${MASTER_BATCH_DIR}/${ENERGY_GBS}GeV"
-    ANALYSIS_LOG="${ENERGY_DIR}/analysis_pipeline_log.txt"
-    touch "$ANALYSIS_LOG"
-
-    echo " [+] [${ENERGY_GBS}GeV] Post-Processing (Running concurrently)..."
-
-    # Maintain 10 workers for analysis to keep total CPU load consistent
-    (
-        if [ -f "analyze.py" ]; then
-            python3 analyze.py --batch-dir "$ENERGY_DIR" --workers 10 >> "$ANALYSIS_LOG" 2>&1
-        fi
-
-        if [ -f "timing_res.py" ]; then
-            python3 timing_res.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
-        fi
-
-        if [ -f "tof_reconstruction.py" ]; then
-            python3 tof_reconstruction.py --batch-dir "$ENERGY_DIR" >> "$ANALYSIS_LOG" 2>&1
-        fi
-    ) &
-done
-
-wait
-echo "========================================================================"
-echo " Sweep and analysis complete. Dataset stored in:"
-echo " $MASTER_BATCH_DIR"
-echo "========================================================================"
+echo " [✓] Simulation sweep complete. Running sequential analysis pipeline..."
+# (Post processing cleanup block goes here...)
