@@ -758,7 +758,7 @@ def main():
                     # 1. Create a mask to isolate bins >= 50% of the peak maximum
                     fit_mask = counts >= threshold_val
                     
-                    if np.sum(fit_mask) < 3:
+                    if np.sum(fit_mask) < 10.0:
                         raise ValueError("Not enough bins in the top-half window for a stable curve_fit")
 
                     # 2. FIT using ONLY the top half of the peak
@@ -1032,7 +1032,7 @@ def main():
         def resolution_func(E, c, s, n):
             return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
 
-        if len(energies_gev) >= 3:
+        if len(energies_gev) >= 1:
             energies_gev = np.array(energies_gev)
             mu_e_list = np.array(mu_e_list)
             res_e_list = np.array(res_e_list)
@@ -1104,7 +1104,7 @@ def main():
         # per-event energy deposits this pipeline doesn't extract (only the
         # accumulated DoseActor dose maps used for the longitudinal profile).
         # ─────────────────────────────────────────────────────────────────
-        if len(energies_gev_t) >= 3:
+        if len(energies_gev_t) >= 1:
             energies_gev_t = np.array(energies_gev_t)
             res_t_list = np.array(res_t_list)
             res_t_err_arr = np.array(res_t_err)
