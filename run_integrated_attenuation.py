@@ -427,7 +427,7 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     an absorbing Tungsten matrix to prevent cladding propagation reflection.
     """
     # 1. Expand the master world coordinates to envelope the active capillary
-    world = sim.volume_manager.world
+    world = sim.world
     world.size = [30.0 * units.mm, 30.0 * units.mm, (length_mm + 20.0) * units.mm]
     world.material = "Air"
     
