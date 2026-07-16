@@ -410,7 +410,7 @@ WLS_PEAK_ENERGY_EV = {
     "BCF92": 2.52         # 492nm
 }
 
-N_PHOTONS_PER_RUN = 20000  # Total optical photons generated
+N_PHOTONS_PER_RUN = 200000    # Total optical photons generated
 THREADS = 8                # Execution threads
 
 
@@ -663,28 +663,31 @@ def extract_sipm_hits():
 
 def calculate_attenuation_length(distances_mm, hit_counts):
     """
-    Computes effective attenuation length (1/e slope) via linear fit.
+    Computes effective attenuation length using a log-linear fit,
+    ignoring near-field points (< 40mm) to strip non-guided direct light.
     """
     d = np.array(distances_mm, dtype=float)
     I = np.array(hit_counts, dtype=float)
-    
-    valid = (d > 0) & (I > 0)
+
+    # Mode stripper: Discard data points too close to the SiPM
+    valid = (d > 40.0) & (I > 0)
     if np.sum(valid) < 2:
-        return np.nan, np.nan, np.nan
-        
+        # Fallback if too few points remain
+        valid = (d > 0) & (I > 0)
+
     d_fit = d[valid]
     y_fit = np.log(I[valid])
-    
+
     slope, intercept = np.polyfit(d_fit, y_fit, 1)
-    
+
     lambda_eff_mm = -1.0 / slope if slope != 0 else np.nan
     I0 = np.exp(intercept)
-    
+
     y_pred = slope * d_fit + intercept
     ss_res = np.sum((y_fit - y_pred) ** 2)
     ss_tot = np.sum((y_fit - np.mean(y_fit)) ** 2)
     r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 1.0
-    
+
     return lambda_eff_mm, I0, r_squared
 
 
