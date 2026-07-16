@@ -4,19 +4,18 @@ import numpy as np
 from scipy.optimize import curve_fit
 from pathlib import Path
 
-# 1. Auto-detect world properties based on current directory name
 dir_name = Path(os.getcwd()).name.lower()
 
 if "dsb1" in dir_name:
-    n_index = 1.75  # Refractive index of DSB1
+    n_index = 1.75  
 elif "luagce" in dir_name:
-    n_index = 1.84  # Refractive index of LuAG:Ce
+    n_index = 1.84  
 else:
-    n_index = 1.60  # Default BCF-92 fiber cladding/core average
+    n_index = 1.60  
 
-V_EFF = 299.792 / n_index     # Effective speed in medium (mm/ns)
-TIMING_CUT_NS = 0.50          # Your chosen ToF prompt window (ns)
-SENSOR_Z_CM = 15.0            # Physical Z location of downstream SiPM (cm)
+V_EFF = 299.792 / n_index     
+TIMING_CUT_NS = 0.50          
+SENSOR_Z_CM = 15.0            
 
 calib_dir = Path("./calib_runs")
 distances_mm = []

@@ -13,27 +13,24 @@ WORLD_FOLDERS = [
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. SMART PARSER TEMPLATE
 # ─────────────────────────────────────────────────────────────────────────────
-# This script is smart: when copied, it reads its current directory name
-# to determine the correct refractive index (n) for the material.
 PARSER_TEMPLATE = """import os
 import uproot
 import numpy as np
 from scipy.optimize import curve_fit
 from pathlib import Path
 
-# 1. Auto-detect world properties based on current directory name
 dir_name = Path(os.getcwd()).name.lower()
 
 if "dsb1" in dir_name:
-    n_index = 1.75  # Refractive index of DSB1
+    n_index = 1.75  
 elif "luagce" in dir_name:
-    n_index = 1.84  # Refractive index of LuAG:Ce
+    n_index = 1.84  
 else:
-    n_index = 1.60  # Default BCF-92 fiber cladding/core average
+    n_index = 1.60  
 
-V_EFF = 299.792 / n_index     # Effective speed in medium (mm/ns)
-TIMING_CUT_NS = 0.50          # Your chosen ToF prompt window (ns)
-SENSOR_Z_CM = 15.0            # Physical Z location of downstream SiPM (cm)
+V_EFF = 299.792 / n_index     
+TIMING_CUT_NS = 0.50          
+SENSOR_Z_CM = 15.0            
 
 calib_dir = Path("./calib_runs")
 distances_mm = []
@@ -93,7 +90,7 @@ except Exception as e:
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. RUN SCRIPT TEMPLATE
+# 2. RUN SCRIPT TEMPLATE (FIXED: Using python3!)
 # ─────────────────────────────────────────────────────────────────────────────
 RUN_TEMPLATE = """#!/bin/bash
 # Parallel simulation sweeping the Z-axis
@@ -105,7 +102,7 @@ for offset in "${{OFFSETS[@]}}"; do
     OUT_DIR="./calib_runs/offset_${{offset}}"
     mkdir -p "$OUT_DIR"
     
-    python simulator.py \\
+    python3 simulator.py \\
         --world {WORLD_NAME} \\
         --particle opticalphoton \\
         --energy-kev 0.000003 \\
@@ -141,17 +138,14 @@ for folder in WORLD_FOLDERS:
         
         # Inject the command line argument if it doesn't already exist
         if "--beam-offset" not in content:
-            # Inject into parse_args()
             arg_target = 'return p.parse_args()'
             arg_replacement = 'p.add_argument("--beam-offset", type=float, default=None)\n    return p.parse_args()'
             content = content.replace(arg_target, arg_replacement)
             
-            # Inject into resolve_beam_config()
             cfg_target = 'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}'
             cfg_replacement = 'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}\n    if args.beam_offset is not None:\n        cfg["offset_cm"] = args.beam_offset'
             content = content.replace(cfg_target, cfg_replacement)
             
-            # Update function call signature to pass args
             def_target = 'def resolve_beam_config(world) -> dict:'
             def_replacement = 'def resolve_beam_config(world, args) -> dict:'
             content = content.replace(def_target, def_replacement)
