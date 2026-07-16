@@ -9,7 +9,7 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 # Dynamically balanced totals calculated for a 16-hour execution safety window
 # Spawns 1 process per energy x 10 internal C++ threads = 40 cores maxed out
 ENERGIES=(25000000 50000000 70000000 90000000)
-COUNTS=(1850 935 660 510)
+COUNTS=(18500 9350 6600 5100)
 THREADS=10
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
