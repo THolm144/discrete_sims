@@ -25,7 +25,6 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # ─────────────────────────────────────────────────────────────────────────────
 C_LIGHT_MM_NS = 299.792
 
-SIGMA_NS = 0.08
 SIGMA_NS = 0.02
 
 REFRACTIVE_INDEX = {
@@ -315,11 +314,14 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     lt_counts = np.zeros(500)
 
     # Pre-calculate expected downstream flight times per layer (distance / v_eff)
+    # Pre-calculate expected downstream flight times per layer (including shower propagation + optical transport)
     expected_times = []
+    z_start = -calor_thick_mm / 2.0
     for z_lo, z_hi in lyso_bounds:
         z_center = (z_lo + z_hi) / 2.0
-        dist_to_downstream = np.abs(detected_z_sensor - z_center)
-        expected_times.append(dist_to_downstream / v_eff)
+        t_shower = (z_center - z_start) / C_LIGHT_MM_NS
+        t_travel = np.abs(detected_z_sensor - z_center) / v_eff
+        expected_times.append(t_shower + t_travel)
 
     prompt_counts = np.zeros(_N_LYSO)
     total_events_processed = 0
@@ -378,6 +380,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # Soft-assign each downstream optical photon to nearby layers using a
         # Gaussian kernel in flight-time space, rather than a hard in/out cut.
         diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
+        diff = gt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
         weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
         weights[np.abs(diff) > 4.0 * SIGMA_NS] = 0.0   # truncate negligible tails, keeps it cheap
 
