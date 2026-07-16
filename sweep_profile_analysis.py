@@ -431,9 +431,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         is_target_layer = (true_layer_idx[:, None] == np.arange(_N_LYSO)[None, :])
 
         # Accumulate target and bounced counts separately
-        prompt_counts_target = []
-        prompt_counts_bounced = []
-        prompt_counts = []
+        prompt_counts_target = np.zeros(_N_LYSO)
+        prompt_counts_bounced = np.zeros(_N_LYSO)
+        prompt_counts = np.zeros(_N_LYSO)
         prompt_counts_target += (weights * is_target_layer).sum(axis=0)
         prompt_counts_bounced += (weights * (~is_target_layer)).sum(axis=0)
         prompt_counts += weights.sum(axis=0)
