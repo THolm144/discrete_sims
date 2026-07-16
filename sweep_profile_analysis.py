@@ -16,6 +16,7 @@ import uproot
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
+from scipy.signal import find_peaks
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -684,23 +685,61 @@ def main():
         fig_gt.savefig(global_dir / f"{mod}_globaltime.png", dpi=200)
         plt.close(fig_gt)
 
-        # ── GRAPH 3: LOCAL TIME VS STRIP STRIKES ──────────────────────────────
-
-
+       # ── GRAPH 3: LOCAL TIME (Pure Optical Travel Time) ───────────────────
         fig_lt, ax_lt = plt.subplots(figsize=(8, 5))
-        for ekey in energy_keys:
-            counts = master_summary[mod][ekey]["lt_counts"]
-            bins = master_summary[mod][ekey]["lt_bins"]
-            ax_lt.plot(0.5 * (bins[:-1] + bins[1:]), counts, label=ekey, alpha=0.8, linewidth=1.5)
 
-        ax_lt.set_xlabel("LocalTime (ns)", fontweight="bold")
-        ax_lt.set_ylabel("Optical Photon Strikes (Downstream)", fontweight="bold")
-        ax_lt.set_title(f"Downstream LocalTime Spectrum — {mod}", fontsize=11, fontweight="bold")
-        ax_lt.set_yscale("linear")
+        for idx, ekey in enumerate(energy_keys):
+            lt_counts = master_summary[mod][ekey]["lt_counts"]
+            lt_bins = master_summary[mod][ekey]["lt_bins"]
+            
+            # Convert bin edges to bin centers
+            bin_centers = 0.5 * (lt_bins[:-1] + lt_bins[1:])
+
+            # 1. Use scipy.signal.find_peaks to isolate prominent local peaks
+            # We filter for peaks with a prominence of at least 10% of the maximum height
+            peaks, _ = find_peaks(lt_counts, prominence=np.max(lt_counts) * 0.1)
+            
+            if len(peaks) == 0:
+                # Fallback if the peak is incredibly sharp and misses prominence criteria
+                primary_peak_idx = np.argmax(lt_counts)
+            else:
+                # Sort found peaks by count height and grab the absolute largest (the true wavefront)
+                primary_peak_idx = peaks[np.argsort(lt_counts[peaks])[-1]]
+
+            peak_time = bin_centers[primary_peak_idx]
+            peak_intensity = lt_counts[primary_peak_idx]
+
+            # 2. Plot the main distribution curve (now linear!)
+            line, = ax_lt.plot(bin_centers, lt_counts, label=f"{ekey} (Peak: {peak_time:.3f} ns)", alpha=0.85)
+            color = line.get_color()
+
+            # 3. Mark the peak point with a distinct star
+            ax_lt.scatter(peak_time, peak_intensity, marker="*", color=color, s=120, edgecolor="black", zorder=5)
+
+            # 4. Annotate the peak value with alternating offsets to prevent overlapping text
+            x_offset = 20 if idx % 2 == 0 else -95
+            y_offset = 15 if idx % 2 == 0 else -25
+
+            ax_lt.annotate(
+                f"{ekey}: {peak_time:.3f} ns",
+                xy=(peak_time, peak_intensity),
+                xytext=(x_offset, y_offset),
+                textcoords="offset points",
+                arrowprops=dict(arrowstyle="->", color="black", lw=0.8, connectionstyle="arc3,rad=0.1"),
+                fontsize=8.5,
+                fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor=color, alpha=0.8)
+            )
+
+        ax_lt.set_xlabel("Local Arrival Time (ns)", fontweight="bold")
+        ax_lt.set_ylabel("Photon Strikes", fontweight="bold")
+        ax_lt.set_title(f"Local Arrival Time Distribution (Linear) — {mod}", fontsize=11, fontweight="bold")
+        ax_lt.set_yscale("linear") # Explicitly linear!
         ax_lt.grid(True, linestyle=":", alpha=0.5)
-        ax_lt.legend(title="Beam Energy")
+        ax_lt.legend(title="Beam Components", loc="upper right")
+
         fig_lt.tight_layout()
-        fig_lt.savefig(local_dir / f"{mod}_localtime.png", dpi=200)
+        fig_lt.savefig(prompt_dir / f"{mod}_localtime_spectra.png", dpi=200)
         plt.close(fig_lt)
 
         # ── GRAPH 4: PROMPT PHOTON LONGITUDINAL RECONSTRUCTION ────────────────
