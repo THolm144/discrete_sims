@@ -3,13 +3,13 @@
 OFFSETS=(-10.0 -8.5 -7.0 -5.5 -4.0 -2.5 -1.0 0.5 2.0 3.5 5.0 6.5 8.0 9.5)
 
 echo "Launching 14 parallel OpenGATE calibration runs for world: dsb1_radi_cal_triple"
-echo "Targeting Capillary coordinate: X = 0.0 cm, Y = 0.0 cm"
+echo "Targeting Capillary coordinate: X = -0.37032 cm, Y = 0.37032 cm"
 
 for offset in "${OFFSETS[@]}"; do
     OUT_DIR="./calib_runs/offset_${offset}"
     mkdir -p "$OUT_DIR"
     
- python3 simulator.py --beam-x -0.37032 --beam-y 0.37032 \
+ python3 simulator.py --beam-x -0.37032 --beam-y 0.37032   \
         --world dsb1_radi_cal_triple \
         --particle opticalphoton \
         --energy-kev 0.003 \
@@ -17,8 +17,6 @@ for offset in "${OFFSETS[@]}"; do
         --threads 1 \
         --beam-radius 0.0 \
         --beam-offset "$offset" \
-        --beam-x 0.0 \
-        --beam-y 0.0 \
         --optical on \
         --hits-optical-only on \
         --output-dir "$OUT_DIR" > "${OUT_DIR}/sim.log" 2>&1 &

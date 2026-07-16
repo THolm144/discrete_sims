@@ -47,7 +47,7 @@ for ENERGY in "${ENERGIES_KEV[@]}"; do
         LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_run_${RUN_ID}.log"
         
         # Notice threads is now 1, and we push directly to background (&)
- python3 simulator.py --beam-x 0.00000 --beam-y 0.35000 \
+ python3 simulator.py --beam-x 0.00000 --beam-y 0.35000   \
             --world        "$WORLD" \
             --particle     "$PARTICLE" \
             --energy-kev   "$ENERGY" \

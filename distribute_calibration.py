@@ -2,8 +2,8 @@
 """
 distribute_calibration.py
 =========================
-Automatically parses active capillary coordinates from each world module
-and updates all local shell execution scripts with the correct --beam-x and --beam-y coordinates.
+Robustly parses active capillary coordinates from each world module and updates
+all local shell execution scripts, supporting multi-line commands and echo lines.
 """
 
 import os
@@ -105,34 +105,54 @@ def extract_beam_coordinates(world_path: Path):
 def patch_shell_script(script_path: Path, x_cm: float, y_cm: float) -> bool:
     """
     Finds commands calling 'simulator.py' and injects/updates '--beam-x' and '--beam-y'.
+    Handles multi-line backslash formats and hardcoded echo outputs robustly.
     """
     with open(script_path, "r") as f:
         content = f.read()
         
+    # 1. Update hardcoded target coordinate echo lines
+    # Match strings like: echo "Targeting Capillary coordinate: X = 0.0 cm, Y = 0.0 cm"
+    orig_content = content
+    content = re.sub(
+        r'echo "Targeting Capillary coordinate: X\s*=\s*[-\d\.]+\s*cm,\s*Y\s*=\s*[-\d\.]+\s*cm"',
+        f'echo "Targeting Capillary coordinate: X = {x_cm:.5f} cm, Y = {y_cm:.5f} cm"',
+        content
+    )
+    
+    # 2. Clean and update simulator commands
     lines = content.splitlines()
-    updated = False
     new_lines = []
+    updated_run_line = False
     
     for line in lines:
-        if "simulator.py" in line and not line.strip().startswith("#"):
-            # Clean out any old/existing beam coordinate flags
-            line = re.sub(r'--beam-x\s+[-\d\.]+', '', line)
-            line = re.sub(r'--beam-y\s+[-\d\.]+', '', line)
-            line = re.sub(r'--beam-x=[-\d\.]+', '', line)
-            line = re.sub(r'--beam-y=[-\d\.]+', '', line)
+        # If it's a standalone parameter line containing only --beam-x or --beam-y (common in multiline setups)
+        is_pure_beam_arg = re.match(r'^\s*--beam-[xy](?:\s+|=\s*)[-\d\.]+\s*(\\?)\s*$', line)
+        if is_pure_beam_arg:
+            # Drop the standalone line entirely. Backslash line breaks will safely carry forward.
+            updated_run_line = True
+            continue
             
-            # Inject new coordinates directly after simulator.py
+        # If it's the main simulator execution call
+        if "simulator.py" in line and not line.strip().startswith("#"):
+            # Strip out any existing inline --beam-x or --beam-y parameters
+            line = re.sub(r'--beam-x(?:\s+|=\s*)[-\d\.]+', '', line)
+            line = re.sub(r'--beam-y(?:\s+|=\s*)[-\d\.]+', '', line)
+            
+            # Re-inject the correct, fresh coordinates right after simulator.py
             line = line.replace("simulator.py", f"simulator.py --beam-x {x_cm:.5f} --beam-y {y_cm:.5f}")
-            line = re.sub(r'\s+', ' ', line) # Clean redundant spaces
-            updated = True
+            updated_run_line = True
             
         new_lines.append(line)
         
-    if updated:
+    final_content = "\n".join(new_lines) + "\n"
+    
+    # Save only if we actually modified something
+    if final_content != orig_content or updated_run_line:
         with open(script_path, "w") as f:
-            f.write("\n".join(new_lines) + "\n")
-            
-    return updated
+            f.write(final_content)
+        return True
+        
+    return False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN EXECUTION
@@ -142,7 +162,7 @@ def main():
     base_dir = Path(__file__).resolve().parent
     
     print("=" * 80)
-    print(" RADiCAL Calibration Coordination & Deployer Script")
+    print(" RADiCAL Calibration Coordination & Deployer Script (Multi-line Patched)")
     print("=" * 80)
     
     results = []

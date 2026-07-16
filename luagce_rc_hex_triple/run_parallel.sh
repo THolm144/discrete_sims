@@ -17,7 +17,7 @@ echo "Logs → ${LOG_DIR}"
 
 pids=()
 for i in $(seq 0 $((N_RUNS - 1))); do
- python3 simulator.py --beam-x 0.00000 --beam-y 0.35000 \
+ python3 simulator.py --beam-x 0.00000 --beam-y 0.35000   \
         --world       $WORLD \
         --particle    $PARTICLE \
         --energy-kev  $ENERGY_KEV \
