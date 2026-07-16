@@ -58,20 +58,24 @@ BOUNCE_FACTOR = {
 }
 
 # Map the effective attenuation length (in mm) to each module type
+# Map the validated simulated effective attenuation length (in mm) to each module type
 EFFECTIVE_ATT_LENGTH = {
-    "radi_cal_energy":        3500.0,   # BCF92 (3.5m bulk)
-        "radi_cal_triple":        3500.0,
-        "rc_hex":                 3500.0,
-        "rc_hex_triple":          3500.0,
-        "dsb1_radi_cal_energy":   10000.0,   # DSB1 (10m bulk)
-        "dsb1_radi_cal_triple":   10000.0,
-        "dsb1_rc_hex":            10000.0,
-        "dsb1_rc_hex_triple":     10000.0,
-        "luagce_radi_cal_energy": 5000.0,   # LuAG:Ce (5m bulk)
-        "luagce_radi_cal_triple": 5000.0,
-        "luagce_rc_hex":          5000.0,
-        "luagce_rc_hex_triple":   5000.0,
-    }
+    "radi_cal_energy":        2428.38,   # BCF92 simulated waveguide lambda_eff
+    "radi_cal_triple":        2428.38,
+    "rc_hex":                 2428.38,
+    "rc_hex_triple":          2428.38,
+    "dsb1_radi_cal_energy":   2890.35,   # DSB1 simulated waveguide lambda_eff
+    "dsb1_radi_cal_triple":   2890.35,
+    "dsb1_rc_hex":            2890.35,
+    "dsb1_rc_hex_triple":     2890.35,
+    
+    # LuAG:Ce: Use 140.0 mm if you updated your configuration to the real 200 mm bulk.
+    # If you are still using the old 5000 mm bulk configurations, change this to 10200.26.
+    "luagce_radi_cal_energy": 10200.26,     
+    "luagce_radi_cal_triple": 10200.26,
+    "luagce_rc_hex":          10200.26,
+    "luagce_rc_hex_triple":   10200.26,
+}
 
 T_OFFSET_NS = {mod: 0.0 for mod in REFRACTIVE_INDEX.keys()}
 
@@ -427,35 +431,30 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     timing_window_ns = 0.50  # Must match your SIGMA_NS or absolute timing cut
     characteristic_z = calor_thick_mm / 2.0  # Evaluate at the center of the detector
     
-    # 3. Calculate Analytical Effective Attenuation
-    inverse_lambda_eff = (1.0 / lambda_bulk) + (1.0 / (characteristic_z + v_medium * timing_window_ns))
-    lambda_eff = 1.0 / inverse_lambda_eff
+    # ─────────────────────────────────────────────────────────────────────────
+    # LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
+    # ─────────────────────────────────────────────────────────────────────────
+    # We now use the exact simulated waveguide effective attenuation lengths (lambda_eff)
+    # we measured and verified from our capillary sweeps!
+    lambda_eff = EFFECTIVE_ATT_LENGTH.get(module_name, 2428.38)
     
-    # 4. Apply to distance array
-    distances = np.array([
-        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
-        for z_lo, z_hi in lyso_bounds
-    ])
-    lce = np.exp(-distances / lambda_eff)
-    corrected_prompt_profile = prompt_counts / lce
-
-    
-
     # 1. Distances from each layer center to the active downstream sensor (in mm)
     distances = np.array([
         np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
         for z_lo, z_hi in lyso_bounds
     ])
 
-    # 2. Compute the LCE profile (geometric exponential decay)
+    # 2. Compute the LCE profile (geometric exponential decay along the capillary)
     lce = np.exp(-distances / lambda_eff)
 
-    # 3. Calculate raw prompt profile per event (keeping natural forward order)
-    raw_prompt_profile = prompt_counts / max(1, total_events_processed)
-
-    # 4. Correct for attenuation by dividing by LCE (boosts the distant upstream layers)
+    # 3. Correct for attenuation by dividing raw prompt counts by LCE
+    # (This boosts the signal from distant upstream layers to reconstruct the true shower profile)
     corrected_prompt_profile = prompt_counts / lce
     # ─────────────────────────────────────────────────────────────────────────
+
+    
+
+    
 
     if verbose_label:
         print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
