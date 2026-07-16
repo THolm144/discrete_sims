@@ -1232,11 +1232,11 @@ def main():
                 markersize=7, 
                 label=mod
             )
-    if any_points:
+    if any_fwhm_points:
         x_ref = np.linspace(4.0, 200.0, 200)
         for ref_name, ref_p in TIMING_REF_CURVES.items():
             y_ref = timing_ref_curve(x_ref, ref_p["stoch"], ref_p["const"])
-            ax_perf.plot(x_ref, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=2.0,
+            ax_fwhm.plot(x_ref, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=2.0,
                          label=f"{ref_name}: {ref_p['stoch']:.0f}/$\\sqrt{{E}}$ $\\oplus$ {ref_p['const']:.1f} ps")
 
     ax_fwhm.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
