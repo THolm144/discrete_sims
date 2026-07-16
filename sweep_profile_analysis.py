@@ -502,9 +502,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     lce = np.exp(-distances / lambda_eff)
 
     # 3. Correct for attenuation by dividing raw prompt counts by LCE
-    corrected_prompt_profile = prompt_counts / lce
-    corrected_prompt_target = prompt_counts_target / lce
-    corrected_prompt_bounced = prompt_counts_bounced / lce
+    corrected_prompt_profile = prompt_counts #/ lce
+    corrected_prompt_target = prompt_counts_target #/ lce
+    corrected_prompt_bounced = prompt_counts_bounced #/ lce
 
     
     # ─────────────────────────────────────────────────────────────────────────
