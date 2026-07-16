@@ -25,6 +25,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # ─────────────────────────────────────────────────────────────────────────────
 C_LIGHT_MM_NS = 299.792
 
+SIGMA_NS = 0.08
 SIGMA_NS = 0.02
 
 REFRACTIVE_INDEX = {
@@ -68,7 +69,7 @@ EFFECTIVE_ATT_LENGTH = {
     "dsb1_radi_cal_triple":   2890.35,
     "dsb1_rc_hex":            2890.35,
     "dsb1_rc_hex_triple":     2890.35,
-    
+
     # LuAG:Ce: Use 140.0 mm if you updated your configuration to the real 200 mm bulk.
     # If you are still using the old 5000 mm bulk configurations, change this to 10200.26.
     "luagce_radi_cal_energy": 10200.26,     
@@ -139,7 +140,7 @@ def load_mhd_z_profile(mhd_path: Path):
     """
     if not mhd_path.exists():
         return None
-    
+
     meta = {}
     try:
         with open(mhd_path, "r") as f:
@@ -147,21 +148,21 @@ def load_mhd_z_profile(mhd_path: Path):
                 if "=" in line:
                     k, v = line.split("=", 1)
                     meta[k.strip()] = v.strip()
-        
+
         raw_file = meta.get("ElementDataFile")
         if not raw_file:
             return None
-        
+
         raw_path = mhd_path.parent / raw_file
         if not raw_path.exists():
             return None
-        
+
         dim_size = [int(x) for x in meta.get("DimSize", "1 1 1").split()]
         dtype = np.float32 if meta.get("ElementType") == "MET_FLOAT" else np.float64
-        
+
         # Load the raw binary matrix
         data = np.fromfile(raw_path, dtype=dtype)
-        
+
         # Squeeze/reshape array depending on its dimensions
         if len(dim_size) == 3:
             # Gate 3D DoseActor matrices are saved in C-contiguous format: (Z, Y, X)
@@ -184,12 +185,12 @@ def rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm):
     # Gate centers DoseActor coordinate grid symmetrically around Z = 0
     z_edges = np.linspace(-calor_thick_mm / 2.0, calor_thick_mm / 2.0, n_bins + 1)
     z_mids = 0.5 * (z_edges[:-1] + z_edges[1:])
-    
+
     layer_profile = np.zeros(len(lyso_bounds))
     for idx, (z_lo, z_hi) in enumerate(lyso_bounds):
         mask = (z_mids >= z_lo) & (z_mids <= z_hi)
         layer_profile[idx] = np.sum(fine_profile[mask])
-        
+
     return layer_profile
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -300,7 +301,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         mhd_files = list(rdir.glob("run_Dose_edep.mhd"))
         if not mhd_files:
             mhd_files = list(rdir.glob("*Dose_edep.mhd"))
-            
+
         if mhd_files:
             fine_profile = load_mhd_z_profile(mhd_files[0])
             if fine_profile is not None:
@@ -314,22 +315,19 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     lt_counts = np.zeros(500)
 
     # Pre-calculate expected downstream flight times per layer (distance / v_eff)
-    # Pre-calculate expected downstream flight times per layer (including shower propagation + optical transport)
     expected_times = []
-    z_start = -calor_thick_mm / 2.0
     for z_lo, z_hi in lyso_bounds:
         z_center = (z_lo + z_hi) / 2.0
-        t_shower = (z_center - z_start) / C_LIGHT_MM_NS
-        t_travel = np.abs(detected_z_sensor - z_center) / v_eff
-        expected_times.append(t_shower + t_travel)
+        dist_to_downstream = np.abs(detected_z_sensor - z_center)
+        expected_times.append(dist_to_downstream / v_eff)
 
     prompt_counts = np.zeros(_N_LYSO)
     total_events_processed = 0
-    
+
     expected_times_arr = np.array(expected_times)
     for fpath in hit_files:
         run_tag = fpath.parent.name
-        
+
         try:
             with uproot.open(fpath) as f:
                 tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
@@ -379,7 +377,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ── GRAPH 4: Prompt Photon Weighted-Centroid Assignment ──────────────
         # Soft-assign each downstream optical photon to nearby layers using a
         # Gaussian kernel in flight-time space, rather than a hard in/out cut.
-        diff = gt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
+        diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
         weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
         weights[np.abs(diff) > 4.0 * SIGMA_NS] = 0.0   # truncate negligible tails, keeps it cheap
 
@@ -423,24 +421,24 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "luagce_rc_hex":          5000.0,
         "luagce_rc_hex_triple":   5000.0,
     }
-    
+
     lambda_bulk = bulk_att_lengths.get(module_name, 3500.0)
-    
+
     # 2. Define physics parameters
     c_speed = 299.792 # mm/ns
     n_index = REFRACTIVE_INDEX.get(module_name, 1.60)
     v_medium = c_speed / n_index
-    
+
     timing_window_ns = 0.50  # Must match your SIGMA_NS or absolute timing cut
     characteristic_z = calor_thick_mm / 2.0  # Evaluate at the center of the detector
-    
+
     # ─────────────────────────────────────────────────────────────────────────
     # LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
     # ─────────────────────────────────────────────────────────────────────────
     # We now use the exact simulated waveguide effective attenuation lengths (lambda_eff)
     # we measured and verified from our capillary sweeps!
     lambda_eff = EFFECTIVE_ATT_LENGTH.get(module_name, 2428.38)
-    
+
     # 1. Distances from each layer center to the active downstream sensor (in mm)
     distances = np.array([
         np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
@@ -455,9 +453,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     corrected_prompt_profile = prompt_counts / lce
     # ─────────────────────────────────────────────────────────────────────────
 
-    
 
-    
+
+
 
     if verbose_label:
         print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
@@ -629,8 +627,8 @@ def main():
         plt.close(fig_gt)
 
         # ── GRAPH 3: LOCAL TIME VS STRIP STRIKES ──────────────────────────────
-        
-        
+
+
         fig_lt, ax_lt = plt.subplots(figsize=(8, 5))
         for ekey in energy_keys:
             counts = master_summary[mod][ekey]["lt_counts"]
@@ -650,11 +648,11 @@ def main():
         # ── GRAPH 4: PROMPT PHOTON LONGITUDINAL RECONSTRUCTION ────────────────
         fig_rec, (ax_rec, ax_truth) = plt.subplots(1, 2, figsize=(15, 5.5))
         layers_x = np.arange(1, _N_LYSO + 1)
-        
+
         for ekey in energy_keys:
             profile = master_summary[mod][ekey]["prompt_profile"]
             ax_rec.plot(layers_x, profile, marker="o", markersize=4, label=ekey, alpha=0.8)
-            
+
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
             ax_truth.plot(layers_x, truth_prof, marker="s", markersize=4, label=ekey, alpha=0.8)
 
@@ -694,7 +692,7 @@ def main():
                 clean_t = clean_around_mode(raw_t, window_ps=500.0)
                 clean_t = clean_t - np.median(clean_t) # Zero alignment
                 _, mu_f, sigma_f = fit_gaussian_to_peak(clean_t)
-                
+
                 t_res_x.append(extract_numerical_energy(ekey))
                 t_res_y.append(sigma_f)
                 t_res_yerr.append(sigma_f / np.sqrt(2 * n_ev))
