@@ -5,13 +5,9 @@ run_integrated_attenuation.py
 A completely self-contained, high-fidelity optical attenuation simulation 
 for the RADiCAL capillary structure.
 
-Includes:
-- Dynamic XML generation (using your provided Materials & Surface configurations)
-- Procedural single-capillary geometry construction
-- Optical photon direct injection sweeps
-- Clean-up automation for intermediate ROOT files
-- Exponential curve fitting with R² quality scoring
-- Subprocess pattern execution to circumvent the SimulationEngine singleton limitation.
+Corrected:
+- Swapped '.parent' to '.mother' to properly nest Geant4 geometries and fix
+  all overlap failures.
 ================================================================================
 """
 
@@ -418,13 +414,13 @@ THREADS = 8                # CPU threads to allocate local runs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. GEOMETRY BUILDER
+# 3. GEOMETRY BUILDER (FIXED)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_capillary_world(sim, length_mm, wls_material, units):
     """
     Constructs a high-fidelity isolated capillary system embedded inside
-    an absorbing Tungsten matrix to prevent cladding propagation reflection.
+    an absorbing Tungsten matrix. Fixed hierarchal mother-daughter properties.
     """
     script_dir = Path(__file__).resolve().parent
     db_path = script_dir / "GateMaterials.db"
@@ -437,43 +433,43 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     else:
         print(f"[Warning] Could not find local GateMaterials.db at: {db_path}")
 
-    # 1. Expand the master world coordinates to envelope the active capillary
+    # 1. Expand the master world coordinates
     world = sim.world
     world.size = [30.0 * units.mm, 30.0 * units.mm, (length_mm + 20.0) * units.mm]
     world.material = "Air"
     
-    # 2. Surround the capillary with dense, absorbent Tungsten (Box uses full dimensions)
+    # 2. Surround the capillary with dense, absorbent Tungsten
     absorber = sim.add_volume("Box", "absorber")
-    absorber.parent = world
+    absorber.mother = "world"                  # FIXED: Swapped from .parent to .mother
     absorber.material = "Tungsten"
     absorber.size = [10.0 * units.mm, 10.0 * units.mm, length_mm * units.mm]
     absorber.translation = [0, 0, 0]
     
-    # 3. Nest the Quartz capillary shell (Tubs uses half-length dz)
+    # 3. Nest the Quartz capillary shell inside the Tungsten absorber
     quartz_sleeve = sim.add_volume("Tubs", "quartz_sleeve")
-    quartz_sleeve.parent = absorber
+    quartz_sleeve.mother = "absorber"          # FIXED: Swapped from .parent to .mother
     quartz_sleeve.material = "Quartz"
     quartz_sleeve.rmax = 0.5 * units.mm
     quartz_sleeve.rmin = 0.0 * units.mm
-    quartz_sleeve.dz = (length_mm / 2.0) * units.mm  # FIXED: dz is half-length
+    quartz_sleeve.dz = (length_mm / 2.0) * units.mm
     quartz_sleeve.translation = [0, 0, 0]
     
-    # 4. Nest the Core wavelength shifting (WLS) filament inside the Quartz (Tubs uses half-length dz)
+    # 4. Nest the Core wavelength shifting (WLS) filament inside the Quartz
     wls_core = sim.add_volume("Tubs", "wls_core")
-    wls_core.parent = quartz_sleeve
+    wls_core.mother = "quartz_sleeve"          # FIXED: Swapped from .parent to .mother
     wls_core.material = wls_material
     wls_core.rmax = 0.3 * units.mm
     wls_core.rmin = 0.0 * units.mm
-    wls_core.dz = (length_mm / 2.0) * units.mm  # FIXED: dz is half-length
+    wls_core.dz = (length_mm / 2.0) * units.mm
     wls_core.translation = [0, 0, 0]
     
-    # 5. Position the Downstream Sensor (Tubs uses half-length dz)
+    # 5. Position the Downstream Sensor directly inside the World (outside the absorber)
     sipm_down = sim.add_volume("Tubs", "sipm_down")
-    sipm_down.parent = world
+    sipm_down.mother = "world"                 # FIXED: Swapped from .parent to .mother
     sipm_down.material = "G4_Si"
     sipm_down.rmax = 0.5 * units.mm
     sipm_down.rmin = 0.0 * units.mm
-    sipm_down.dz = 0.1 * units.mm  # FIXED: dz is half-length (0.2mm total thickness)
+    sipm_down.dz = 0.1 * units.mm
     sipm_down.translation = [0, 0, (length_mm / 2.0 + 0.1) * units.mm]
 
 
@@ -502,7 +498,7 @@ def execute_actual_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
     # Inject isotropic optical photons inside the WLS core at the dynamic Z offset
     source = sim.add_source("GenericSource", "isotropic_optical_source")
     source.particle = "opticalphoton"
-    source.polarization = [1, 0, 0]  # FIXED: Suppresses ZeroPolarization warning block!
+    source.polarization = [1, 0, 0]  # Suppresses ZeroPolarization warning block
     source.energy.mono = peak_ev * units.eV
     source.position.type = "cylinder"
     source.position.radius = 0.28 * units.mm
