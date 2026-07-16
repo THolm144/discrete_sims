@@ -453,7 +453,7 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     wls_core.material = wls_material
     wls_core.rmax = 0.3 * units.mm
     wls_core.rmin = 0.0 * units.mm
-    wls_core.size_z = length_mm * units.mm
+    wls_core.dz = length_mm * units.mm
     wls_core.translation = [0, 0, 0]
     
     # 5. Position the Downstream Sensor
@@ -462,7 +462,7 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     sipm_down.material = "G4_Si"
     sipm_down.rmax = 0.5 * units.mm
     sipm_down.rmin = 0.0 * units.mm                 # <--- Added explicit inner radius (0.0)
-    sipm_down.size_z = 0.2 * units.mm
+    sipm_down.dz = 0.2 * units.mm
     sipm_down.translation = [0, 0, (length_mm / 2.0 + 0.1) * units.mm]
 
 
@@ -493,7 +493,7 @@ def run_point_simulation(length_mm, wls_material, z_offset_mm, peak_ev):
     source.energy.mono = peak_ev * units.eV
     source.position.type = "cylinder"
     source.position.radius = 0.28 * units.mm
-    source.position.size_z = 0.1 * units.mm
+    source.position.dz = 0.1 * units.mm
     source.position.translation = [0.0 * units.mm, 0.0 * units.mm, z_offset_mm * units.mm]
     source.direction.type = "iso"
     source.n = max(1, int(N_PHOTONS_PER_RUN / THREADS))
