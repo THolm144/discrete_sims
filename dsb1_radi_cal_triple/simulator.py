@@ -76,6 +76,7 @@ def parse_args():
     p.add_argument("--hits-optical-only", choices=["on", "off", "world"], default="world",
                    help="Filter detector_hits actors to opticalphoton hits only. "
                         "'world' = respect world manifest (default off).")
+    p.add_argument("--beam-offset", type=float, default=None)
     return p.parse_args()
 
 
@@ -111,8 +112,10 @@ def resolve_capabilities(world, args) -> dict:
     return caps
 
 
-def resolve_beam_config(world) -> dict:
+def resolve_beam_config(world, args) -> dict:
     cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}
+    if args.beam_offset is not None:
+        cfg["offset_cm"] = args.beam_offset
     return cfg
 
 
@@ -431,7 +434,7 @@ def main():
     batch_dir, run_dir = resolve_output_dirs(args, script_dir)
     world              = load_world(args.world, script_dir)
     caps               = resolve_capabilities(world, args)
-    beam_cfg           = resolve_beam_config(world)
+    beam_cfg           = resolve_beam_config(world, args)
 
     print("=" * 60)
     print(f"  World       : {args.world}")
