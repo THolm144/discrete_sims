@@ -251,6 +251,43 @@ def calculate_empirical_fwhm(data, bins=100):
     return float(x_right - x_left)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# EXTERNAL REFERENCE CURVES (hardcoded — no underlying data files)
+# ─────────────────────────────────────────────────────────────────────────────
+# These constants are read directly off the legends of the reference plots and
+# are NOT derived from any sim output. They exist purely for visual comparison
+# against the single simulated flavor this pipeline actually computes.
+
+# Timing resolution: sigma_t(E) [ps] = sqrt( (stoch/sqrt(E))^2 + const^2 )
+TIMING_REF_CURVES = {
+    "DATA (test beam)":        {"stoch": 181.0, "const": 34.9, "color": "black",   "ls": "-"},
+    "paper (arXiv:2401.01747)": {"stoch": 256.0, "const": 17.5, "color": "gray",    "ls": "--"},
+}
+
+def timing_ref_curve(E_gev, stoch, const):
+    E_gev = np.asarray(E_gev, dtype=float)
+    return np.sqrt((stoch / np.sqrt(E_gev)) ** 2 + const ** 2)
+
+# Energy resolution: sigma_E/E(E) [fraction] = sqrt(c^2 + (s/sqrt(E))^2 + (n/E)^2)
+# Percent constants converted to fractions (i.e. /100) so they overlay directly
+# on this script's existing res_e_list (sigma/mu, dimensionless).
+ENERGY_REF_CURVES = {
+    "paper Fig 17": {"c": 9.31 / 100.0, "s": 52.04 / 100.0, "n": 31.62 / 100.0, "color": "gray", "ls": "--"},
+}
+# DATA sum_lg band from test beam, given as a flat 11-19% range (no explicit
+# energy dependence was shown), plotted as a shaded horizontal band.
+ENERGY_DATA_BAND_FRAC = (0.11, 0.19)
+
+def energy_ref_curve(E_gev, c, s, n):
+    E_gev = np.asarray(E_gev, dtype=float)
+    return np.sqrt(c ** 2 + (s / np.sqrt(E_gev)) ** 2 + (n / E_gev) ** 2)
+
+# Longo shower-profile parametrization: dE/dt ~ t^(alpha-1) * exp(-beta*t)
+def longo_profile(t, norm, alpha, beta):
+    t = np.asarray(t, dtype=float)
+    t_safe = np.clip(t, 1e-6, None)
+    return norm * (t_safe ** (alpha - 1.0)) * np.exp(-beta * t_safe)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
 # ─────────────────────────────────────────────────────────────────────────────
 def _chunk_series(mask, values, ev, run_tag):
@@ -445,14 +482,16 @@ def main():
     analysis_out.mkdir(parents=True, exist_ok=True)
 
     # ── SUBFOLDER GENERATION HIERARCHY ───────────────────────────────────────
-    timing_dir = analysis_out / "timing_distributions"
-    profile_dir = analysis_out / "longitudinal_profiles"
-    energy_dir = analysis_out / "energy_performance"
+    # Per-module plots (timing panels, longitudinal profiles, energy
+    # performance, transverse profiles) live under analysis_out/<module_name>/.
+    # Global cross-module comparison plots stay in analysis_out/summary_plots/.
     summary_dir = analysis_out / "summary_plots"
-    transverse_dir = analysis_out / "transverse_profiles"
+    summary_dir.mkdir(parents=True, exist_ok=True)
 
-    for d in [timing_dir, profile_dir, energy_dir, summary_dir, transverse_dir]:
+    def module_dir(mod_name: str) -> Path:
+        d = analysis_out / mod_name
         d.mkdir(parents=True, exist_ok=True)
+        return d
 
     master_summary = {mod: {} for mod in modules}
 
@@ -555,6 +594,8 @@ def main():
     except ImportError:
         utils = None
 
+    energy_res_by_module = {}  # mod -> (energies_gev, res_e_list, res_e_err), for global comparison plot
+
     for mod in modules:
         if mod not in master_summary or not master_summary[mod]:
             continue
@@ -572,7 +613,7 @@ def main():
         # 1. TIMING HIERARCHY — STABLE FIT WITH DYNAMIC FREEDMAN-DIACONIS BINNING
         # ─────────────────────────────────────────────────────────────────────
         # Ensure the directory physically exists before saving
-        timing_dir.mkdir(parents=True, exist_ok=True)
+        mod_dir = module_dir(mod)
 
         print(f"\n[DEBUG] Processing module {mod}. Total energy keys to plot: {len(energy_keys)}")
 
@@ -746,7 +787,7 @@ def main():
             fig_time.suptitle(f"Timing Resolution Distributions — {mod}", fontsize=14, fontweight="bold", y=0.98)
             fig_time.tight_layout()
 
-            save_path = timing_dir / f"{mod}_timing_panels.png"
+            save_path = mod_dir / f"{mod}_timing_panels.png"
             fig_time.savefig(save_path, dpi=200)
             print(f"[SUCCESS] Saved timing plot to: {save_path.resolve()}")
         else:
@@ -757,6 +798,8 @@ def main():
         # ─────────────────────────────────────────────────────────────────────
         # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
         # ─────────────────────────────────────────────────────────────────────
+        truth_curves_by_energy = {}  # E_gev -> normalized DoseActor profile (for overlay plot below)
+
         for ekey in energy_keys:
             raw_profile = master_summary[mod][ekey]["tof_profile"]
             sigma_t_ps = master_summary[mod][ekey]["sigma_t_ps"]
@@ -805,6 +848,7 @@ def main():
 
             if truth_curve is not None and np.sum(truth_curve) > 0:
                 truth_norm_disp = truth_curve / np.sum(truth_curve)
+                truth_curves_by_energy[extract_numerical_energy(ekey)] = truth_norm_disp
                 ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
                        linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
 
@@ -846,8 +890,49 @@ def main():
             ax_ratio.grid(True, linestyle=":", alpha=0.6)
 
             fig_prof.tight_layout()
-            fig_prof.savefig(profile_dir / f"{mod}_{ekey}_profile.png", dpi=200)
+            fig_prof.savefig(mod_dir / f"{mod}_{ekey}_profile.png", dpi=200)
             plt.close(fig_prof)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 2B. LONGITUDINAL SHOWER PROFILE VS ENERGY — DoseActor TRUTH OVERLAY
+        # All energies overlaid on one axes, each fit with a Longo parametrization
+        # ─────────────────────────────────────────────────────────────────────
+        if len(truth_curves_by_energy) >= 2:
+            fig_ov, ax_ov = plt.subplots(figsize=(8, 6))
+            cmap = cm.get_cmap("rainbow", len(truth_curves_by_energy))
+            sorted_e = sorted(truth_curves_by_energy.keys())
+
+            for i, E_val in enumerate(sorted_e):
+                prof = truth_curves_by_energy[E_val]
+                color = cmap(i)
+
+                ax_ov.step(layers, prof, where="mid", color=color, alpha=0.5, linewidth=1.0,
+                           label=f"{E_val:g} GeV")
+
+                try:
+                    peak_idx = int(np.argmax(prof))
+                    p0 = [float(np.max(prof)), max(peak_idx * 0.3, 1.5), 0.3]
+                    popt, _ = curve_fit(
+                        longo_profile, layers, prof, p0=p0,
+                        bounds=([0.0, 0.5, 0.01], [np.max(prof) * 20.0, 40.0, 5.0]),
+                        maxfev=10000,
+                    )
+                    t_smooth = np.linspace(layers.min(), layers.max(), 300)
+                    ax_ov.plot(t_smooth, longo_profile(t_smooth, *popt), color=color, linewidth=1.8)
+                except Exception as e:
+                    print(f"  [WARNING] Longo fit failed for {mod} @ {E_val} GeV: {e}")
+
+            ax_ov.set_xlabel("LYSO layer", fontsize=11)
+            ax_ov.set_ylabel("normalized ⟨E⟩", fontsize=11)
+            ax_ov.set_title(f"Longitudinal shower profile vs energy — {mod}", fontsize=13, fontweight="bold")
+            ax_ov.grid(True, linestyle=":", alpha=0.6)
+            ax_ov.legend(title="Longo fit: $t^{\\alpha-1}e^{-\\beta t}$", fontsize=8, title_fontsize=9)
+            fig_ov.tight_layout()
+            fig_ov.savefig(mod_dir / f"{mod}_longitudinal_overlay.png", dpi=200)
+            plt.close(fig_ov)
+            print(f"[SUCCESS] Saved longitudinal overlay plot for {mod}")
+        else:
+            print(f"[WARNING] Not enough DoseActor truth curves to build longitudinal overlay for {mod}")
 
         # ─────────────────────────────────────────────────────────────────────
         # 3. ENERGY LINEARITY AND RESOLUTION PANELS
@@ -874,6 +959,8 @@ def main():
             energies_gev = np.array(energies_gev)
             mu_e_list = np.array(mu_e_list)
             res_e_list = np.array(res_e_list)
+            res_e_err_arr = np.array(res_e_err)
+            energy_res_by_module[mod] = (energies_gev, res_e_list, res_e_err_arr)
 
             fig_er, (ax_lin, ax_res) = plt.subplots(1, 2, figsize=(14, 6))
 
@@ -912,6 +999,15 @@ def main():
             ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
                         color="black", linestyle="--", label=fit_label)
 
+            # -- External reference overlays (hardcoded, no underlying data files) --
+            for ref_name, ref_p in ENERGY_REF_CURVES.items():
+                y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
+                ax_res.plot(x_res_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5,
+                            label=f"{ref_name}: {ref_p['c']*100:.2f}$\\oplus${ref_p['s']*100:.2f}/$\\sqrt{{E}}$"
+                                  f"$\\oplus${ref_p['n']*100:.2f}/E")
+            ax_res.axhspan(ENERGY_DATA_BAND_FRAC[0], ENERGY_DATA_BAND_FRAC[1], color="lightgray", alpha=0.4,
+                           label=f"DATA sum$_{{lg}}$: {ENERGY_DATA_BAND_FRAC[0]*100:.0f}-{ENERGY_DATA_BAND_FRAC[1]*100:.0f}%")
+
             ax_res.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_res.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
             ax_res.set_title("Energy Resolution", fontsize=13, fontweight="bold")
@@ -920,7 +1016,7 @@ def main():
 
             fig_er.suptitle(f"Calorimeter Energy Performance — {mod}", fontsize=15, fontweight="bold")
             fig_er.tight_layout()
-            fig_er.savefig(energy_dir / f"{mod}_energy_performance.png", dpi=200)
+            fig_er.savefig(mod_dir / f"{mod}_energy_performance.png", dpi=200)
             plt.close(fig_er)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -960,6 +1056,14 @@ def main():
                 capthick=1.5, 
                 label=mod
             )
+
+    # -- External reference overlays: DATA (test beam) + published paper --
+    if any_points:
+        x_ref = np.linspace(4.0, 200.0, 200)
+        for ref_name, ref_p in TIMING_REF_CURVES.items():
+            y_ref = timing_ref_curve(x_ref, ref_p["stoch"], ref_p["const"])
+            ax_perf.plot(x_ref, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=2.0,
+                         label=f"{ref_name}: {ref_p['stoch']:.0f}/$\\sqrt{{E}}$ $\\oplus$ {ref_p['const']:.1f} ps")
 
     ax_perf.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
     ax_perf.set_ylabel(r"Gaussian Timing Resolution $\sigma_t$ (ps)", fontweight="bold")
@@ -1073,6 +1177,63 @@ def main():
     print(f"[SUCCESS] Saved Empirical FWHM vs Energy plot to: {fwhm_save_path.resolve()}")
 
     # ─────────────────────────────────────────────────────────────────────
+    # 4C. UNIFIED PERFORMANCE HORIZON — ENERGY RESOLUTION VS ENERGY
+    # ─────────────────────────────────────────────────────────────────────
+    fig_eres, ax_eres = plt.subplots(figsize=(10, 7))
+    any_eres_points = False
+
+    for mod in modules:
+        if mod not in energy_res_by_module:
+            continue
+        x_e, y_e, yerr_e = energy_res_by_module[mod]
+        any_eres_points = True
+        ax_eres.errorbar(
+            x_e, y_e * 100.0, yerr=yerr_e * 100.0,
+            marker=mod_markers.get(mod, 'o'),
+            color=mod_colors.get(mod, 'black'),
+            linestyle=mod_linestyles.get(mod, '-'),
+            linewidth=2, markersize=7, capsize=4, capthick=1.5,
+            label=mod
+        )
+
+    if any_eres_points:
+        x_ref = np.linspace(4.0, 200.0, 200)
+        for ref_name, ref_p in ENERGY_REF_CURVES.items():
+            y_ref = energy_ref_curve(x_ref, ref_p["c"], ref_p["s"], ref_p["n"]) * 100.0
+            ax_eres.plot(x_ref, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=2.0,
+                         label=f"{ref_name}: {ref_p['c']*100:.2f}$\\oplus${ref_p['s']*100:.2f}/$\\sqrt{{E}}$"
+                               f"$\\oplus${ref_p['n']*100:.2f}/E")
+        ax_eres.axhspan(ENERGY_DATA_BAND_FRAC[0] * 100.0, ENERGY_DATA_BAND_FRAC[1] * 100.0,
+                        color="lightgray", alpha=0.4,
+                        label=f"DATA sum$_{{lg}}$: {ENERGY_DATA_BAND_FRAC[0]*100:.0f}-{ENERGY_DATA_BAND_FRAC[1]*100:.0f}%")
+
+    ax_eres.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
+    ax_eres.set_ylabel(r"$\sigma_E / E_{meas}$ (%)", fontweight="bold")
+    ax_eres.set_title("Unified Performance Horizon — Energy Resolution vs Energy", fontsize=12, fontweight="bold")
+    ax_eres.grid(True, linestyle=":", alpha=0.6)
+    ax_eres.set_xscale("log")
+    ax_eres.set_xticks([25, 50, 100, 200])
+    ax_eres.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+
+    if any_eres_points:
+        ax_eres.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize=9, frameon=True)
+    else:
+        ax_eres.text(0.5, 0.5, "No modules had sufficient statistics", ha='center', va='center', transform=ax_eres.transAxes)
+
+    fig_eres.tight_layout()
+    fig_eres.text(
+        1.02, 0.15, key_text,
+        fontsize=9,
+        family='monospace',
+        verticalalignment='bottom',
+        bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', edgecolor='#d3d3d3', alpha=0.9)
+    )
+    eres_save_path = summary_dir / "energy_resolution_vs_energy.png"
+    fig_eres.savefig(eres_save_path, dpi=220, bbox_inches="tight")
+    plt.close(fig_eres)
+    print(f"[SUCCESS] Saved Energy Resolution vs Energy plot to: {eres_save_path.resolve()}")
+
+    # ─────────────────────────────────────────────────────────────────────
     # 5. Plot Transverse Shower Profiles for Each Module and Energy
     # ─────────────────────────────────────────────────────────────────────
     def plot_transverse_profile(transverse_data, module_name):
@@ -1112,7 +1273,7 @@ def main():
         accum_squeezed = np.squeeze(accum)
 
         plot_transverse_profile(accum_squeezed, mod)
-        save_path = transverse_dir / f"{mod}_transverse_profile.png"
+        save_path = module_dir(mod) / f"{mod}_transverse_profile.png"
         plt.savefig(save_path, dpi=200)
         plt.close()
         print(f"[SUCCESS] Saved transverse profile plot for {mod} to: {save_path.resolve()}")
