@@ -429,7 +429,7 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     # 1. Expand the master world coordinates to envelope the active capillary
     world = sim.world
     world.size = [30.0 * units.mm, 30.0 * units.mm, (length_mm + 20.0) * units.mm]
-    world.material = "Air"
+    world.material = "G4_Air"
     
     # 2. Surround the capillary with dense, absorbent Tungsten
     absorber = sim.add_volume("Box", "absorber")
