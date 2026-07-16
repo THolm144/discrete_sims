@@ -77,6 +77,8 @@ def parse_args():
                    help="Filter detector_hits actors to opticalphoton hits only. "
                         "'world' = respect world manifest (default off).")
     p.add_argument("--beam-offset", type=float, default=None)
+    p.add_argument("--beam-x", type=float, default=None)
+    p.add_argument("--beam-y", type=float, default=None)
     return p.parse_args()
 
 
@@ -116,6 +118,11 @@ def resolve_beam_config(world, args) -> dict:
     cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}
     if args.beam_offset is not None:
         cfg["offset_cm"] = args.beam_offset
+    if args.beam_x is not None or args.beam_y is not None:
+        tx = args.beam_x if args.beam_x is not None else cfg.get("target_cm", [0,0,0])[0]
+        ty = args.beam_y if args.beam_y is not None else cfg.get("target_cm", [0,0,0])[1]
+        tz = cfg.get("target_cm", [0,0,0])[2]
+        cfg["target_cm"] = [tx, ty, tz]
     return cfg
 
 

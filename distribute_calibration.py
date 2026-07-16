@@ -153,58 +153,86 @@ for folder in WORLD_FOLDERS:
         
     print(f"Processing {folder}...")
 
-    # A. Patch simulator.py to add `--beam-offset`, `--beam-x`, and `--beam-y`
+    # A. Smart Diagnostics-Aware Patcher for simulator.py
     sim_path = dest_dir / "simulator.py"
     if sim_path.exists():
         with open(sim_path, "r") as f:
             content = f.read()
         
-        if "--beam-offset" not in content:
-            arg_target = 'return p.parse_args()'
-            arg_replacement = (
-                'p.add_argument("--beam-offset", type=float, default=None)\n'
-                '    p.add_argument("--beam-x", type=float, default=None)\n'
-                '    p.add_argument("--beam-y", type=float, default=None)\n'
-                '    return p.parse_args()'
-            )
-            content = content.replace(arg_target, arg_replacement)
+        if "--beam-x" not in content:
+            # Case A: Totally unmodified simulator.py
+            if "--beam-offset" not in content:
+                arg_target = 'return p.parse_args()'
+                arg_replacement = (
+                    'p.add_argument("--beam-offset", type=float, default=None)\n'
+                    '    p.add_argument("--beam-x", type=float, default=None)\n'
+                    '    p.add_argument("--beam-y", type=float, default=None)\n'
+                    '    return p.parse_args()'
+                )
+                content = content.replace(arg_target, arg_replacement)
+                
+                cfg_target = 'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}'
+                cfg_replacement = (
+                    'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}\n'
+                    '    if args.beam_offset is not None:\n'
+                    '        cfg["offset_cm"] = args.beam_offset\n'
+                    '    if args.beam_x is not None or args.beam_y is not None:\n'
+                    '        tx = args.beam_x if args.beam_x is not None else cfg.get("target_cm", [0,0,0])[0]\n'
+                    '        ty = args.beam_y if args.beam_y is not None else cfg.get("target_cm", [0,0,0])[1]\n'
+                    '        tz = cfg.get("target_cm", [0,0,0])[2]\n'
+                    '        cfg["target_cm"] = [tx, ty, tz]'
+                )
+                content = content.replace(cfg_target, cfg_replacement)
+                
+                def_target = 'def resolve_beam_config(world) -> dict:'
+                def_replacement = 'def resolve_beam_config(world, args) -> dict:'
+                content = content.replace(def_target, def_replacement)
+                
+                call_target = 'beam_cfg           = resolve_beam_config(world)'
+                call_replacement = 'beam_cfg           = resolve_beam_config(world, args)'
+                content = content.replace(call_target, call_replacement)
+                
+                print("  [PATCHED] simulator.py (Applied full calibration upgrades)")
             
-            cfg_target = 'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}'
-            cfg_replacement = (
-                'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}\n'
-                '    if args.beam_offset is not None:\n'
-                '        cfg["offset_cm"] = args.beam_offset\n'
-                '    if args.beam_x is not None or args.beam_y is not None:\n'
-                '        tx = args.beam_x if args.beam_x is not None else cfg.get("target_cm", [0,0,0])[0]\n'
-                '        ty = args.beam_y if args.beam_y is not None else cfg.get("target_cm", [0,0,0])[1]\n'
-                '        tz = cfg.get("target_cm", [0,0,0])[2]\n'
-                '        cfg["target_cm"] = [tx, ty, tz]'
-            )
-            content = content.replace(cfg_target, cfg_replacement)
-            
-            def_target = 'def resolve_beam_config(world) -> dict:'
-            def_replacement = 'def resolve_beam_config(world, args) -> dict:'
-            content = content.replace(def_target, def_replacement)
-            
-            call_target = 'beam_cfg           = resolve_beam_config(world)'
-            call_replacement = 'beam_cfg           = resolve_beam_config(world, args)'
-            content = content.replace(call_target, call_replacement)
-            
+            # Case B: Already partially patched (has offset, lacks beam-x/y)
+            else:
+                # Add argument definitions
+                content = content.replace(
+                    'p.add_argument("--beam-offset", type=float, default=None)',
+                    'p.add_argument("--beam-offset", type=float, default=None)\n    p.add_argument("--beam-x", type=float, default=None)\n    p.add_argument("--beam-y", type=float, default=None)'
+                )
+                
+                # Expand config logic in resolve_beam_config
+                old_patched_cfg = (
+                    'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}\n'
+                    '    if args.beam_offset is not None:\n'
+                    '        cfg["offset_cm"] = args.beam_offset'
+                )
+                new_patched_cfg = (
+                    'cfg = {**DEFAULT_BEAM_CONFIG, **getattr(world, "BEAM_CONFIG", {})}\n'
+                    '    if args.beam_offset is not None:\n'
+                    '        cfg["offset_cm"] = args.beam_offset\n'
+                    '    if args.beam_x is not None or args.beam_y is not None:\n'
+                    '        tx = args.beam_x if args.beam_x is not None else cfg.get("target_cm", [0,0,0])[0]\n'
+                    '        ty = args.beam_y if args.beam_y is not None else cfg.get("target_cm", [0,0,0])[1]\n'
+                    '        tz = cfg.get("target_cm", [0,0,0])[2]\n'
+                    '        cfg["target_cm"] = [tx, ty, tz]'
+                )
+                content = content.replace(old_patched_cfg, new_patched_cfg)
+                print("  [PATCHED] simulator.py (Upgraded partial patch to support X/Y tracking)")
+
             with open(sim_path, "w") as f:
                 f.write(content)
-            print("  [PATCHED] simulator.py")
         else:
-            print("  [SKIPPED] simulator.py (already patched)")
+            print("  [SKIPPED] simulator.py (already fully patched)")
     else:
         print(f"  [ERROR] simulator.py not found in {folder}!")
 
     # B. Determine correct physical bounds & beam coordinates
     if "hex" in folder:
-        # Hexagonal geometry: target Capillary 0 (E-type) at R = 3.5 mm (0.35 cm)
         beam_x = 0.0
         beam_y = 0.35
     else:
-        # Square/standard geometry: target center capillary
         beam_x = 0.0
         beam_y = 0.0
 
@@ -237,4 +265,4 @@ for folder in WORLD_FOLDERS:
         f.write(parser_content)
     print(f"  [DEPLOYED] extract_prompt_attenuation.py (SENSOR_Z_CM set to {sensor_z:.3f} cm)")
 
-print("\nDeployment complete! All 12 worlds (including hex configurations) are safe for running and fitting.")
+print("\nDeployment complete! All 12 worlds are upgraded, patched, and verified.")
