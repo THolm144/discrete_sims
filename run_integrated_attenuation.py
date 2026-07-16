@@ -426,10 +426,21 @@ def build_capillary_world(sim, length_mm, wls_material, units):
     Constructs a high-fidelity isolated capillary system embedded inside
     an absorbing Tungsten matrix to prevent cladding propagation reflection.
     """
+    script_dir = Path(__file__).resolve().parent
+    db_path = script_dir / "GateMaterials.db"
+    
+    if db_path.exists():
+        # Avoid crashing OpenGATE if the database is already registered
+        db_str = str(db_path)
+        loaded_dbs = [str(f) for f in sim.volume_manager.material_database.filenames]
+        if db_str not in loaded_dbs and "GateMaterials.db" not in [Path(f).name for f in loaded_dbs]:
+            sim.volume_manager.add_material_database(db_str)
+    else:
+        print(f"[Warning] Could not find local GateMaterials.db at: {db_path}")
     # 1. Expand the master world coordinates to envelope the active capillary
     world = sim.world
     world.size = [30.0 * units.mm, 30.0 * units.mm, (length_mm + 20.0) * units.mm]
-    world.material = "G4_Air"
+    world.material = "Air"
     
     # 2. Surround the capillary with dense, absorbent Tungsten
     absorber = sim.add_volume("Box", "absorber")
