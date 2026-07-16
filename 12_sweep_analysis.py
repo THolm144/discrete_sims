@@ -978,16 +978,23 @@ def main():
 
             e_totals = master_summary[mod][ekey].get("dw_e_total", np.array([]))
             if len(e_totals) < 5: continue
+            
+            raw_mean = np.mean(e_totals)
+            raw_std = np.std(e_totals)
 
-            _, mu_val, sigma_val = fit_gaussian_to_peak(e_totals, n_bins=40)
-            print_channel_diagnostics("E-type", mod, ekey, e_totals, mu_val, sigma_val)
+            _, fit_mu, fit_sigma = fit_gaussian_to_peak(e_totals, n_bins=40)
+            
+            # --- FALLBACK LOGIC ---
+            # If the Gaussian fit failed (mu near zero or resolution > 300%), use raw stats
+            if fit_mu > 0.5 and (fit_sigma / fit_mu) < 3.0:
+                mu_val, sigma_val = fit_mu, fit_sigma
+            else:
+                mu_val, sigma_val = raw_mean, raw_std
+                print(f"  [FALLBACK] E-type {mod} @ {E_val} GeV Gaussian fit failed. Using Raw Stats (mu={mu_val:.1f}).")
 
-            # --- BULLETPROOF SANITY FILTER ---
-            if mu_val > 0.5:  # Require a physically meaningful mean
+            if mu_val > 0.1:
                 res_val = sigma_val / mu_val
-                
-                # Block Infinity, NaN, and physically impossible resolutions (>300%)
-                if not np.isnan(res_val) and not np.isinf(res_val) and res_val < 3.0:
+                if not np.isnan(res_val) and not np.isinf(res_val) and res_val < 10.0:
                     energies_gev.append(E_val)
                     mu_e_list.append(mu_val)
                     res_e_list.append(res_val)
@@ -995,8 +1002,6 @@ def main():
                     res_e_err.append(res_val * (1.0 / np.sqrt(len(e_totals))))
                 else:
                     print(f"  [FILTERED] E-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_val*100:.1f}%)")
-            else:
-                print(f"  [FILTERED] E-type {mod} @ {E_val} GeV rejected (Mu near zero: {mu_val})")
 
         # ─────────────────────────────────────────────────────────────────────
         # 3-T. SHOWER-MAX RESOLUTION INPUT (T-type channels)
@@ -1009,16 +1014,22 @@ def main():
 
             t_totals = master_summary[mod][ekey].get("dw_t_total", np.array([]))
             if len(t_totals) < 5: continue
+            
+            raw_mean = np.mean(t_totals)
+            raw_std = np.std(t_totals)
 
-            _, mu_val, sigma_val = fit_gaussian_to_peak(t_totals, n_bins=40)
-            print_channel_diagnostics("T-type", mod, ekey, t_totals, mu_val, sigma_val)
+            _, fit_mu, fit_sigma = fit_gaussian_to_peak(t_totals, n_bins=40)
 
-            # --- BULLETPROOF SANITY FILTER ---
-            if mu_val > 0.5:  # Require a physically meaningful mean
+            # --- FALLBACK LOGIC ---
+            if fit_mu > 0.5 and (fit_sigma / fit_mu) < 3.0:
+                mu_val, sigma_val = fit_mu, fit_sigma
+            else:
+                mu_val, sigma_val = raw_mean, raw_std
+                print(f"  [FALLBACK] T-type {mod} @ {E_val} GeV Gaussian fit failed. Using Raw Stats (mu={mu_val:.1f}).")
+
+            if mu_val > 0.1:
                 res_t_val = sigma_val / mu_val
-                
-                # Block Infinity, NaN, and physically impossible resolutions (>300%)
-                if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 3.0:
+                if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
                     energies_gev_t.append(E_val)
                     mu_t_list.append(mu_val)
                     res_t_list.append(res_t_val)
@@ -1026,8 +1037,6 @@ def main():
                     res_t_err.append(res_t_val * (1.0 / np.sqrt(len(t_totals))))
                 else:
                     print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_t_val*100:.1f}%)")
-            else:
-                print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Mu near zero: {mu_val})")
 
         def resolution_func(E, c, s, n):
             return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
