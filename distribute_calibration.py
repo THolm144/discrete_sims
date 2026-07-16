@@ -2,219 +2,200 @@
 """
 distribute_calibration.py
 =========================
-Robustly parses active capillary coordinates from each world module and updates
-all local shell execution scripts, supporting multi-line commands and echo lines.
+Master Multi-World Orchestrator.
+Discovers all nested world designs, extracts their unique geometries,
+and generates a dynamic master shell script to sweep and calibrate them all.
 """
 
 import os
-import re
 import sys
 import importlib.util
 from pathlib import Path
-from types import ModuleType
 
-# ─────────────────────────────────────────────────────────────────────────────
-# OPENGATE MOCK SETUP
-# ─────────────────────────────────────────────────────────────────────────────
-def setup_opengate_mocks():
-    """
-    Creates dummy modules for OpenGate and its submodules.
-    This prevents ImportErrors when running this script on systems (like DAQ)
-    that do not have Geant4 or OpenGate packages installed.
-    """
-    mock_opengate = ModuleType("opengate")
-    mock_geometry = ModuleType("opengate.geometry")
-    mock_volumes = ModuleType("opengate.geometry.volumes")
-    
-    mock_opengate.geometry = mock_geometry
-    mock_geometry.volumes = mock_volumes
-    
-    sys.modules["opengate"] = mock_opengate
-    sys.modules["opengate.geometry"] = mock_geometry
-    sys.modules["opengate.geometry.volumes"] = mock_volumes
-    
-    class DummyClass:
-        def __init__(self, *args, **kwargs): pass
-        def __getattr__(self, name): return DummyClass
-        
-    mock_volumes.TubsVolume = DummyClass
-    mock_volumes.BoxVolume = DummyClass
-    mock_volumes.subtract_volumes = lambda *args, **kwargs: DummyClass()
+# --- Configuration ---
+SWEEP_STEPS = 11  # Number of calibration points per world sweep
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DYNAMIC WORLD PARSING
-# ─────────────────────────────────────────────────────────────────────────────
-def extract_beam_coordinates(world_path: Path):
-    """
-    Loads the world python file dynamically and extracts the first active capillary coordinate (in cm).
-    """
-    module_name = world_path.stem
-    spec = importlib.util.spec_from_file_location(module_name, world_path)
-    module = importlib.util.module_from_spec(spec)
+
+def discover_worlds():
+    """Scans all subdirectories for .py files inside folders named 'worlds'."""
+    current_dir = Path(".")
+    world_paths = sorted([
+        p for p in current_dir.glob("**/worlds/*.py")
+        if "__pycache__" not in p.parts
+    ])
+    return world_paths
+
+
+def load_world_metadata(filepath):
+    """Dynamically imports a world file to extract design parameters with fallbacks."""
+    path = Path(filepath)
     
-    # Add directory to sys.path to allow internal imports
-    worlds_dir = str(world_path.parent)
-    if worlds_dir not in sys.path:
-        sys.path.insert(0, worlds_dir)
-        
+    # Safely inject path context to resolve local imports within the world's directory
+    parent_dir = str(path.parent)
+    sys.path.insert(0, parent_dir)
+    
     try:
-        spec.loader.exec_module(module)
+        spec = importlib.util.spec_from_file_location("temp_world_module", path)
+        world = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(world)
     except Exception as e:
-        raise RuntimeError(f"Error executing world module: {e}")
+        print(f"[-] Warning: Failed to import {path}. Skipping. Error: {e}")
+        return None
+    finally:
+        sys.path.pop(0)
 
-    # 1. Look for capillary positions
-    positions = None
-    for attr in ['_CAP_POSITIONS_MM', 'CAP_POSITIONS_MM', '_CAP_POSITIONS', 'CAP_POSITIONS']:
-        if hasattr(module, attr):
-            positions = getattr(module, attr)
-            break
-            
-    if not positions:
-        raise ValueError("Could not find capillary positions variable (e.g. _CAP_POSITIONS_MM).")
+    try:
+        # 1. Extract physical boundaries
+        calor_thick_mm = getattr(world, "_CALOR_THICK_MM")
+        calor_thick_cm = calor_thick_mm / 10.0
+        half_length_cm = calor_thick_cm / 2.0
         
-    # 2. Look for active indices (E-type or Active)
-    active_indices = None
-    for attr in ['_E_TYPE_INDICES', 'E_TYPE_INDICES', '_ACTIVE_INDICES', 'ACTIVE_INDICES', '_ACTIVE_CAPS']:
-        if hasattr(module, attr):
-            active_indices = getattr(module, attr)
-            break
-            
-    if not active_indices:
-        # Scan internal variables for any sets containing 'ACTIVE' or 'E_TYPE'
-        for key, val in vars(module).items():
-            if isinstance(val, (set, list, tuple)) and any(x in key.upper() for x in ['ACTIVE', 'E_TYPE', 'E_IND']):
-                active_indices = val
-                break
-                
-    # Fallback to index 0 if no active markers are set
-    if not active_indices:
-        active_indices = {0}
+        # Scale sweep limit safely to 80% of active half-length
+        sweep_limit_cm = round(half_length_cm * 0.8 * 2) / 2.0
         
-    active_idx = list(active_indices)[0]
-    pos_mm = positions[active_idx]
-    
-    # Convert millimeters to centimeters (standard for Beam Targets)
-    x_cm = pos_mm[0] / 10.0
-    y_cm = pos_mm[1] / 10.0
-    
-    return x_cm, y_cm, active_idx
+        # 2. Extract Sensor position
+        sipm_z_mm = getattr(world, "_SIPM_Z_MM")
+        sensor_z_cm = sipm_z_mm / 10.0
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SCRIPT PATCHING UTILITY
-# ─────────────────────────────────────────────────────────────────────────────
-def patch_shell_script(script_path: Path, x_cm: float, y_cm: float) -> bool:
-    """
-    Finds commands calling 'simulator.py' and injects/updates '--beam-x' and '--beam-y'.
-    Handles multi-line backslash formats and hardcoded echo outputs robustly.
-    """
-    with open(script_path, "r") as f:
-        content = f.read()
+        # 3. Resolve active calibration coordinates (First E-type capillary)
+        cap_positions = getattr(world, "_CAP_POSITIONS_MM")
         
-    # 1. Update hardcoded target coordinate echo lines
-    # Match strings like: echo "Targeting Capillary coordinate: X = 0.0 cm, Y = 0.0 cm"
-    orig_content = content
-    content = re.sub(
-        r'echo "Targeting Capillary coordinate: X\s*=\s*[-\d\.]+\s*cm,\s*Y\s*=\s*[-\d\.]+\s*cm"',
-        f'echo "Targeting Capillary coordinate: X = {x_cm:.5f} cm, Y = {y_cm:.5f} cm"',
-        content
-    )
-    
-    # 2. Clean and update simulator commands
-    lines = content.splitlines()
-    new_lines = []
-    updated_run_line = False
-    
-    for line in lines:
-        # If it's a standalone parameter line containing only --beam-x or --beam-y (common in multiline setups)
-        is_pure_beam_arg = re.match(r'^\s*--beam-[xy](?:\s+|=\s*)[-\d\.]+\s*(\\?)\s*$', line)
-        if is_pure_beam_arg:
-            # Drop the standalone line entirely. Backslash line breaks will safely carry forward.
-            updated_run_line = True
-            continue
-            
-        # If it's the main simulator execution call
-        if "simulator.py" in line and not line.strip().startswith("#"):
-            # Strip out any existing inline --beam-x or --beam-y parameters
-            line = re.sub(r'--beam-x(?:\s+|=\s*)[-\d\.]+', '', line)
-            line = re.sub(r'--beam-y(?:\s+|=\s*)[-\d\.]+', '', line)
-            
-            # Re-inject the correct, fresh coordinates right after simulator.py
-            line = line.replace("simulator.py", f"simulator.py --beam-x {x_cm:.5f} --beam-y {y_cm:.5f}")
-            updated_run_line = True
-            
-        new_lines.append(line)
+        if hasattr(world, "_E_TYPE_INDICES"):
+            e_type_indices = getattr(world, "_E_TYPE_INDICES")
+            active_idx = sorted(list(e_type_indices))[0]
+        else:
+            # Fallback based on capillary count: Hex structures default to index 0, Square to index 2
+            active_idx = 0 if len(cap_positions) == 6 else 2
         
-    final_content = "\n".join(new_lines) + "\n"
-    
-    # Save only if we actually modified something
-    if final_content != orig_content or updated_run_line:
-        with open(script_path, "w") as f:
-            f.write(final_content)
-        return True
-        
-    return False
+        raw_x, raw_y = cap_positions[active_idx]
+        active_x_cm = raw_x / 10.0
+        active_y_cm = raw_y / 10.0
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN EXECUTION
-# ─────────────────────────────────────────────────────────────────────────────
-def main():
-    setup_opengate_mocks()
-    base_dir = Path(__file__).resolve().parent
-    
-    print("=" * 80)
-    print(" RADiCAL Calibration Coordination & Deployer Script (Multi-line Patched)")
-    print("=" * 80)
-    
-    results = []
-    
-    # Scan subdirectories containing simulator.py
-    for sim_dir in base_dir.iterdir():
-        if not sim_dir.is_dir() or not (sim_dir / "simulator.py").exists():
-            continue
-            
-        worlds_dir = sim_dir / "worlds"
-        if not worlds_dir.exists():
-            results.append((sim_dir.name, "No worlds directory", "-", "-", "Skipped"))
-            continue
-            
-        # Get world python files
-        world_files = [f for f in worlds_dir.glob("*.py") if f.name != "__init__.py"]
-        if not world_files:
-            results.append((sim_dir.name, "No world .py modules found", "-", "-", "Skipped"))
-            continue
-            
-        # Prioritize non-utility files
-        world_file = next((f for f in world_files if "test" not in f.name and "helper" not in f.name), world_files[0])
-        
-        try:
-            x_cm, y_cm, active_idx = extract_beam_coordinates(world_file)
-            coords_str = f"({x_cm:+.5f}, {y_cm:+.5f})"
-            
-            # Look for all .sh scripts inside the module directory to patch
-            sh_scripts = list(sim_dir.glob("*.sh"))
-            patched_scripts = []
-            
-            for script in sh_scripts:
-                if patch_shell_script(script, x_cm, y_cm):
-                    patched_scripts.append(script.name)
-                    
-            if patched_scripts:
-                status = f"Patched: {', '.join(patched_scripts)}"
-            else:
-                status = "No execution scripts found/modified"
-                
-            results.append((sim_dir.name, world_file.name, f"Index {active_idx}", coords_str, status))
-            
-        except Exception as e:
-            results.append((sim_dir.name, world_file.name, "Error", "-", f"Failed: {str(e)[:40]}..."))
+        is_hex = len(cap_positions) == 6
+        geometry_type = "Hexagonal" if is_hex else "Square"
 
-    # Print summary report
-    print("\n### Deployment Summary Table\n")
-    print(f"| {'Directory':<24} | {'World Module':<26} | {'Active Fiber':<12} | {'Target Coords (cm)':<22} | {'Deployment Status':<35} |")
-    print(f"|{'-'*26}|{'-'*28}|{'-'*14}|{'-'*24}|{'-'*37}|")
-    for r in results:
-        print(f"| {r[0]:<24} | {r[1]:<26} | {r[2]:<12} | {r[3]:<22} | {r[4]:<35} |")
-    print()
+        return {
+            "path_str": str(path),
+            "name": path.stem,
+            "type": geometry_type,
+            "x": active_x_cm,
+            "y": active_y_cm,
+            "calor_thick_cm": calor_thick_cm,
+            "sweep_limit": sweep_limit_cm,
+            "sensor_z_cm": sensor_z_cm,
+            "active_index": active_idx
+        }
+    except AttributeError as e:
+        print(f"[-] Warning: Skipping {path.name} due to missing standard parameters: {e}")
+        return None
+
+
+def generate_config_string(meta):
+    """Generates the content of a python configuration block for a specific world."""
+    return f"""# =====================================================================
+# AUTO-GENERATED CONFIGURATION - DO NOT EDIT MANUALLY
+# =====================================================================
+WORLD_PATH     = "{meta['path_str']}"
+WORLD_NAME     = "{meta['name']}"
+GEOMETRY_TYPE  = "{meta['type']}"
+ACTIVE_INDEX   = {meta['active_index']}
+
+# Beam Alignment (Capillary Coordinates in cm)
+BEAM_X_CM      = {meta['x']:.5f}
+BEAM_Y_CM      = {meta['y']:.5f}
+
+# Physical Boundaries & Sensor Placement (cm)
+CALOR_THICK_CM = {meta['calor_thick_cm']:.5f}
+SENSOR_Z_CM    = {meta['sensor_z_cm']:.5f}
+"""
+
+
+def write_master_bash_runner(worlds_meta):
+    """Generates run_all_calibs.sh with individualized configuration steps for every world."""
+    import numpy as np
+
+    bash_content = []
+    bash_content.append("#!/bin/bash")
+    bash_content.append("# =====================================================================")
+    bash_content.append("# AUTO-GENERATED MASTER MULTI-WORLD CALIBRATION RUNNER")
+    bash_content.append("# Runs sequential Z-sweeps with dynamically scaled boundaries")
+    bash_content.append("# =====================================================================")
+    bash_content.append("\nset -e\n")
+
+    for meta in worlds_meta:
+        # Generate sweep points for this specific world length
+        z_values = np.linspace(-meta['sweep_limit'], meta['sweep_limit'], SWEEP_STEPS)
+        z_values_str = " ".join([f"{z:.2f}" for z in z_values])
+        config_data = generate_config_string(meta)
+
+        # Write clean section headers
+        bash_content.append(f"# {'='*76}")
+        bash_content.append(f"# PIPELINE FOR WORLD: {meta['name']} ({meta['type']})")
+        bash_content.append(f"# {'='*76}")
+        
+        # Inject the python config file dynamic rewrite
+        bash_content.append("cat << 'EOF' > calibration_config.py")
+        bash_content.append(config_data.strip())
+        bash_content.append("EOF")
+        bash_content.append("echo '[+] Applied configuration for world: " + meta['name'] + "'\n")
+
+        # Define sweep loops
+        bash_content.append(f"Z_SWEEP_VALUES=({z_values_str})")
+        bash_content.append(f"for z_val in \"${{Z_SWEEP_VALUES[@]}}\"; do")
+        bash_content.append("    echo \"[*] Sweeping " + meta['name'] + " at Z = ${z_val} cm...\"")
+        
+        # Prepare output dir
+        out_dir = f"output/{meta['name']}/calib_z_${{z_val}}"
+        bash_content.append(f"    mkdir -p \"{out_dir}\"")
+        
+        # Run simulation & analysis command
+        # NOTE: Adapt these to point to your actual executable pipeline scripts!
+        bash_content.append(f"    # python3 run_simulation.py \\")
+        bash_content.append(f"    #     --world \"{meta['path_str']}\" \\")
+        bash_content.append(f"    #     --beam_x \"{meta['x']:.5f}\" \\")
+        bash_content.append(f"    #     --beam_y \"{meta['y']:.5f}\" \\")
+        bash_content.append(f"    #     --beam_z \"${{z_val}}\" \\")
+        bash_content.append(f"    #     --output_dir \"{out_dir}\"")
+        bash_content.append("    ")
+        bash_content.append(f"    # python3 extract_prompt_attenuation.py --run_dir \"{out_dir}\" --z_offset \"${{z_val}}\"")
+        bash_content.append("done\n")
+
+    output_path = Path("run_all_calibs.sh")
+    output_path.write_text("\n".join(bash_content))
+    output_path.chmod(0o755)
+    print(f"[+] Master script successfully generated: '{output_path}'")
+
 
 if __name__ == "__main__":
-    main()
+    print("[*] Scanning workspace subdirectories for world modules...")
+    world_paths = discover_worlds()
+    
+    if not world_paths:
+        print("[-] Error: No world modules found in any nested 'worlds/' folders!")
+        sys.exit(1)
+        
+    print(f"[+] Found {len(world_paths)} world candidate files.")
+    
+    validated_meta = []
+    for path in world_paths:
+        meta = load_world_metadata(path)
+        if meta:
+            validated_meta.append(meta)
+            
+    if not validated_meta:
+        print("[-] Error: No valid configurations could be extracted.")
+        sys.exit(1)
+
+    print("\n=====================================================================")
+    print(" 📋 Multi-World Calibration Sequence Map")
+    print("=====================================================================")
+    print(f"{'World Name':<25} | {'Type':<10} | {'Target (X, Y) cm':<20} | {'Sweep Limits':<15}")
+    print("-" * 77)
+    for m in validated_meta:
+        coord_str = f"({m['x']:.4f}, {m['y']:.4f})"
+        sweep_str = f"±{m['sweep_limit']:.2f} cm"
+        print(f"{m['name']:<25} | {m['type']:<10} | {coord_str:<20} | {sweep_str:<15}")
+    print("=====================================================================\n")
+
+    write_master_bash_runner(validated_meta)
+    print("[+] Setup complete! Execute with: ./run_all_calibs.sh")
