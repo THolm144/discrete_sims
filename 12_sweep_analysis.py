@@ -287,6 +287,40 @@ def longo_profile(t, norm, alpha, beta):
     t_safe = np.clip(t, 1e-6, None)
     return norm * (t_safe ** (alpha - 1.0)) * np.exp(-beta * t_safe)
 
+def print_channel_diagnostics(label, mod, ekey, totals, mu_fit, sigma_fit):
+    """
+    Print raw (unfit) statistics for a per-event photon-count array alongside
+    the Gaussian-peak-fit result, so it's obvious when the fit is being asked
+    to do something unreasonable (very low counts, lots of zero-hit events,
+    fitted resolution blowing up, etc).
+    """
+    if len(totals) == 0:
+        print(f"    [DIAG:{label}] {mod} {ekey}: no events")
+        return
+
+    n = len(totals)
+    raw_mean = float(np.mean(totals))
+    raw_std = float(np.std(totals))
+    frac_zero = float(np.mean(totals == 0))
+    lo, hi = float(np.min(totals)), float(np.max(totals))
+    raw_res = raw_std / raw_mean if raw_mean > 0 else float("inf")
+    fit_res = sigma_fit / mu_fit if mu_fit > 0 else float("inf")
+
+    flags = []
+    if raw_mean < 20:
+        flags.append(f"LOW-STATS(mean={raw_mean:.1f} photons)")
+    if frac_zero > 0.05:
+        flags.append(f"ZERO-HEAVY({frac_zero*100:.1f}% events=0 hits)")
+    if fit_res > 1.0:
+        flags.append(f"FIT-RES-BLOWUP({fit_res*100:.0f}%)")
+    if mu_fit > 0 and mu_fit < 0.5:
+        flags.append(f"FIT-MU-NEAR-ZERO({mu_fit:.3f})")
+    flag_str = f"  <-- {', '.join(flags)}" if flags else ""
+
+    print(f"    [DIAG:{label}] {mod} {ekey}: N={n}, raw mean={raw_mean:.2f}, raw std={raw_std:.2f}, "
+          f"raw res={raw_res*100:.1f}%, range=[{lo:.0f},{hi:.0f}], zero-frac={frac_zero*100:.1f}%, "
+          f"fit mu={mu_fit:.3f}, fit sigma={sigma_fit:.3f}, fit res={fit_res*100:.1f}%{flag_str}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -947,6 +981,7 @@ def main():
             if len(e_totals) < 5: continue
 
             _, mu_val, sigma_val = fit_gaussian_to_peak(e_totals, n_bins=40)
+            print_channel_diagnostics("E-type", mod, ekey, e_totals, mu_val, sigma_val)
 
             if mu_val > 0:
                 energies_gev.append(E_val)
@@ -970,6 +1005,7 @@ def main():
             if len(t_totals) < 5: continue
 
             _, mu_val, sigma_val = fit_gaussian_to_peak(t_totals, n_bins=40)
+            print_channel_diagnostics("T-type", mod, ekey, t_totals, mu_val, sigma_val)
 
             if mu_val > 0:
                 energies_gev_t.append(E_val)
@@ -1232,12 +1268,6 @@ def main():
                 markersize=7, 
                 label=mod
             )
-    if any_fwhm_points:
-        x_ref = np.linspace(4.0, 200.0, 200)
-        for ref_name, ref_p in TIMING_REF_CURVES.items():
-            y_ref = timing_ref_curve(x_ref, ref_p["stoch"], ref_p["const"])
-            ax_fwhm.plot(x_ref, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=2.0,
-                         label=f"{ref_name}: {ref_p['stoch']:.0f}/$\\sqrt{{E}}$ $\\oplus$ {ref_p['const']:.1f} ps")
 
     ax_fwhm.set_xlabel("Incident Particle Beam Energy (GeV)", fontweight="bold")
     ax_fwhm.set_ylabel("Empirical FWHM (ps)", fontweight="bold")
