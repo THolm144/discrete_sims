@@ -10,7 +10,7 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 # Spawns 1 process per energy x 10 internal C++ threads = 40 cores maxed out
 ENERGIES=(25000000 50000000 70000000 90000000)
 COUNTS=(18500 9350 6600 5100)
-THREADS=10
+THREADS=500
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 MASTER_BATCH_DIR="runs/${WORLD}/sweep_${TIMESTAMP}"
