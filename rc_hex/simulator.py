@@ -341,8 +341,10 @@ def configure_physics(sim, args, script_dir: Path, world,
     # OPTIMIZATION: Implemented a global production range cut (1.0 mm). This prevents
     # Geant4 from generating and endlessly tracking low-energy secondary delta-electrons
     # that chew up CPU cycles without impacting macroscopic dosage metrics.
-    sim.g4_commands_before_init.append("/run/setCut 1.0 mm")
-
+    sim.g4_commands_before_init.append("/run/setCut 0.1 mm")
+    sim.g4_commands_before_init.append("/process/optical/scintillation/trackSecondariesFirst true")
+    sim.g4_commands_before_init.append("/process/optical/cerenkov/trackSecondariesFirst true")
+    sim.g4_commands_before_init.append("/process/optical/cerenkov/setMaxPhotons 300")
     surface_file = script_dir / "SurfaceProperties.xml"
     if surface_file.exists():
         sim.physics_manager.surface_properties_file = str(surface_file)
