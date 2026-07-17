@@ -743,7 +743,13 @@ def main():
         plt.close(fig_lt)
 
         # ── GRAPH 4: PROMPT PHOTON LONGITUDINAL RECONSTRUCTION ────────────────
-        fig_rec, (ax_rec, ax_truth) = plt.subplots(1, 2, figsize=(15, 5.5))
+        # Using a 2x2 grid to prevent the subplots from becoming squashed horizontally
+        fig_rec, axs = plt.subplots(2, 2, figsize=(15, 10.5))
+        ax_target = axs[0, 0]
+        ax_bounced = axs[0, 1]
+        ax_both = axs[1, 0]
+        ax_truth = axs[1, 1]
+
         layers_x = np.arange(1, _N_LYSO + 1)
 
         # Set up spacing parameters to stack and group the bars side-by-side
@@ -756,42 +762,65 @@ def main():
             offset = (idx - (n_energies - 1) / 2.0) * width
             x_coords = layers_x + offset
 
-            # Fetch the reversed profiles
+            # Fetch the profiles
             target_profile = master_summary[mod][ekey].get("prompt_profile_target", np.zeros(_N_LYSO))
             bounced_profile = master_summary[mod][ekey].get("prompt_profile_bounced", np.zeros(_N_LYSO))
-
+            
             col_target, col_bounced = get_bar_colors(ekey, idx)
 
-            # Plot stacked parts: target (bottom), bounced (top)
-            ax_rec.bar(x_coords, target_profile, width=width, color=col_target, 
-                       edgecolor="black", linewidth=0.3, alpha=0.9, 
-                       label=f"{ekey} (Target Layer Hits)")
-            
-            ax_rec.bar(x_coords, bounced_profile, width=width, bottom=target_profile, 
-                       color=col_bounced, edgecolor="black", linewidth=0.3, alpha=0.6, 
-                       label=f"{ekey} (Bounced Photons)")
+            # Panel 1: Target-Only Photons (Reconstructed)
+            ax_target.bar(x_coords, target_profile, width=width, color=col_target,
+                          edgecolor="black", linewidth=0.3, alpha=0.9,
+                          label=ekey)
 
-            # Standard truth line plot for clean comparison
+            # Panel 2: Bounced-Only Photons (Reconstructed)
+            ax_bounced.bar(x_coords, bounced_profile, width=width, color=col_bounced,
+                           edgecolor="black", linewidth=0.3, alpha=0.9,
+                           label=ekey)
+
+            # Panel 3: Combined Profile (Stacked Reconstructed)
+            ax_both.bar(x_coords, target_profile, width=width, color=col_target, 
+                        edgecolor="black", linewidth=0.3, alpha=0.9, 
+                        label=f"{ekey} (Target)")
+            ax_both.bar(x_coords, bounced_profile, width=width, bottom=target_profile, 
+                        color=col_bounced, edgecolor="black", linewidth=0.3, alpha=0.6, 
+                        label=f"{ekey} (Bounced)")
+
+            # Panel 4: Simulated Truth (MHD Dose)
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
             ax_truth.plot(layers_x, truth_prof, marker="s", markersize=4, label=ekey, alpha=0.8)
 
-        ax_rec.set_xlabel("LYSO Layer Number", fontweight="bold")
-        ax_rec.set_ylabel("Total Prompt Photon Strikes", fontweight="bold")
-        ax_rec.set_title("Reconstructed Profile (Target vs. Bounced)", fontsize=11, fontweight="bold")
-        ax_rec.set_xlim(0, _N_LYSO + 1)
-        ax_rec.grid(True, linestyle=":", alpha=0.5)
-        # Clean legend to avoid duplicates
-        handles, labels = ax_rec.get_legend_handles_labels()
-        ax_rec.legend(handles, labels, title="Beam Energy Components", fontsize=8, loc="upper left")
+        # Apply formatting across all reconstruction axes
+        for ax in [ax_target, ax_bounced, ax_both]:
+            ax.set_xlabel("LYSO Layer Number", fontweight="bold")
+            ax.set_xlim(0, _N_LYSO + 1)
+            ax.grid(True, linestyle=":", alpha=0.5)
 
+        # Panel 1 custom labels
+        ax_target.set_ylabel("Target Prompt Photon Strikes", fontweight="bold")
+        ax_target.set_title("Reconstructed: Target-Only", fontsize=11, fontweight="bold")
+        ax_target.legend(title="Beam Energy", fontsize=8, loc="upper left")
+
+        # Panel 2 custom labels
+        ax_bounced.set_ylabel("Bounced Prompt Photon Strikes", fontweight="bold")
+        ax_bounced.set_title("Reconstructed: Bounced-Only", fontsize=11, fontweight="bold")
+        ax_bounced.legend(title="Beam Energy", fontsize=8, loc="upper left")
+
+        # Panel 3 custom labels
+        ax_both.set_ylabel("Total Prompt Photon Strikes", fontweight="bold")
+        ax_both.set_title("Reconstructed: Combined Profile", fontsize=11, fontweight="bold")
+        handles, labels = ax_both.get_legend_handles_labels()
+        ax_both.legend(handles, labels, title="Beam Components", fontsize=8, loc="upper left")
+
+        # Panel 4 custom labels
         ax_truth.set_xlabel("LYSO Layer Number", fontweight="bold")
         ax_truth.set_ylabel("Mean Active Energy Deposited (MeV / Event)", fontweight="bold")
         ax_truth.set_title("Simulated Truth Shower Profile (DoseActor MHD)", fontsize=11, fontweight="bold")
         ax_truth.set_xlim(0, _N_LYSO + 1)
         ax_truth.grid(True, linestyle=":", alpha=0.5)
-        ax_truth.legend(title="Beam Energy")
+        ax_truth.legend(title="Beam Energy", fontsize=8, loc="upper left")
 
-        fig_rec.suptitle(f"Longitudinal Shower Profiles — {mod}", fontsize=12, fontweight="bold")
+        fig_rec.suptitle(f"Longitudinal Shower Profiles — {mod}", fontsize=13, fontweight="bold")
         fig_rec.tight_layout()
         fig_rec.savefig(prompt_dir / f"{mod}_prompt_reconstruction_vs_truth.png", dpi=200)
         plt.close(fig_rec)
