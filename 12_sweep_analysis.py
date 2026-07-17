@@ -20,7 +20,8 @@ import matplotlib.cm as cm
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import gaussian_kde
-
+import ROOT
+import uuid
 import SimpleITK as sitk
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -166,92 +167,86 @@ def get_lyso_layer_bounds(lyso_thick, calor_thick):
 def gaussian(x, amp, mean, sigma):
     return amp * np.exp(-((x - mean) ** 2) / (2 * sigma ** 2))
 
+
+
 def robust_resolution(data, nsig=2.0, max_iters=4):
     """
     Computes fractional resolution (sigma/mean in %) with uncertainty.
-    Falls back to a robust IQR-based approximation if the iterative Gaussian fit fails.
+    Uses ROOT's Log-Likelihood Minuit fit (RQL0) to perfectly replicate the C++ script.
     """
     N = len(data)
     if N < 2:
         return -1.0, 1e9  
     
-    # --- 1. ROBUST METRICS FOR FALLBACK ---
+    # --- 1. FALLBACK METRICS ---
+    # We still use your existing robust numpy fallback if the ROOT fit fails
     median = np.median(data)
     q75, q25 = np.percentile(data, [75, 25])
     iqr = q75 - q25
-    
-    # Convert IQR to standard deviation (works beautifully for normal-ish peaks)
     sg_robust = iqr / 1.349 
-    
-    # If data is so aggressively quantized that IQR is 0, only THEN use raw std
     if sg_robust == 0:  
         sg_robust = np.std(data, ddof=1)
         
-    # --- 2. OUTLIER-PROOF FALLBACK ---
-    # Now, if the fit fails, it falls back to this cleaned metric instead of the raw RMS
     fallback_res = 100.0 * sg_robust / median if median > 0 else -1.0
     fallback_err = fallback_res / np.sqrt(2.0 * N) if (N > 1 and fallback_res > 0) else 1e9
 
     if median <= 0 or sg_robust <= 0:
         return fallback_res, fallback_err
 
-    # --- 3. INITIALIZE VARIABLES FOR FIT ---
-    mu, sg = median, sg_robust
+    # --- 2. CREATE ROOT HISTOGRAM ---
+    # Create a unique name to prevent ROOT memory warnings during loops
+    unique_id = uuid.uuid4().hex
+    hname = f"h_{unique_id}"
+    fname = f"f_{unique_id}"
+    
+    # Define integer-aligned boundaries to capture discrete photon counts cleanly
+    hist_min = max(0, int(np.floor(median - 5 * sg_robust)))
+    hist_max = int(np.ceil(median + 5 * sg_robust))
+    nbins = hist_max - hist_min + 1
+
+    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
+    
+    # Fill the ROOT histogram with the numpy data
+    for val in data:
+        h.Fill(val)
+
+    # --- 3. THE C++ ITERATIVE FIT ---
+    # Grab initial seeds directly from the histogram
+    mu = h.GetMean()
+    sg = h.GetRMS()
+    
+    g = ROOT.TF1(fname, "gaus", mu - nsig * sg, mu + nsig * sg)
+    
     fit_success = False
     sigma_err = 0.0
-    
-    # Force integer-aligned bins to prevent the "comb" effect on downscaled data
-    hist_min = np.floor(max(0, mu - 5 * sg))
-    hist_max = np.ceil(mu + 5 * sg)
-    
-    # np.arange with +2 and -0.5 ensures exactly one bin per integer photon count
-    bin_edges = np.arange(hist_min, hist_max + 2) - 0.5
-    counts, _ = np.histogram(data, bins=bin_edges)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
-    
-    # Tell curve_fit how to weight Poisson data so empty bins don't cause a crash
-    # If count is 0, give it a nominal weight of 1.0 to prevent division by zero
-    weights = np.where(counts > 0, np.sqrt(counts), 1.0)
-    
-    # --- 4. ITERATIVE GAUSSIAN FIT ---
+
+    # Iterative core-fit exactly mirroring C++ coreFit()
     for _ in range(max_iters):
-        mask = (bin_centers >= mu - nsig * sg) & (bin_centers <= mu + nsig * sg)
-        x_fit = bin_centers[mask]
-        y_fit = counts[mask]
-        w_fit = weights[mask]
+        g.SetRange(mu - nsig * sg, mu + nsig * sg)
+        # R = Range, Q = Quiet, L = Log-Likelihood, 0 = Don't draw
+        h.Fit(g, "RQL0")
         
-        if len(x_fit) < 4:  
-            break
-            
-        p0 = [np.max(y_fit), mu, sg]
-        try:
-            # Pass the Poisson weights into the fit using 'sigma' and 'absolute_sigma'
-            popt, pcov = curve_fit(
-                gaussian, x_fit, y_fit, p0=p0, 
-                sigma=w_fit, absolute_sigma=True, maxfev=2000
-            )
-            amp, mu, sg = popt
-            sigma_err = np.sqrt(pcov[2, 2])
-            
-            fit_success = True
-            if sg <= 0:
-                fit_success = False
-                break
-        except (RuntimeWarning, RuntimeError):
-            fit_success = False
+        mu = g.GetParameter(1)
+        sg = g.GetParameter(2)
+        sigma_err = g.GetParError(2)
+        
+        if sg <= 0:
             break
 
-    # --- 5. ROBUST FALLBACK CHECK ---
-    # 1. Did the fit converge?
-    # 2. Is the relative uncertainty of the sigma parameter less than 25%?
-    fit_ok = fit_success and (mu > 0) and (sg > 0) and (sigma_err / sg < 0.25)
-    
+    # --- 4. C++ EVALUATION LOGIC ---
+    # Check if the fit relative error on sigma exceeds 25% (exactly as in robustRes)
+    fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
+
+    # Clean up ROOT objects from memory so we don't leak over thousands of events
+    h.Delete()
+    g.Delete()
+
+    # --- 5. RETURN RESULT ---
     if fit_ok:
         res = 100.0 * sg / mu
         err = 100.0 * sigma_err / mu
         return res, err
     else:
-        # Fall back to outlier-proof metric
         return fallback_res, fallback_err
 
 def standard_gaussian(x, A, mu, sigma):

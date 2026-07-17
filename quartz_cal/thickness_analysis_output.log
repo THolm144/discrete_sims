@@ -1,0 +1,1277 @@
+============================================================
+ Launching Parallel OpenGATE Simulation Stack
+============================================================
+ Target Geometry   : quartz_cal
+ Iron Sweep        : 1cm to 70cm (Step: 1cm)
+ Primaries/Run     : 20 (across 1 threads)
+ Runs / Thickness  : 1
+ Master Batch Dir  : runs/quartz_cal/1000000000keV_20260717_115036
+ Concurrent Sims   : 5 (Using ~48 cores)
+============================================================
+ Building job queues...
+ [+] Starting 5-way parallel simulation phase...
+Terminated
+Terminated
+Terminated
+Terminated
+Terminated
+xargs: bash: terminated by signal 15
+xargs: bash: terminated by signal 15
+ [+] All simulations complete. Starting analysis phase...
+ [+] Running per-thickness analysis (5 concurrent)...
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_3cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_3cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_2cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_2cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_5cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_5cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_4cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_4cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_1cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_1cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_6cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_6cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_7cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_7cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_8cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_8cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_9cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_9cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_10cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_10cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_11cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_11cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_13cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_13cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_14cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_14cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_12cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_12cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_15cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_15cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_17cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_17cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_18cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 18.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_18cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_18cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_16cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 158, in main
+    results = world.analyze(batch_dir, run_dirs, meta, utils)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/worlds/quartz_cal.py", line 200, in analyze
+    hits       = utils.analyse_hits(hits_files)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 110, in analyse_hits
+    return count_unique_by_process(paths, ("detector", "phasespace"))
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 91, in count_unique_by_process
+    track_ids = tree["TrackID"].array(library="np")
+  File "/home/uakgun/lib/python3.10/site-packages/uproot/behaviors/TBranch.py", line 2039, in __getitem__
+    raise uproot.KeyInFileError(
+uproot.exceptions.KeyInFileError: not found: 'TrackID'
+
+    Available keys: 'EventID'
+
+in file runs/quartz_cal/1000000000keV_20260717_115036/iron_16cm/run_0/detector_hits_0.root
+in object /detector_hits_0;1
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_19cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 19.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_19cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_19cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_20cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 20.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_20cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_20cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_21cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 21.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_21cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_21cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_22cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 22.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_22cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_22cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_23cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 23.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_23cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_23cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_24cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 24.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_24cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_24cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_25cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 25.509999999999998 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_25cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_25cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_26cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 26.51 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_26cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_26cm/batch_analysis.txt
+  Batch dir   : runs/quartz_cal/1000000000keV_20260717_115036/iron_27cm
+  Run count   : 1
+  World module loaded  : quartz_cal
+  Dispatching to quartz_cal.analyze() …
+
+══════════════════════════════════════════════════════════════════
+  BATCH SIMULATION ANALYSIS REPORT
+  World         : quartz_cal
+  Geometry      : 5.0 × 5.0 × 27.51 cm
+  Batch Dir     : runs/quartz_cal/1000000000keV_20260717_115036/iron_27cm
+  Total Primaries: 20
+══════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────
+  OPTICAL PHOTON FLOW
+──────────────────────────────────────────────────────────────────
+  Process                  Exited     Detected
+  Cerenkov                      0            0
+  Scintillation                 0            0
+  Other                         0            0
+  ────────────────────────────────────────────
+  TOTAL                         0            0
+
+──────────────────────────────────────────────────────────────────
+  COLLECTION METRICS
+──────────────────────────────────────────────────────────────────
+  Hits / primary          : 0.0000
+
+──────────────────────────────────────────────────────────────────
+  CALIBRATION CONSTANTS
+──────────────────────────────────────────────────────────────────
+  E_dep / primary      : 0.0000 MeV
+  C_exp (Cer hits/prim): 0.0000
+  e_LCE (Scint hits/created): 0.000000
+  Timing resolution    : N/A
+
+──────────────────────────────────────────────────────────────────
+  DOSE : no .mhd files found
+──────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────
+  WORLD-SPECIFIC RESULTS
+──────────────────────────────────────────────────────────────────
+  Cherenkov hits / primary : 0.0000
+  Total SiPM hits          : 0
+══════════════════════════════════════════════════════════════════
+
+  Report → runs/quartz_cal/1000000000keV_20260717_115036/iron_27cm/batch_analysis.txt
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_29cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_28cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_30cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_31cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_32cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_33cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_35cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_34cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_36cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_38cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_37cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_39cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_40cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_41cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_42cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_43cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_44cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_45cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_46cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_48cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_47cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_49cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_50cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_51cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_52cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_53cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_54cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_55cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_56cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_59cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_58cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_57cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_60cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_61cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_63cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_62cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_64cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_67cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_66cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_65cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_69cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_68cm
+Traceback (most recent call last):
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 201, in <module>
+    main()
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analyze.py", line 146, in main
+    run_dirs  = utils.find_runs(batch_dir)
+  File "/home/uakgun/gate_sims/discrete_sims/quartz_cal/analysis_utils.py", line 393, in find_runs
+    raise FileNotFoundError(f"No run_* folders in {batch_dir}")
+FileNotFoundError: No run_* folders in runs/quartz_cal/1000000000keV_20260717_115036/iron_70cm
+
+============================================================
+ Cross-Sweep Analysis
+============================================================
+ [INFO] Running cross-thickness hit analysis...
+Scanning master directory: runs/quartz_cal/1000000000keV_20260717_115036
+
+--- Summary of Detector Strikes ---
+Iron Thickness:   1.0 cm | Avg Hits: 8372.0 ± 0.0 (across 1 runs)
+Iron Thickness:   2.0 cm | Avg Hits: 44731.0 ± 0.0 (across 1 runs)
+Iron Thickness:   3.0 cm | Avg Hits: 77745.0 ± 0.0 (across 1 runs)
+Iron Thickness:   4.0 cm | Avg Hits: 351396.0 ± 0.0 (across 1 runs)
+Iron Thickness:   5.0 cm | Avg Hits: 452885.0 ± 0.0 (across 1 runs)
+Iron Thickness:   6.0 cm | Avg Hits: 455375.0 ± 0.0 (across 1 runs)
+Iron Thickness:   7.0 cm | Avg Hits: 677507.0 ± 0.0 (across 1 runs)
+Iron Thickness:   8.0 cm | Avg Hits: 341786.0 ± 0.0 (across 1 runs)
+Iron Thickness:   9.0 cm | Avg Hits: 172442.0 ± 0.0 (across 1 runs)
+Iron Thickness:  10.0 cm | Avg Hits: 1535425.0 ± 0.0 (across 1 runs)
+Iron Thickness:  11.0 cm | Avg Hits: 1470778.0 ± 0.0 (across 1 runs)
+Iron Thickness:  12.0 cm | Avg Hits: 1964940.0 ± 0.0 (across 1 runs)
+Iron Thickness:  13.0 cm | Avg Hits: 2205044.0 ± 0.0 (across 1 runs)
+Iron Thickness:  14.0 cm | Avg Hits: 2401200.0 ± 0.0 (across 1 runs)
+Iron Thickness:  15.0 cm | Avg Hits: 2719687.0 ± 0.0 (across 1 runs)
+Iron Thickness:  16.0 cm | Avg Hits: 2872514.0 ± 0.0 (across 1 runs)
+Iron Thickness:  17.0 cm | Avg Hits: 3216485.0 ± 0.0 (across 1 runs)
+Iron Thickness:  18.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  19.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  20.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  21.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  22.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  23.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  24.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  25.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  26.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+Iron Thickness:  27.0 cm | Avg Hits: 0.0 ± 0.0 (across 1 runs)
+
+[+] Histogram saved to: runs/quartz_cal/1000000000keV_20260717_115036/thickness_hits_histogram.png
+============================================================
+ Pipeline Complete. All sweep data stored in:
+ runs/quartz_cal/1000000000keV_20260717_115036
+============================================================
