@@ -750,6 +750,11 @@ def main():
         ax_both = axs[1, 0]
         ax_truth = axs[1, 1]
 
+        # Create secondary y-axes to cleanly overlay truth energy dots onto photon count plots
+        ax_target_twin = ax_target.twinx()
+        ax_bounced_twin = ax_bounced.twinx()
+        ax_both_twin = ax_both.twinx()
+
         layers_x = np.arange(1, _N_LYSO + 1)
 
         # Set up spacing parameters to stack and group the bars side-by-side
@@ -765,54 +770,64 @@ def main():
             # Fetch the profiles
             target_profile = master_summary[mod][ekey].get("prompt_profile_target", np.zeros(_N_LYSO))
             bounced_profile = master_summary[mod][ekey].get("prompt_profile_bounced", np.zeros(_N_LYSO))
+            truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
             
             col_target, col_bounced = get_bar_colors(ekey, idx)
 
-            # Panel 1: Target-Only Photons (Reconstructed)
+            # Panel 1: Target-Only Photons (Reconstructed) + Truth Overlay
             ax_target.bar(x_coords, target_profile, width=width, color=col_target,
-                          edgecolor="black", linewidth=0.3, alpha=0.9,
-                          label=ekey)
+                          edgecolor="black", linewidth=0.3, alpha=0.9, label=ekey)
+            ax_target_twin.plot(layers_x, truth_prof, marker="o", linestyle="None", 
+                                color=col_target, markersize=5, alpha=0.75, 
+                                markeredgecolor="black", markeredgewidth=0.5)
 
-            # Panel 2: Bounced-Only Photons (Reconstructed)
+            # Panel 2: Bounced-Only Photons (Reconstructed) + Truth Overlay
             ax_bounced.bar(x_coords, bounced_profile, width=width, color=col_bounced,
-                           edgecolor="black", linewidth=0.3, alpha=0.9,
-                           label=ekey)
+                           edgecolor="black", linewidth=0.3, alpha=0.9, label=ekey)
+            ax_bounced_twin.plot(layers_x, truth_prof, marker="o", linestyle="None", 
+                                 color=col_target, markersize=5, alpha=0.75, 
+                                 markeredgecolor="black", markeredgewidth=0.5)
 
-            # Panel 3: Combined Profile (Stacked Reconstructed)
+            # Panel 3: Combined Profile (Stacked Reconstructed) + Truth Overlay
             ax_both.bar(x_coords, target_profile, width=width, color=col_target, 
-                        edgecolor="black", linewidth=0.3, alpha=0.9, 
-                        label=f"{ekey} (Target)")
+                        edgecolor="black", linewidth=0.3, alpha=0.9, label=f"{ekey} (Target)")
             ax_both.bar(x_coords, bounced_profile, width=width, bottom=target_profile, 
-                        color=col_bounced, edgecolor="black", linewidth=0.3, alpha=0.6, 
-                        label=f"{ekey} (Bounced)")
+                        color=col_bounced, edgecolor="black", linewidth=0.3, alpha=0.6, label=f"{ekey} (Bounced)")
+            ax_both_twin.plot(layers_x, truth_prof, marker="o", linestyle="None", 
+                              color=col_target, markersize=5, alpha=0.75, 
+                              markeredgecolor="black", markeredgewidth=0.5)
 
             # Panel 4: Simulated Truth (MHD Dose)
-            truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
             ax_truth.plot(layers_x, truth_prof, marker="s", markersize=4, label=ekey, alpha=0.8)
 
-        # Apply formatting across all reconstruction axes
+        # Apply standard formatting and axis labels
         for ax in [ax_target, ax_bounced, ax_both]:
             ax.set_xlabel("LYSO Layer Number", fontweight="bold")
             ax.set_xlim(0, _N_LYSO + 1)
             ax.grid(True, linestyle=":", alpha=0.5)
 
-        # Panel 1 custom labels
+        # Label the secondary twin axes cleanly to denote the truth dots
+        for twin_ax in [ax_target_twin, ax_bounced_twin, ax_both_twin]:
+            twin_ax.set_ylabel("Truth Energy Deposition [Dots] (MeV)", color="dimgray", fontsize=9)
+            twin_ax.tick_params(axis='y', labelcolor="dimgray")
+
+        # Panel 1 titles & legends
         ax_target.set_ylabel("Target Prompt Photon Strikes", fontweight="bold")
         ax_target.set_title("Reconstructed: Target-Only", fontsize=11, fontweight="bold")
         ax_target.legend(title="Beam Energy", fontsize=8, loc="upper left")
 
-        # Panel 2 custom labels
+        # Panel 2 titles & legends
         ax_bounced.set_ylabel("Bounced Prompt Photon Strikes", fontweight="bold")
         ax_bounced.set_title("Reconstructed: Bounced-Only", fontsize=11, fontweight="bold")
         ax_bounced.legend(title="Beam Energy", fontsize=8, loc="upper left")
 
-        # Panel 3 custom labels
+        # Panel 3 titles & legends
         ax_both.set_ylabel("Total Prompt Photon Strikes", fontweight="bold")
         ax_both.set_title("Reconstructed: Combined Profile", fontsize=11, fontweight="bold")
         handles, labels = ax_both.get_legend_handles_labels()
         ax_both.legend(handles, labels, title="Beam Components", fontsize=8, loc="upper left")
 
-        # Panel 4 custom labels
+        # Panel 4 titles & legends
         ax_truth.set_xlabel("LYSO Layer Number", fontweight="bold")
         ax_truth.set_ylabel("Mean Active Energy Deposited (MeV / Event)", fontweight="bold")
         ax_truth.set_title("Simulated Truth Shower Profile (DoseActor MHD)", fontsize=11, fontweight="bold")
