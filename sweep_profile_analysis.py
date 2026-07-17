@@ -340,11 +340,15 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         t_travel = np.abs(detected_z_sensor - z_center) / v_eff
         expected_times.append(t_travel)
 
+    # Pre-allocate accumulation arrays OUTSIDE the file loop
     prompt_counts = np.zeros(_N_LYSO)
+    prompt_counts_target = np.zeros(_N_LYSO)
+    prompt_counts_bounced = np.zeros(_N_LYSO)
     total_events_processed = 0
 
     expected_times_arr = np.array(expected_times)
     for fpath in hit_files:
+        run_tag = fpath.parent.name
         run_tag = fpath.parent.name
 
         try:
@@ -430,9 +434,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         is_target_layer = (true_layer_idx[:, None] == np.arange(_N_LYSO)[None, :])
 
         # Accumulate target and bounced counts separately
-        prompt_counts_target = np.zeros(_N_LYSO)
-        prompt_counts_bounced = np.zeros(_N_LYSO)
-        prompt_counts = np.zeros(_N_LYSO)
+       
+       
         prompt_counts_target += (weights * is_target_layer).sum(axis=0)
         prompt_counts_bounced += (weights * (~is_target_layer)).sum(axis=0)
         prompt_counts += weights.sum(axis=0)
