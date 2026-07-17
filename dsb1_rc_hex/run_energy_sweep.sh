@@ -3,7 +3,7 @@ WORLD="dsb1_rc_hex"
 PARTICLE="e-"
 BEAM_RADIUS=0.01
 OPTICAL="on"
-CHERENKOV="off"
+CHERENKOV="on"
 PHYSICS_LIST="QGSP_BERT_EMV"
 
 # Dynamically balanced totals calculated for a 16-hour execution safety window
