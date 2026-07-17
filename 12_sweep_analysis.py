@@ -198,7 +198,9 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     unique_id = uuid.uuid4().hex
     hname = f"h_{unique_id}"
     fname = f"f_{unique_id}"
-    
+    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
+    h.SetDirectory(0)  # <-- ADD THIS: Tells ROOT C++ not to own this object
+
     # Define integer-aligned boundaries to capture discrete photon counts cleanly
     hist_min = max(0, int(np.floor(median - 5 * sg_robust)))
     hist_max = int(np.ceil(median + 5 * sg_robust))
@@ -237,10 +239,7 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     # Check if the fit relative error on sigma exceeds 25% (exactly as in robustRes)
     fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
 
-    # Clean up ROOT objects from memory so we don't leak over thousands of events
-    h.Delete()
-    g.Delete()
-
+   
     # --- 5. RETURN RESULT ---
     if fit_ok:
         res = 100.0 * sg / mu
