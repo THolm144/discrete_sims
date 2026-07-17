@@ -476,6 +476,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
             print(f"    [{verbose_label}] SKIPPED — no detector_hits_*.root files found")
         return None
 
+    # --- Sensor Coordinate Discovery ---
     detected_z_sensor = None
     for fpath in hit_files:
         try:
@@ -493,9 +494,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     if detected_z_sensor is None:
         return None
 
+    # --- Geometry & Constants Configuration ---
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
     v_light = v_eff_for_module(module_name)
-
     v_eff = v_eff_for_module(module_name)
     t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
 
@@ -507,14 +508,20 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     t_indices = list({1, 3, 5} if is_hex else {0, 1})
     e_indices = list({0, 2, 4} if is_hex else {2, 3})
 
+    # --- Chunk Initializations ---
     up_first_chunks, down_first_chunks = [], []
     up_q_chunks, dw_q_chunks = [], []
-    dw_e_hit_chunks, dw_t_hit_chunks = [], []
+    
+    # Track BOTH faces for E and T energy counting
+    up_e_hit_chunks, dw_e_hit_chunks = [], []
+    up_t_hit_chunks, dw_t_hit_chunks = [], []
+    
     down_first_t_chunks = []
     run_dirs = set()
 
     branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "LocalTime", "EventID", "ParticleName"]
 
+    # --- Main File/Data Processing Loop ---
     for fpath in hit_files:
         run_tag = fpath.parent.name
         run_dirs.add(fpath.parent)
@@ -531,75 +538,81 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
 
+        # Channel Mapping
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
 
+        # Spatial / Particle Masks
         near_up = np.abs(z + detected_z_sensor) < 2.5
         near_dw = np.abs(z - detected_z_sensor) < 2.5
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
         gt = np.where(near_dw, gt + t_offset_ns, gt)
-
-        is_e = np.isin(channels, e_indices)
+        
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
 
+        # 1. E-Type Channel Processing
+        is_e = np.isin(channels, e_indices)
         m_e_up = is_e & is_prompt & near_up & is_optical
         m_e_dw = is_e & is_prompt & near_dw & is_optical
 
         c = _chunk_series(m_e_up, gt, ev, run_tag)
-        if c is not None: up_first_chunks.append(c)
+        if c is not None: 
+            up_first_chunks.append(c)
+            up_e_hit_chunks.append(c)   # Save upstream E-hits
+            
         c = _chunk_series(m_e_dw, gt, ev, run_tag)
         if c is not None:
             down_first_chunks.append(c)
-            dw_e_hit_chunks.append(c)
+            dw_e_hit_chunks.append(c)   # Save downstream E-hits
 
+        # 2. T-Type Channel Processing
         is_t = np.isin(channels, t_indices)
+        
+        # Raw timing logic for Quantile resolution
         m_t_up = is_t & is_optical & near_up
         m_t_dw = is_t & is_optical & near_dw
-
+        
         c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
         if c is not None: up_q_chunks.append(c)
         c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
-        if c is not None:
-            dw_q_chunks.append(c)
-            dw_t_hit_chunks.append(c)
-        # 1. Initialize near the top
-        up_e_hit_chunks = [] 
-        up_t_hit_chunks = []
+        if c is not None: dw_q_chunks.append(c)
 
-        # 2. Inside the E-type logic loop:
-        c = _chunk_series(m_e_up, gt, ev, run_tag)
-        if c is not None: 
-            up_first_chunks.append(c)
-            up_e_hit_chunks.append(c) # <-- Capture upstream E hits
+        # Prompt-filtered Energy/Hit counters for T channels (FIX: stops resolution blowup)
+        m_t_up_prompt = is_t & is_optical & near_up & is_prompt
+        m_t_dw_prompt = is_t & is_optical & near_dw & is_prompt
 
-        # 3. Inside the T-type logic loop:
-        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
-        if c is not None: 
-            up_q_chunks.append(c)
-            up_t_hit_chunks.append(c) # <-- Capture upstream T hits
-        # T-type analog of down_first (E-type prompt-arrival dict below): needed
-        # so dw_t_total can be keyed against actual T-type event membership
-        # instead of being looked up against the (unrelated) E-type key set.
-        c = _chunk_series(m_t_dw & is_prompt, gt, ev, run_tag)
+        c = _chunk_series(m_t_up_prompt, gt, ev, run_tag)
         if c is not None:
+            up_t_hit_chunks.append(c)   # Save upstream T-hits
+
+        c = _chunk_series(m_t_dw_prompt, gt, ev, run_tag)
+        if c is not None:
+            dw_t_hit_chunks.append(c)   # Save downstream T-hits
             down_first_t_chunks.append(c)
 
+    # --- Aggregations & Grouping ---
     up_first = _grouped(up_first_chunks, "min")
     down_first = _grouped(down_first_chunks, "min")
     down_first_t = _grouped(down_first_t_chunks, "min")
+    
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
     dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
-    up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
-    up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
-    dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
-    dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
     
+    # Hits per event dictionary groupings
+    up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
+    dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
+    
+    up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
+    dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
 
+    # --- Time-of-Flight & Profiles ---
     common_t_evs = set(up_q) & set(dw_q)
     all_bm_raw_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
     clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0)
-    _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)[:3]
+    sigma_t_ps = 0.0
+    if len(clean_bm) > 3:
+        _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)[:3]
 
     common_e_keys = set(up_first) & set(down_first)
     z_lo, z_hi = -calor_thick_mm / 2 - 15.0, calor_thick_mm / 2 + 15.0
@@ -625,7 +638,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
               f"{len(common_t_evs)} T-coincidences, {len(common_e_keys)} E-coincidences "
               f"(sigma_t={sigma_t_ps:.1f}ps)")
 
-    # Create a reliable, sorted master list of unique event IDs present in this batch
+    # --- Explicit Event Alignment and Double-Ended Reconstitution ---
     master_e_events = sorted(list(down_first.keys()))
     master_t_events = sorted(list(down_first_t.keys()))
 
@@ -638,10 +651,10 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         "n_t_coincidences": len(common_t_evs),
         "n_e_coincidences": len(common_e_keys),
         
-        # Aligned time arrays
+        # Aligned primary time measurements
         "dw_first_times": np.array([down_first[k] for k in master_e_events]),
         
-        # Combined double-ended totals (Front + Back) aligned perfectly by event ID
+        # Combined dual-ended yields (Front + Back) aligned perfectly by Event ID
         "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) + up_e_hits_per_ev.get(k, 0) for k in master_e_events]),
         "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) + up_t_hits_per_ev.get(k, 0) for k in master_t_events]),
         
