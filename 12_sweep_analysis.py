@@ -169,39 +169,51 @@ def gaussian(x, amp, mean, sigma):
 def robust_resolution(data, nsig=2.0, max_iters=4):
     """
     Computes fractional resolution (sigma/mean in %) with uncertainty.
-    Falls back to RMS/mean if the iterative Gaussian fit is unstable or 
-    if the relative error on sigma exceeds 25%.
+    Falls back to RMS/mean if the iterative Gaussian fit is unstable.
     """
     N = len(data)
     if N < 2:
-        return -1.0, 1e9  # Not enough data
+        return -1.0, 1e9  
     
     mean_raw = np.mean(data)
     std_raw = np.std(data, ddof=1)
     
-    # Well-defined RMS fallback values
     rms_res = 100.0 * std_raw / mean_raw if mean_raw > 0 else -1.0
     rms_err = rms_res / np.sqrt(2.0 * N) if (N > 1 and rms_res > 0) else 1e9
     
     if mean_raw <= 0 or std_raw <= 0:
         return rms_res, rms_err
 
-    # Iterative Gaussian Fit (Equivalent to coreFit in ROOT)
-    mu, sg = mean_raw, std_raw
+    # --- THE FIX: ROBUST INITIALIZATION ---
+    median = np.median(data)
+    q75, q25 = np.percentile(data, [75, 25])
+    iqr = q75 - q25
+    
+    # Convert IQR to an equivalent standard deviation (for a normal distribution)
+    sg_robust = iqr / 1.349 
+    if sg_robust == 0:  # Fallback if data is weirdly quantized
+        sg_robust = std_raw
+        
+    mu, sg = median, sg_robust
+    
     fit_success = False
     amplitude, sigma_err = 0.0, 0.0
     
-    # Bin the data to perform the fit (similar to TH1 fit)
-    counts, bin_edges = np.histogram(data, bins="auto")
+    # --- THE FIX: ROBUST BINNING ---
+    # Force the histogram to ignore the extreme edges right away
+    hist_min = max(0, median - 5 * sg)
+    hist_max = median + 5 * sg
+    
+    # Use fixed bins within this realistic window instead of "auto" over the whole array
+    counts, bin_edges = np.histogram(data, bins=50, range=(hist_min, hist_max))
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
     
     for _ in range(max_iters):
-        # Define range: [mu - nsig*sg, mu + nsig*sg]
         mask = (bin_centers >= mu - nsig * sg) & (bin_centers <= mu + nsig * sg)
         x_fit = bin_centers[mask]
         y_fit = counts[mask]
         
-        if len(x_fit) < 4:  # Too few bins to fit 3 parameters
+        if len(x_fit) < 4:  
             break
             
         p0 = [np.max(y_fit), mu, sg]
@@ -213,17 +225,10 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
             if sg <= 0:
                 fit_success = False
                 break
-        except RuntimeWarning:
-            fit_success = False
-            break
-        except RuntimeError:
-            # Fit failed to converge in this iteration
+        except (RuntimeWarning, RuntimeError):
             fit_success = False
             break
 
-    # Robust Fallback Check:
-    # 1. Did the fit converge?
-    # 2. Is the relative uncertainty of the sigma parameter less than 25%?
     fit_ok = fit_success and (mu > 0) and (sg > 0) and (sigma_err / sg < 0.25)
     
     if fit_ok:
@@ -231,7 +236,6 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
         err = 100.0 * sigma_err / mu
         return res, err
     else:
-        # Fall back to RMS/mean (unbiased, large-N error approximation)
         return rms_res, rms_err
 
 def standard_gaussian(x, A, mu, sigma):
