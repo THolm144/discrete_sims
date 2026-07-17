@@ -563,7 +563,21 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         if c is not None:
             dw_q_chunks.append(c)
             dw_t_hit_chunks.append(c)
+        # 1. Initialize near the top
+        up_e_hit_chunks = [] 
+        up_t_hit_chunks = []
 
+        # 2. Inside the E-type logic loop:
+        c = _chunk_series(m_e_up, gt, ev, run_tag)
+        if c is not None: 
+            up_first_chunks.append(c)
+            up_e_hit_chunks.append(c) # <-- Capture upstream E hits
+
+        # 3. Inside the T-type logic loop:
+        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
+        if c is not None: 
+            up_q_chunks.append(c)
+            up_t_hit_chunks.append(c) # <-- Capture upstream T hits
         # T-type analog of down_first (E-type prompt-arrival dict below): needed
         # so dw_t_total can be keyed against actual T-type event membership
         # instead of being looked up against the (unrelated) E-type key set.
@@ -576,8 +590,11 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     down_first_t = _grouped(down_first_t_chunks, "min")
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
     dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
+    up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
+    up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
     dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
     dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
+    
 
     common_t_evs = set(up_q) & set(dw_q)
     all_bm_raw_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
@@ -608,6 +625,10 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
               f"{len(common_t_evs)} T-coincidences, {len(common_e_keys)} E-coincidences "
               f"(sigma_t={sigma_t_ps:.1f}ps)")
 
+    # Create a reliable, sorted master list of unique event IDs present in this batch
+    master_e_events = sorted(list(down_first.keys()))
+    master_t_events = sorted(list(down_first_t.keys()))
+
     return {
         "sigma_t_ps": sigma_t_ps,
         "raw_bm_data": all_bm_raw_ps,
@@ -616,9 +637,14 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
         "n_t_coincidences": len(common_t_evs),
         "n_e_coincidences": len(common_e_keys),
-        "dw_first_times": np.array(list(down_first.values())),
-        "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) for k in down_first.keys()]),
-        "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) for k in down_first_t.keys()]),
+        
+        # Aligned time arrays
+        "dw_first_times": np.array([down_first[k] for k in master_e_events]),
+        
+        # Combined double-ended totals (Front + Back) aligned perfectly by event ID
+        "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) + up_e_hits_per_ev.get(k, 0) for k in master_e_events]),
+        "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) + up_t_hits_per_ev.get(k, 0) for k in master_t_events]),
+        
         "run_dirs": sorted(run_dirs),
     }
 
