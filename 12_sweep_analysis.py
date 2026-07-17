@@ -540,6 +540,14 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         proc = arrs["TrackCreatorProcess"]
 
         is_wls = (proc == b"OpWLS") | (proc == "OpWLS")
+        if verbose_label:
+            vals, counts_ = np.unique(proc, return_counts=True)
+            print(f"    [PROC-CHECK:{verbose_label}] unique TrackCreatorProcess values: "
+                f"{list(zip(vals[:10], counts_[:10]))}")
+            print(f"    [PROC-CHECK:{verbose_label}] is_optical frac: {is_optical.mean():.3f}, "
+                f"is_wls frac (of all hits): {is_wls.mean():.3f}, "
+                f"is_wls frac (of optical only): "
+                f"{(is_wls & is_optical).sum() / max(1, is_optical.sum()):.3f}")
 
         # Channel Mapping
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
