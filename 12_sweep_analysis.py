@@ -1146,6 +1146,19 @@ def main():
             if E_val <= 0: continue
 
             t_totals = master_summary[mod][ekey].get("dw_t_total", np.array([]))
+            t_totals = np.array(t_totals) # Ensure it's a numpy array
+            
+            # --- DEBUG AND FILTER ---
+            if len(t_totals) > 0:
+                print(f"  [{mod} @ {ekey}] RAW  -> N: {len(t_totals)}, Mean: {np.mean(t_totals):.1f}, Max: {np.max(t_totals)}")
+            
+            # Cut out events that recorded exactly 0 photons
+            t_totals = t_totals[t_totals > 0]
+            
+            if len(t_totals) > 0:
+                print(f"  [{mod} @ {ekey}] >0 CUT -> N: {len(t_totals)}, Mean: {np.mean(t_totals):.1f}, Median: {np.median(t_totals):.1f}")
+            # ------------------------
+
             if len(t_totals) < 5: continue
 
             # Convert the percentage output of robust_resolution back to a fraction
