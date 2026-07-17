@@ -200,31 +200,39 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     fit_success = False
     sigma_err = 0.0
     
-    # Force the histogram to ignore the extreme edges right away
-    hist_min = max(0, median - 5 * sg)
-    hist_max = median + 5 * sg
+    # Force integer-aligned bins to prevent the "comb" effect on downscaled data
+    hist_min = np.floor(max(0, mu - 5 * sg))
+    hist_max = np.ceil(mu + 5 * sg)
     
-    # Use fixed bins within this realistic window instead of "auto" over the whole array
-    counts, bin_edges = np.histogram(data, bins=50, range=(hist_min, hist_max))
+    # np.arange with +2 and -0.5 ensures exactly one bin per integer photon count
+    bin_edges = np.arange(hist_min, hist_max + 2) - 0.5
+    counts, _ = np.histogram(data, bins=bin_edges)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+    
+    # Tell curve_fit how to weight Poisson data so empty bins don't cause a crash
+    # If count is 0, give it a nominal weight of 1.0 to prevent division by zero
+    weights = np.where(counts > 0, np.sqrt(counts), 1.0)
     
     # --- 4. ITERATIVE GAUSSIAN FIT ---
     for _ in range(max_iters):
-        # Define range: [mu - nsig*sg, mu + nsig*sg]
         mask = (bin_centers >= mu - nsig * sg) & (bin_centers <= mu + nsig * sg)
         x_fit = bin_centers[mask]
         y_fit = counts[mask]
+        w_fit = weights[mask]
         
-        if len(x_fit) < 4:  # Too few bins to fit 3 parameters
+        if len(x_fit) < 4:  
             break
             
         p0 = [np.max(y_fit), mu, sg]
         try:
-            # Assuming 'gaussian' is defined elsewhere in your script:
-            # def gaussian(x, a, mu, sigma): ...
-            popt, pcov = curve_fit(gaussian, x_fit, y_fit, p0=p0, maxfev=2000)
+            # Pass the Poisson weights into the fit using 'sigma' and 'absolute_sigma'
+            popt, pcov = curve_fit(
+                gaussian, x_fit, y_fit, p0=p0, 
+                sigma=w_fit, absolute_sigma=True, maxfev=2000
+            )
             amp, mu, sg = popt
             sigma_err = np.sqrt(pcov[2, 2])
+            
             fit_success = True
             if sg <= 0:
                 fit_success = False
