@@ -519,7 +519,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     down_first_t_chunks = []
     run_dirs = set()
 
-    branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "LocalTime", "EventID", "ParticleName"]
+    branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "TrackCreatorProcess," "LocalTime", "EventID", "ParticleName"]
 
     # --- Main File/Data Processing Loop ---
     for fpath in hit_files:
@@ -537,6 +537,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
+        proc = arrs["TrackCreatorProcess"]
+
+        is_wls = (proc == b"OpWLS") | (proc == "OpWLS")
 
         # Channel Mapping
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
@@ -570,8 +573,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         is_t = np.isin(channels, t_indices)
         
         # Raw timing logic for Quantile resolution
-        m_t_up = is_t & is_optical & near_up
-        m_t_dw = is_t & is_optical & near_dw
+        m_t_up = is_t & is_optical & near_up & is_wls
+        m_t_dw = is_t & is_optical & near_dw & is_wls
         
         c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
         if c is not None: up_q_chunks.append(c)
