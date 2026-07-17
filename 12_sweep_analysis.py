@@ -198,15 +198,14 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     unique_id = uuid.uuid4().hex
     hname = f"h_{unique_id}"
     fname = f"f_{unique_id}"
-    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
-    h.SetDirectory(0)  # <-- ADD THIS: Tells ROOT C++ not to own this object
+    
 
     # Define integer-aligned boundaries to capture discrete photon counts cleanly
     hist_min = max(0, int(np.floor(median - 5 * sg_robust)))
     hist_max = int(np.ceil(median + 5 * sg_robust))
     nbins = hist_max - hist_min + 1
-
     h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
+    h.SetDirectory(0)  # <-- ADD THIS: Tells ROOT C++ not to own this object
     
     # Fill the ROOT histogram with the numpy data
     for val in data:
