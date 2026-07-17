@@ -342,8 +342,13 @@ def configure_physics(sim, args, script_dir: Path, world,
     # Geant4 from generating and endlessly tracking low-energy secondary delta-electrons
     # that chew up CPU cycles without impacting macroscopic dosage metrics.
     sim.g4_commands_before_init.append("/run/setCut 0.1 mm")
-    sim.g4_commands_before_init.append("/process/optical/scintillation/trackSecondariesFirst true")
-    sim.g4_commands_before_init.append("/process/optical/cerenkov/trackSecondariesFirst true")
+    # Enable tracking scintillation secondaries first
+    sim.g4_commands_before_init.append("/process/optical/scintillation/setTrackSecondariesFirst true")
+
+# Enable tracking Cherenkov secondaries first
+    sim.g4_commands_before_init.append("/process/optical/cerenkov/setTrackSecondariesFirst true")
+
+# Set the maximum Cherenkov photons per step (e.g., 300)
     sim.g4_commands_before_init.append("/process/optical/cerenkov/setMaxPhotons 300")
     surface_file = script_dir / "SurfaceProperties.xml"
     if surface_file.exists():
