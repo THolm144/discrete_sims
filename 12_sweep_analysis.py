@@ -985,7 +985,6 @@ def main():
             _, fit_mu, fit_sigma = fit_gaussian_to_peak(e_totals, n_bins=40)
             
             # --- FALLBACK LOGIC ---
-            # If the Gaussian fit failed (mu near zero or resolution > 300%), use raw stats
             if fit_mu > 0.5 and (fit_sigma / fit_mu) < 3.0:
                 mu_val, sigma_val = fit_mu, fit_sigma
             else:
@@ -1050,15 +1049,22 @@ def main():
 
             fig_er, (ax_lin, ax_res) = plt.subplots(1, 2, figsize=(14, 6))
 
+            # --- ROBUST LINEAR FIT GUARD ---
             def linear_func(x, m, b): return m * x + b
-            popt_lin, _ = curve_fit(linear_func, energies_gev, mu_e_list)
+            popt_lin = None
+            if len(energies_gev) >= 2:
+                try:
+                    popt_lin, _ = curve_fit(linear_func, energies_gev, mu_e_list)
+                except Exception as e:
+                    print(f"  [WARNING] Linearity fit failed for {mod}: {e}")
 
             ax_lin.errorbar(energies_gev, mu_e_list, yerr=mu_e_err, fmt=mod_markers.get(mod, 'o'),
                             color=mod_colors.get(mod, 'black'), label=f"Simulated Data ({mod})")
 
-            x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
-            ax_lin.plot(x_lin_smooth, linear_func(x_lin_smooth, *popt_lin),
-                        color="black", linestyle="--", label=f"Fit: {popt_lin[0]:.3e} photons/GeV")
+            if popt_lin is not None:
+                x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
+                ax_lin.plot(x_lin_smooth, linear_func(x_lin_smooth, *popt_lin),
+                            color="black", linestyle="--", label=f"Fit: {popt_lin[0]:.3e} photons/GeV")
 
             ax_lin.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_lin.set_ylabel("Sum Amplitude (Downstream E-Type Photons)", fontsize=11)
@@ -1066,28 +1072,35 @@ def main():
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
 
-            try:
-                popt_res, _ = curve_fit(resolution_func, energies_gev, res_e_list,
-                                        p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
-                c_f, s_f, n_f = popt_res
-                fit_label = f"Fit: {c_f * 100:.1f}% $\\oplus$ {s_f * 100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.1f}%/E"
-            except Exception:
-                popt_res = [0.0, 0.0, 0.0]
-                fit_label = "Fit failed"
+            # --- ROBUST RESOLUTION FIT GUARD ---
+            popt_res = None
+            fit_label = "Fit failed (Not enough data points)"
+            if len(energies_gev) >= 3:
+                try:
+                    popt_res, _ = curve_fit(resolution_func, energies_gev, res_e_list,
+                                            p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
+                    c_f, s_f, n_f = popt_res
+                    fit_label = f"Fit: {c_f * 100:.1f}% $\\oplus$ {s_f * 100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.1f}%/E"
+                except Exception as e:
+                    print(f"  [WARNING] Resolution fit failed for {mod}: {e}")
+            else:
+                fit_label = f"Fit skipped (Requires 3 points; have {len(energies_gev)})"
 
             ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
                             color=mod_colors.get(mod, 'black'), label="Simulated Resolution (E-type)")
 
-            x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
-            ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
-                        color="black", linestyle="--", label=fit_label)
-
-            # -- External reference overlays (hardcoded, no underlying data files) --
-            for ref_name, ref_p in ENERGY_REF_CURVES.items():
-                y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
-                ax_res.plot(x_res_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5,
-                            label=f"{ref_name}: {ref_p['c']*100:.2f}$\\oplus${ref_p['s']*100:.2f}/$\\sqrt{{E}}$"
-                                  f"$\\oplus${ref_p['n']*100:.2f}/E")
+            if popt_res is not None:
+                x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
+                ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
+                            color="black", linestyle="--", label=fit_label)
+                
+                # -- External reference overlays (only active when plotting fit curve space) --
+                for ref_name, ref_p in ENERGY_REF_CURVES.items():
+                    y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
+                    ax_res.plot(x_res_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5,
+                                label=f"{ref_name}: {ref_p['c']*100:.2f}$\\oplus${ref_p['s']*100:.2f}/$\\sqrt{{E}}$"
+                                      f"$\\oplus${ref_p['n']*100:.2f}/E")
+            
             ax_res.axhspan(ENERGY_DATA_BAND_FRAC[0], ENERGY_DATA_BAND_FRAC[1], color="lightgray", alpha=0.4,
                            label=f"DATA sum$_{{lg}}$: {ENERGY_DATA_BAND_FRAC[0]*100:.0f}-{ENERGY_DATA_BAND_FRAC[1]*100:.0f}%")
 
@@ -1106,25 +1119,21 @@ def main():
 
         # ─────────────────────────────────────────────────────────────────
         # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
-        # Uses T-type channel photon counts (dw_t_total) rather than E-type,
-        # as a separate measurement of shower-max-region light collection.
-        # NOTE: only the "photon count, real analog" flavor is plotted —
-        # the "dE/dx, no photon stats" curve from the reference image needs
-        # per-event energy deposits this pipeline doesn't extract (only the
-        # accumulated DoseActor dose maps used for the longitudinal profile).
         # ─────────────────────────────────────────────────────────────────
         if len(energies_gev_t) >= 1:
             energies_gev_t = np.array(energies_gev_t)
             res_t_list = np.array(res_t_list)
             res_t_err_arr = np.array(res_t_err)
 
-            try:
-                popt_res_t, _ = curve_fit(resolution_func, energies_gev_t, res_t_list,
-                                          p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
-                c_ft, s_ft, n_ft = popt_res_t
-            except Exception:
-                popt_res_t = [0.0, 0.0, 0.0]
-                c_ft, s_ft, n_ft = popt_res_t
+            popt_res_t = None
+            c_ft, s_ft, n_ft = 0.0, 0.0, 0.0
+            if len(energies_gev_t) >= 3:
+                try:
+                    popt_res_t, _ = curve_fit(resolution_func, energies_gev_t, res_t_list,
+                                              p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
+                    c_ft, s_ft, n_ft = popt_res_t
+                except Exception as e:
+                    print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
 
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
@@ -1133,18 +1142,24 @@ def main():
                            markersize=7, capsize=4, capthick=1.2,
                            label="sim (photon count, T-type channels)")
 
-            x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
-            ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t) * 100.0,
-                       color=mod_colors.get(mod, 'blue'), linestyle=':', linewidth=1.5)
+            if popt_res_t is not None:
+                x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
+                ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t) * 100.0,
+                           color=mod_colors.get(mod, 'blue'), linestyle=':', linewidth=1.5)
 
-            for ref_name, ref_p in ENERGY_REF_CURVES.items():
-                y_ref = energy_ref_curve(x_sm_smooth, ref_p["c"], ref_p["s"], ref_p["n"]) * 100.0
-                ax_sm.plot(x_sm_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5)
+                for ref_name, ref_p in ENERGY_REF_CURVES.items():
+                    y_ref = energy_ref_curve(x_sm_smooth, ref_p["c"], ref_p["s"], ref_p["n"]) * 100.0
+                    ax_sm.plot(x_sm_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5)
 
-            fit_text = (
-                f"sim (photon count, T-type channels): "
-                f"{c_ft*100:.2f} $\\oplus$ {s_ft*100:.2f}/$\\sqrt{{E}}$ $\\oplus$ {n_ft*100:.2f}/E\n"
-            )
+            fit_text = ""
+            if popt_res_t is not None:
+                fit_text += (
+                    f"sim (photon count, T-type channels): "
+                    f"{c_ft*100:.2f} $\\oplus$ {s_ft*100:.2f}/$\\sqrt{{E}}$ $\\oplus$ {n_ft*100:.2f}/E\n"
+                )
+            else:
+                fit_text += f"sim (photon count, T-type channels): Fit skipped (< 3 points)\n"
+                
             for ref_name, ref_p in ENERGY_REF_CURVES.items():
                 fit_text += (
                     f"{ref_name}: {ref_p['c']*100:.2f} $\\oplus$ {ref_p['s']*100:.2f}/$\\sqrt{{E}}$ "
