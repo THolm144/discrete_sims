@@ -519,7 +519,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     down_first_t_chunks = []
     run_dirs = set()
 
-    branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "TrackCreatorProcess," "LocalTime", "EventID", "ParticleName"]
+    branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "TrackCreatorProcess", "LocalTime", "EventID", "ParticleName"]
 
     # --- Main File/Data Processing Loop ---
     for fpath in hit_files:
