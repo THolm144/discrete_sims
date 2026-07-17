@@ -571,31 +571,33 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
         
         # 2. T-Type Channel Processing
-    is_t = np.isin(channels, t_indices)
+    # 2. T-Type Channel Processing
+        is_t = np.isin(channels, t_indices)
 
-    # Raw timing logic for Quantile resolution — leave unfiltered (ΔT observable)
-    m_t_up = is_t & is_optical & near_up
-    m_t_dw = is_t & is_optical & near_dw
-    c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
-    if c is not None: up_q_chunks.append(c)
-    c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
-    if c is not None: dw_q_chunks.append(c)
+        # Raw timing logic for Quantile resolution — leave unfiltered (ΔT observable)
+        m_t_up = is_t & is_optical & near_up
+        m_t_dw = is_t & is_optical & near_dw
+        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
+        if c is not None: up_q_chunks.append(c)
+        c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
+        if c is not None: dw_q_chunks.append(c)
 
-    # Prompt-filtered PHOTON-COUNT masks — THIS is where is_wls goes
-    m_t_up_prompt = is_t & is_optical & is_wls & near_up & is_prompt
-    m_t_dw_prompt = is_t & is_optical & is_wls & near_dw & is_prompt
+        # Prompt-filtered PHOTON-COUNT masks — WLS-only
+        m_t_up_prompt = is_t & is_optical & is_wls & near_up & is_prompt
+        m_t_dw_prompt = is_t & is_optical & is_wls & near_dw & is_prompt
 
-    c = _chunk_series(m_t_up_prompt, gt, ev, run_tag)
-    if c is not None: up_t_hit_chunks.append(c)
-    c = _chunk_series(m_t_dw_prompt, gt, ev, run_tag)
-    if c is not None:
-        dw_t_hit_chunks.append(c)
-        down_first_t_chunks.append(c)
+        c = _chunk_series(m_t_up_prompt, gt, ev, run_tag)
+        if c is not None: up_t_hit_chunks.append(c)
+        c = _chunk_series(m_t_dw_prompt, gt, ev, run_tag)
+        if c is not None:
+            dw_t_hit_chunks.append(c)
+            down_first_t_chunks.append(c)
 
-        # --- Aggregations & Grouping ---
+        # --- Aggregations & Grouping --- (4 spaces: after the for-loop, not inside it)
         up_first = _grouped(up_first_chunks, "min")
         down_first = _grouped(down_first_chunks, "min")
         down_first_t = _grouped(down_first_t_chunks, "min")
+    
         
         up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
         dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
