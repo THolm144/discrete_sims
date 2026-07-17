@@ -11,7 +11,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 import itertools
-
+import re
 import numpy as np
 import pandas as pd
 import uproot
@@ -595,10 +595,17 @@ def main():
                     print(f"  Skipping module '{mod}' (path not found)")
                     continue
 
-            sweeps = sorted(mod_path.glob("sweep_*"), key=lambda p: p.name)
+            sweeps = list(mod_path.glob("sweep_*"))
             if not sweeps: continue
-            target_sweep = sweeps[-1]
-            print(f"Queuing '{mod}' -> {target_sweep.name}")
+            
+            # Extract all digits from the folder name to compare them numerically
+            def extract_timestamp_key(path):
+                digits = "".join(re.findall(r"\d+", path.name))
+                return int(digits) if digits else 0
+
+            # Grab the folder representing the highest numerical timestamp
+            target_sweep = max(sweeps, key=extract_timestamp_key)
+            print(f"Queuing '{mod}' -> {target_sweep.name} (Latest future/past timestamp)")
 
             is_hex = "hex" in mod
             energy_dirs = sorted(target_sweep.glob("*GeV"), key=lambda p: extract_numerical_energy(p.name))
