@@ -167,8 +167,17 @@ def standard_gaussian(x, A, mu, sigma):
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 def fit_gaussian_to_peak(data, n_bins=40):
+    """
+    Fit a Gaussian to the histogram peak of `data`, returning (amp, mu, sigma,
+    sigma_err). sigma_err is the 1-sigma parameter uncertainty on sigma taken
+    from the curve_fit covariance matrix (analogous to ROOT's GetParError(2)),
+    used downstream by robust_res() to judge fit reliability the same way the
+    ROOT macro's robustRes() does.
+    """
     if len(data) < 8:
-        return 0.0, float(np.median(data)) if len(data) else 0.0, float(np.std(data)) if len(data) else 0.0
+        mu0 = float(np.median(data)) if len(data) else 0.0
+        sg0 = float(np.std(data)) if len(data) else 0.0
+        return 0.0, mu0, sg0, -1.0
     spread = max(np.std(data), 1.0)
     lo, hi = float(np.min(data)), float(np.max(data))
     if hi <= lo:
@@ -181,15 +190,47 @@ def fit_gaussian_to_peak(data, n_bins=40):
     mu0, A0 = float(mids[peak_idx]), float(smoothed[peak_idx])
 
     try:
-        popt, _ = curve_fit(
+        popt, pcov = curve_fit(
             standard_gaussian, mids, counts,
             p0=[A0, mu0, spread],
             bounds=([0.0, lo, 1e-6], [A0 * 10.0 + 1.0, hi, (hi - lo)]),
             maxfev=10000,
         )
-        return float(popt[0]), float(popt[1]), float(popt[2])
+        sigma_err = float(np.sqrt(pcov[2, 2])) if np.isfinite(pcov[2, 2]) and pcov[2, 2] > 0 else -1.0
+        return float(popt[0]), float(popt[1]), float(popt[2]), sigma_err
     except Exception:
-        return A0, mu0, spread
+        return A0, mu0, spread, -1.0
+
+
+def robust_res(data, fit_mu, fit_sigma, fit_sigma_err):
+    """
+    Robust fractional resolution (sigma/mean) with RMS fallback — the Python
+    analog of the ROOT macro's robustRes(). At low light yield the photon-count
+    spectra are Poisson-like/skewed and the Gaussian peak fit can degenerate
+    (small or blown-up sigma with a huge parameter error) even though the
+    reported central value looks superficially plausible. Rather than judging
+    the fit by the size of the resulting resolution (which is circular), judge
+    it the way ROOT does: by the fit's own uncertainty on sigma. If the
+    relative error on sigma exceeds 25% (fitOK == False in the macro), fall
+    back to the well-defined raw RMS/mean with its analytic large-N error
+    sigma_rel/sqrt(2N).
+
+    Returns (res, err, used_fallback).
+    """
+    n = len(data)
+    raw_mean = float(np.mean(data)) if n else 0.0
+    raw_std = float(np.std(data)) if n else 0.0
+    rms_res = raw_std / raw_mean if raw_mean > 0 else -1.0
+    rms_err = rms_res / np.sqrt(2.0 * n) if (n > 1 and rms_res > 0) else 1e9
+
+    fit_ok = (
+        fit_mu > 0 and fit_sigma > 0 and fit_sigma_err > 0
+        and (fit_sigma_err / fit_sigma) < 0.25
+    )
+    if fit_ok:
+        return fit_sigma / fit_mu, fit_sigma_err / fit_mu, False
+    else:
+        return rms_res, rms_err, True
 
 def clean_around_mode(arr, window_ps=500.0):
     if len(arr) == 0:
@@ -385,6 +426,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     up_first_chunks, down_first_chunks = [], []
     up_q_chunks, dw_q_chunks = [], []
     dw_e_hit_chunks, dw_t_hit_chunks = [], []
+    down_first_t_chunks = []
     run_dirs = set()
 
     branch_list = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "LocalTime", "EventID", "ParticleName"]
@@ -438,8 +480,16 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
             dw_q_chunks.append(c)
             dw_t_hit_chunks.append(c)
 
+        # T-type analog of down_first (E-type prompt-arrival dict below): needed
+        # so dw_t_total can be keyed against actual T-type event membership
+        # instead of being looked up against the (unrelated) E-type key set.
+        c = _chunk_series(m_t_dw & is_prompt, gt, ev, run_tag)
+        if c is not None:
+            down_first_t_chunks.append(c)
+
     up_first = _grouped(up_first_chunks, "min")
     down_first = _grouped(down_first_chunks, "min")
+    down_first_t = _grouped(down_first_t_chunks, "min")
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
     dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
     dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
@@ -448,7 +498,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     common_t_evs = set(up_q) & set(dw_q)
     all_bm_raw_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
     clean_bm = clean_around_mode(all_bm_raw_ps, window_ps=500.0)
-    _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)
+    _, _, sigma_t_ps = fit_gaussian_to_peak(clean_bm)[:3]
 
     common_e_keys = set(up_first) & set(down_first)
     z_lo, z_hi = -calor_thick_mm / 2 - 15.0, calor_thick_mm / 2 + 15.0
@@ -484,7 +534,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         "n_e_coincidences": len(common_e_keys),
         "dw_first_times": np.array(list(down_first.values())),
         "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) for k in down_first.keys()]),
-        "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) for k in down_first.keys()]),
+        "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) for k in down_first_t.keys()]),
         "run_dirs": sorted(run_dirs),
     }
 
@@ -978,27 +1028,25 @@ def main():
 
             e_totals = master_summary[mod][ekey].get("dw_e_total", np.array([]))
             if len(e_totals) < 5: continue
-            
-            raw_mean = np.mean(e_totals)
-            raw_std = np.std(e_totals)
 
-            _, fit_mu, fit_sigma = fit_gaussian_to_peak(e_totals, n_bins=40)
-            
-            # --- FALLBACK LOGIC ---
-            if fit_mu > 0.5 and (fit_sigma / fit_mu) < 3.0:
-                mu_val, sigma_val = fit_mu, fit_sigma
-            else:
-                mu_val, sigma_val = raw_mean, raw_std
-                print(f"  [FALLBACK] E-type {mod} @ {E_val} GeV Gaussian fit failed. Using Raw Stats (mu={mu_val:.1f}).")
+            _, fit_mu, fit_sigma, fit_sigma_err = fit_gaussian_to_peak(e_totals, n_bins=40)
 
-            if mu_val > 0.1:
-                res_val = sigma_val / mu_val
+            # Robust fallback (mirrors ROOT macro's robustRes): trust the
+            # Gaussian-core fit only when its own uncertainty on sigma is
+            # under control; otherwise use the well-defined raw RMS/mean.
+            res_val, res_err_val, used_fallback = robust_res(e_totals, fit_mu, fit_sigma, fit_sigma_err)
+            if used_fallback:
+                print(f"  [FALLBACK] E-type {mod} @ {E_val} GeV Gaussian fit unreliable "
+                      f"(sigma rel. err >= 25%). Using raw RMS/mean.")
+            mu_val = fit_mu if not used_fallback else float(np.mean(e_totals))
+
+            if mu_val > 0.1 and res_val > 0:
                 if not np.isnan(res_val) and not np.isinf(res_val) and res_val < 10.0:
                     energies_gev.append(E_val)
                     mu_e_list.append(mu_val)
                     res_e_list.append(res_val)
-                    mu_e_err.append(sigma_val / np.sqrt(len(e_totals)))
-                    res_e_err.append(res_val * (1.0 / np.sqrt(len(e_totals))))
+                    mu_e_err.append(mu_val * res_val / np.sqrt(len(e_totals)))
+                    res_e_err.append(res_err_val)
                 else:
                     print(f"  [FILTERED] E-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_val*100:.1f}%)")
 
@@ -1013,27 +1061,23 @@ def main():
 
             t_totals = master_summary[mod][ekey].get("dw_t_total", np.array([]))
             if len(t_totals) < 5: continue
-            
-            raw_mean = np.mean(t_totals)
-            raw_std = np.std(t_totals)
 
-            _, fit_mu, fit_sigma = fit_gaussian_to_peak(t_totals, n_bins=40)
+            _, fit_mu, fit_sigma, fit_sigma_err = fit_gaussian_to_peak(t_totals, n_bins=40)
 
-            # --- FALLBACK LOGIC ---
-            if fit_mu > 0.5 and (fit_sigma / fit_mu) < 3.0:
-                mu_val, sigma_val = fit_mu, fit_sigma
-            else:
-                mu_val, sigma_val = raw_mean, raw_std
-                print(f"  [FALLBACK] T-type {mod} @ {E_val} GeV Gaussian fit failed. Using Raw Stats (mu={mu_val:.1f}).")
+            # Robust fallback (mirrors ROOT macro's robustRes()).
+            res_t_val, res_t_err_val, used_fallback = robust_res(t_totals, fit_mu, fit_sigma, fit_sigma_err)
+            if used_fallback:
+                print(f"  [FALLBACK] T-type {mod} @ {E_val} GeV Gaussian fit unreliable "
+                      f"(sigma rel. err >= 25%). Using raw RMS/mean.")
+            mu_val = fit_mu if not used_fallback else float(np.mean(t_totals))
 
-            if mu_val > 0.1:
-                res_t_val = sigma_val / mu_val
+            if mu_val > 0.1 and res_t_val > 0:
                 if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
                     energies_gev_t.append(E_val)
                     mu_t_list.append(mu_val)
                     res_t_list.append(res_t_val)
-                    mu_t_err.append(sigma_val / np.sqrt(len(t_totals)))
-                    res_t_err.append(res_t_val * (1.0 / np.sqrt(len(t_totals))))
+                    mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_totals)))
+                    res_t_err.append(res_t_err_val)
                 else:
                     print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_t_val*100:.1f}%)")
 
