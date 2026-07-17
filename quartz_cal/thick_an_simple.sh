@@ -7,11 +7,12 @@ WORLD="quartz_cal"
 PARTICLE="proton"
 ENERGY_KEV=1000000000
 N_PARTICLES=1
-THREADS=1                 # CPU threads per run execution
-N_RUNS=1
+THREADS=5                 # CPU threads per run execution
+N_RUNS=5
 BEAM_RADIUS=0.01
 OPTICAL="on"
 SIPM_HITS="on"
+DOSE = "off"
 PHYSICS_LIST="QGSP_BERT_EMV"
 
 IRON_START=1
@@ -56,6 +57,7 @@ for IRON_CM in $(seq $IRON_START $IRON_STEP $IRON_END); do
             --beam-radius $BEAM_RADIUS \
             --optical "$OPTICAL" \
             --sipm-hits "$SIPM_HITS" \
+            --dose "$DOSE" \
             --run-id $i \
             --physics-list "$PHYSICS_LIST" \
             --output-dir "$OUT_DIR" > "$OUT_DIR/sim_log_${i}.txt" 2>&1
