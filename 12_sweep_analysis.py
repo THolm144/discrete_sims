@@ -538,16 +538,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
         proc = arrs["TrackCreatorProcess"]
-
         is_wls = (proc == b"OpWLS") | (proc == "OpWLS")
-        if verbose_label:
-            vals, counts_ = np.unique(proc, return_counts=True)
-            print(f"    [PROC-CHECK:{verbose_label}] unique TrackCreatorProcess values: "
-                f"{list(zip(vals[:10], counts_[:10]))}")
-            print(f"    [PROC-CHECK:{verbose_label}] is_optical frac: {is_optical.mean():.3f}, "
-                f"is_wls frac (of all hits): {is_wls.mean():.3f}, "
-                f"is_wls frac (of optical only): "
-                f"{(is_wls & is_optical).sum() / max(1, is_optical.sum()):.3f}")
 
         # Channel Mapping
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
@@ -559,8 +550,16 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         near_dw = np.abs(z - detected_z_sensor) < 2.5
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
         gt = np.where(near_dw, gt + t_offset_ns, gt)
-        
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
+
+        if verbose_label:
+            vals, counts_ = np.unique(proc, return_counts=True)
+            print(f"    [PROC-CHECK:{verbose_label}] unique TrackCreatorProcess values: "
+                f"{list(zip(vals[:10], counts_[:10]))}")
+            print(f"    [PROC-CHECK:{verbose_label}] is_optical frac: {is_optical.mean():.3f}, "
+                f"is_wls frac (of all hits): {is_wls.mean():.3f}, "
+                f"is_wls frac (of optical only): "
+                f"{(is_wls & is_optical).sum() / max(1, is_optical.sum()):.3f}")
 
         # 1. E-Type Channel Processing
         is_e = np.isin(channels, e_indices)
