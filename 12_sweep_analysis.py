@@ -169,37 +169,37 @@ def gaussian(x, amp, mean, sigma):
 def robust_resolution(data, nsig=2.0, max_iters=4):
     """
     Computes fractional resolution (sigma/mean in %) with uncertainty.
-    Falls back to RMS/mean if the iterative Gaussian fit is unstable.
+    Falls back to a robust IQR-based approximation if the iterative Gaussian fit fails.
     """
     N = len(data)
     if N < 2:
         return -1.0, 1e9  
     
-    mean_raw = np.mean(data)
-    std_raw = np.std(data, ddof=1)
-    
-    rms_res = 100.0 * std_raw / mean_raw if mean_raw > 0 else -1.0
-    rms_err = rms_res / np.sqrt(2.0 * N) if (N > 1 and rms_res > 0) else 1e9
-    
-    if mean_raw <= 0 or std_raw <= 0:
-        return rms_res, rms_err
-
-    # --- THE FIX: ROBUST INITIALIZATION ---
+    # --- 1. ROBUST METRICS FOR FALLBACK ---
     median = np.median(data)
     q75, q25 = np.percentile(data, [75, 25])
     iqr = q75 - q25
     
-    # Convert IQR to an equivalent standard deviation (for a normal distribution)
+    # Convert IQR to standard deviation (works beautifully for normal-ish peaks)
     sg_robust = iqr / 1.349 
-    if sg_robust == 0:  # Fallback if data is weirdly quantized
-        sg_robust = std_raw
+    
+    # If data is so aggressively quantized that IQR is 0, only THEN use raw std
+    if sg_robust == 0:  
+        sg_robust = np.std(data, ddof=1)
         
+    # --- 2. OUTLIER-PROOF FALLBACK ---
+    # Now, if the fit fails, it falls back to this cleaned metric instead of the raw RMS
+    fallback_res = 100.0 * sg_robust / median if median > 0 else -1.0
+    fallback_err = fallback_res / np.sqrt(2.0 * N) if (N > 1 and fallback_res > 0) else 1e9
+
+    if median <= 0 or sg_robust <= 0:
+        return fallback_res, fallback_err
+
+    # --- 3. INITIALIZE VARIABLES FOR FIT ---
     mu, sg = median, sg_robust
-    
     fit_success = False
-    amplitude, sigma_err = 0.0, 0.0
+    sigma_err = 0.0
     
-    # --- THE FIX: ROBUST BINNING ---
     # Force the histogram to ignore the extreme edges right away
     hist_min = max(0, median - 5 * sg)
     hist_max = median + 5 * sg
@@ -208,16 +208,20 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     counts, bin_edges = np.histogram(data, bins=50, range=(hist_min, hist_max))
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
     
+    # --- 4. ITERATIVE GAUSSIAN FIT ---
     for _ in range(max_iters):
+        # Define range: [mu - nsig*sg, mu + nsig*sg]
         mask = (bin_centers >= mu - nsig * sg) & (bin_centers <= mu + nsig * sg)
         x_fit = bin_centers[mask]
         y_fit = counts[mask]
         
-        if len(x_fit) < 4:  
+        if len(x_fit) < 4:  # Too few bins to fit 3 parameters
             break
             
         p0 = [np.max(y_fit), mu, sg]
         try:
+            # Assuming 'gaussian' is defined elsewhere in your script:
+            # def gaussian(x, a, mu, sigma): ...
             popt, pcov = curve_fit(gaussian, x_fit, y_fit, p0=p0, maxfev=2000)
             amp, mu, sg = popt
             sigma_err = np.sqrt(pcov[2, 2])
@@ -229,6 +233,9 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
             fit_success = False
             break
 
+    # --- 5. ROBUST FALLBACK CHECK ---
+    # 1. Did the fit converge?
+    # 2. Is the relative uncertainty of the sigma parameter less than 25%?
     fit_ok = fit_success and (mu > 0) and (sg > 0) and (sigma_err / sg < 0.25)
     
     if fit_ok:
@@ -236,7 +243,8 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
         err = 100.0 * sigma_err / mu
         return res, err
     else:
-        return rms_res, rms_err
+        # Fall back to outlier-proof metric
+        return fallback_res, fallback_err
 
 def standard_gaussian(x, A, mu, sigma):
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
