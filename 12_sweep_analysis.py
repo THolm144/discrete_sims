@@ -163,6 +163,77 @@ def get_lyso_layer_bounds(lyso_thick, calor_thick):
         current_z += gap_thick + (_W_THICK_MM if idx < _N_W else 0)
     return bounds
 
+def gaussian(x, amp, mean, sigma):
+    return amp * np.exp(-((x - mean) ** 2) / (2 * sigma ** 2))
+
+def robust_resolution(data, nsig=2.0, max_iters=4):
+    """
+    Computes fractional resolution (sigma/mean in %) with uncertainty.
+    Falls back to RMS/mean if the iterative Gaussian fit is unstable or 
+    if the relative error on sigma exceeds 25%.
+    """
+    N = len(data)
+    if N < 2:
+        return -1.0, 1e9  # Not enough data
+    
+    mean_raw = np.mean(data)
+    std_raw = np.std(data, ddof=1)
+    
+    # Well-defined RMS fallback values
+    rms_res = 100.0 * std_raw / mean_raw if mean_raw > 0 else -1.0
+    rms_err = rms_res / np.sqrt(2.0 * N) if (N > 1 and rms_res > 0) else 1e9
+    
+    if mean_raw <= 0 or std_raw <= 0:
+        return rms_res, rms_err
+
+    # Iterative Gaussian Fit (Equivalent to coreFit in ROOT)
+    mu, sg = mean_raw, std_raw
+    fit_success = False
+    amplitude, sigma_err = 0.0, 0.0
+    
+    # Bin the data to perform the fit (similar to TH1 fit)
+    counts, bin_edges = np.histogram(data, bins="auto")
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+    
+    for _ in range(max_iters):
+        # Define range: [mu - nsig*sg, mu + nsig*sg]
+        mask = (bin_centers >= mu - nsig * sg) & (bin_centers <= mu + nsig * sg)
+        x_fit = bin_centers[mask]
+        y_fit = counts[mask]
+        
+        if len(x_fit) < 4:  # Too few bins to fit 3 parameters
+            break
+            
+        p0 = [np.max(y_fit), mu, sg]
+        try:
+            popt, pcov = curve_fit(gaussian, x_fit, y_fit, p0=p0, maxfev=2000)
+            amp, mu, sg = popt
+            sigma_err = np.sqrt(pcov[2, 2])
+            fit_success = True
+            if sg <= 0:
+                fit_success = False
+                break
+        except RuntimeWarning:
+            fit_success = False
+            break
+        except RuntimeError:
+            # Fit failed to converge in this iteration
+            fit_success = False
+            break
+
+    # Robust Fallback Check:
+    # 1. Did the fit converge?
+    # 2. Is the relative uncertainty of the sigma parameter less than 25%?
+    fit_ok = fit_success and (mu > 0) and (sg > 0) and (sigma_err / sg < 0.25)
+    
+    if fit_ok:
+        res = 100.0 * sg / mu
+        err = 100.0 * sigma_err / mu
+        return res, err
+    else:
+        # Fall back to RMS/mean (unbiased, large-N error approximation)
+        return rms_res, rms_err
+
 def standard_gaussian(x, A, mu, sigma):
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
@@ -1036,16 +1107,12 @@ def main():
             e_totals = master_summary[mod][ekey].get("dw_e_total", np.array([]))
             if len(e_totals) < 5: continue
 
-            _, fit_mu, fit_sigma, fit_sigma_err = fit_gaussian_to_peak(e_totals, n_bins=40)
+            # Convert the percentage output of robust_resolution back to a fraction
+            res_val_pct, res_err_val_pct = robust_resolution(e_totals, nsig=2.0, max_iters=4)
+            res_val = res_val_pct / 100.0
+            res_err_val = res_err_val_pct / 100.0
 
-            # Robust fallback (mirrors ROOT macro's robustRes): trust the
-            # Gaussian-core fit only when its own uncertainty on sigma is
-            # under control; otherwise use the well-defined raw RMS/mean.
-            res_val, res_err_val, used_fallback = robust_res(e_totals, fit_mu, fit_sigma, fit_sigma_err)
-            if used_fallback:
-                print(f"  [FALLBACK] E-type {mod} @ {E_val} GeV Gaussian fit unreliable "
-                      f"(sigma rel. err >= 25%). Using raw RMS/mean.")
-            mu_val = fit_mu if not used_fallback else float(np.mean(e_totals))
+            mu_val = float(np.mean(e_totals)) # Ensure mu_val is defined for downstream arrays
 
             if mu_val > 0.1 and res_val > 0:
                 if not np.isnan(res_val) and not np.isinf(res_val) and res_val < 10.0:
@@ -1069,14 +1136,12 @@ def main():
             t_totals = master_summary[mod][ekey].get("dw_t_total", np.array([]))
             if len(t_totals) < 5: continue
 
-            _, fit_mu, fit_sigma, fit_sigma_err = fit_gaussian_to_peak(t_totals, n_bins=40)
+            # Convert the percentage output of robust_resolution back to a fraction
+            res_t_val_pct, res_t_err_val_pct = robust_resolution(t_totals, nsig=2.0, max_iters=4)
+            res_t_val = res_t_val_pct / 100.0
+            res_t_err_val = res_t_err_val_pct / 100.0
 
-            # Robust fallback (mirrors ROOT macro's robustRes()).
-            res_t_val, res_t_err_val, used_fallback = robust_res(t_totals, fit_mu, fit_sigma, fit_sigma_err)
-            if used_fallback:
-                print(f"  [FALLBACK] T-type {mod} @ {E_val} GeV Gaussian fit unreliable "
-                      f"(sigma rel. err >= 25%). Using raw RMS/mean.")
-            mu_val = fit_mu if not used_fallback else float(np.mean(t_totals))
+            mu_val = float(np.mean(t_totals)) # Ensure mu_val is defined for downstream arrays
 
             if mu_val > 0.1 and res_t_val > 0:
                 if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
