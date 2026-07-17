@@ -30,7 +30,7 @@ for i in "${!ENERGIES[@]}"; do
 
     echo " [+] Launching [${ENERGY_GBS}GeV] -> Target: ${N_EVENTS} events on 10 threads..."
 
-    python3 simulator.py --beam-x -0.37032 --beam-y 0.37032 \
+    python3 simulator.py --beam-x -0.0 --beam-y 0.0 \
         --world "$WORLD" --particle "$PARTICLE" --energy-kev "$ENERGY" \
         --n "$N_EVENTS" --threads "$THREADS" --beam-radius "$BEAM_RADIUS" \
         --optical "$OPTICAL" --cherenkov "$CHERENKOV" --hits-optical-only on \
