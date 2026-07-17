@@ -569,45 +569,43 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
             down_first_chunks.append(c)
             dw_e_hit_chunks.append(c)   # Save downstream E-hits
 
+        
         # 2. T-Type Channel Processing
-        is_t = np.isin(channels, t_indices)
+    is_t = np.isin(channels, t_indices)
+
+    # Raw timing logic for Quantile resolution — leave unfiltered (ΔT observable)
+    m_t_up = is_t & is_optical & near_up
+    m_t_dw = is_t & is_optical & near_dw
+    c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
+    if c is not None: up_q_chunks.append(c)
+    c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
+    if c is not None: dw_q_chunks.append(c)
+
+    # Prompt-filtered PHOTON-COUNT masks — THIS is where is_wls goes
+    m_t_up_prompt = is_t & is_optical & is_wls & near_up & is_prompt
+    m_t_dw_prompt = is_t & is_optical & is_wls & near_dw & is_prompt
+
+    c = _chunk_series(m_t_up_prompt, gt, ev, run_tag)
+    if c is not None: up_t_hit_chunks.append(c)
+    c = _chunk_series(m_t_dw_prompt, gt, ev, run_tag)
+    if c is not None:
+        dw_t_hit_chunks.append(c)
+        down_first_t_chunks.append(c)
+
+        # --- Aggregations & Grouping ---
+        up_first = _grouped(up_first_chunks, "min")
+        down_first = _grouped(down_first_chunks, "min")
+        down_first_t = _grouped(down_first_t_chunks, "min")
         
-        # Raw timing logic for Quantile resolution
-        m_t_up = is_t & is_optical & near_up & is_wls
-        m_t_dw = is_t & is_optical & near_dw & is_wls
+        up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
+        dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
         
-        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
-        if c is not None: up_q_chunks.append(c)
-        c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
-        if c is not None: dw_q_chunks.append(c)
-
-        # Prompt-filtered Energy/Hit counters for T channels (FIX: stops resolution blowup)
-        m_t_up_prompt = is_t & is_optical & near_up & is_prompt
-        m_t_dw_prompt = is_t & is_optical & near_dw & is_prompt
-
-        c = _chunk_series(m_t_up_prompt, gt, ev, run_tag)
-        if c is not None:
-            up_t_hit_chunks.append(c)   # Save upstream T-hits
-
-        c = _chunk_series(m_t_dw_prompt, gt, ev, run_tag)
-        if c is not None:
-            dw_t_hit_chunks.append(c)   # Save downstream T-hits
-            down_first_t_chunks.append(c)
-
-    # --- Aggregations & Grouping ---
-    up_first = _grouped(up_first_chunks, "min")
-    down_first = _grouped(down_first_chunks, "min")
-    down_first_t = _grouped(down_first_t_chunks, "min")
-    
-    up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
-    dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
-    
-    # Hits per event dictionary groupings
-    up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
-    dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
-    
-    up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
-    dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
+        # Hits per event dictionary groupings
+        up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
+        dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
+        
+        up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
+        dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
 
     # --- Time-of-Flight & Profiles ---
     common_t_evs = set(up_q) & set(dw_q)
