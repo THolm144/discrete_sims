@@ -593,21 +593,21 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
             dw_t_hit_chunks.append(c)
             down_first_t_chunks.append(c)
 
-        # --- Aggregations & Grouping --- (4 spaces: after the for-loop, not inside it)
-        up_first = _grouped(up_first_chunks, "min")
-        down_first = _grouped(down_first_chunks, "min")
-        down_first_t = _grouped(down_first_t_chunks, "min")
+    # --- Aggregations & Grouping --- (4 spaces: after the for-loop, not inside it)
+    up_first = _grouped(up_first_chunks, "min")
+    down_first = _grouped(down_first_chunks, "min")
+    down_first_t = _grouped(down_first_t_chunks, "min")
     
         
-        up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
-        dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
+    up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
+    dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
         
-        # Hits per event dictionary groupings
-        up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
-        dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
+    # Hits per event dictionary groupings
+    up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
+    dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
         
-        up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
-        dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
+    up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
+    dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
 
     # --- Time-of-Flight & Profiles ---
     common_t_evs = set(up_q) & set(dw_q)
