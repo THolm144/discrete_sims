@@ -169,25 +169,23 @@ def gaussian(x, amp, mean, sigma):
 
 
 
-def robust_resolution(data, nsig=2.0, max_iters=4, nbins=80):
+def robust_resolution(data, nsig=2.0, max_iters=4):
     """
     Computes fractional resolution (sigma/mean in %) with uncertainty.
-    Uses ROOT's Log-Likelihood Minuit fit (RQL0) on a trimmed core window,
-    handling continuous floating-point values (GeV) properly.
+    Uses ROOT's Log-Likelihood Minuit fit (RQL0) to perfectly replicate the C++ script.
     """
-    data = np.asarray(data)
-    data = data[np.isfinite(data)]
     N = len(data)
     if N < 2:
         return -1.0, 1e9  
     
     # --- 1. FALLBACK METRICS ---
-    median = float(np.median(data))
+    # We still use your existing robust numpy fallback if the ROOT fit fails
+    median = np.median(data)
     q75, q25 = np.percentile(data, [75, 25])
     iqr = q75 - q25
     sg_robust = iqr / 1.349 
     if sg_robust == 0:  
-        sg_robust = float(np.std(data, ddof=1))
+        sg_robust = np.std(data, ddof=1)
         
     fallback_res = 100.0 * sg_robust / median if median > 0 else -1.0
     fallback_err = fallback_res / np.sqrt(2.0 * N) if (N > 1 and fallback_res > 0) else 1e9
@@ -195,48 +193,53 @@ def robust_resolution(data, nsig=2.0, max_iters=4, nbins=80):
     if median <= 0 or sg_robust <= 0:
         return fallback_res, fallback_err
 
-    # --- 2. CREATE ROOT HISTOGRAM (Continuous Float-Safe) ---
+    # --- 2. CREATE ROOT HISTOGRAM ---
+    # Create a unique name to prevent ROOT memory warnings during loops
     unique_id = uuid.uuid4().hex
     hname = f"h_{unique_id}"
     fname = f"f_{unique_id}"
     
-    # Continuous bounds (works for float GeV and integer photon counts)
-    hist_min = max(0.0, median - 5.0 * sg_robust)
-    hist_max = median + 5.0 * sg_robust
+
+    # Define integer-aligned boundaries to capture discrete photon counts cleanly
+    hist_min = max(0, int(np.floor(median - 5 * sg_robust)))
+    hist_max = int(np.ceil(median + 5 * sg_robust))
+    nbins = hist_max - hist_min + 1
+    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
+    h.SetDirectory(0)  # <-- ADD THIS: Tells ROOT C++ not to own this object
     
-    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min, hist_max)
-    h.SetDirectory(0) 
-    
+    # Fill the ROOT histogram with the numpy data
     for val in data:
         h.Fill(val)
 
-    # Rebin dynamically if bin width is too coarse relative to sigma
-    bw = h.GetBinWidth(1)
-    if bw > 0 and sg_robust > 0:
-        rebin_factor = int(np.round((sg_robust / 5.0) / bw))
-        if rebin_factor > 1:
-            h.Rebin(rebin_factor)
-
-    # --- 3. THE ITERATIVE CORE FIT ---
+    # --- 3. THE C++ ITERATIVE FIT ---
+    # Grab initial seeds directly from the histogram
     mu = h.GetMean()
     sg = h.GetRMS()
     
     g = ROOT.TF1(fname, "gaus", mu - nsig * sg, mu + nsig * sg)
+    
+    fit_success = False
     sigma_err = 0.0
 
+    # Iterative core-fit exactly mirroring C++ coreFit()
     for _ in range(max_iters):
-        if sg <= 0:
-            break
         g.SetRange(mu - nsig * sg, mu + nsig * sg)
-        h.Fit(g, "RQL0") # Range, Quiet, Log-Likelihood, No Draw
+        # R = Range, Q = Quiet, L = Log-Likelihood, 0 = Don't draw
+        h.Fit(g, "RQL0")
         
         mu = g.GetParameter(1)
         sg = g.GetParameter(2)
         sigma_err = g.GetParError(2)
+        
+        if sg <= 0:
+            break
 
-    # --- 4. EVALUATION & FALLBACK CHECK ---
+    # --- 4. C++ EVALUATION LOGIC ---
+    # Check if the fit relative error on sigma exceeds 25% (exactly as in robustRes)
     fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
 
+   
+    # --- 5. RETURN RESULT ---
     if fit_ok:
         res = 100.0 * sg / mu
         err = 100.0 * sigma_err / mu
@@ -1305,39 +1308,58 @@ def main():
         # ─────────────────────────────────────────────────────────────────────
         energies_gev_t, mu_t_list, res_t_list, mu_t_err, res_t_err = [], [], [], [], []
 
+        # Resolve calorimeter geometry and downstream sensor location for LCE correction
+        
+
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
             if E_val <= 0: continue
 
+            # --- Z_COG DEPTH CORRECTION FOR T-CHANNELS ---
+            # Retrieve 2D per-layer count matrix if present; otherwise fall back to 1D raw totals
+            t_matrix = master_summary[mod][ekey].get("dw_t_layer_matrix", 
+                       master_summary[mod][ekey].get("t_layer_matrix", None))
+            
             t_totals = master_summary[mod][ekey].get("dw_t_total_summed", np.array([]))
-            t_totals = np.array(t_totals) # Ensure it's a numpy array
-            
+            t_totals = np.array(t_totals)
+
+            if t_matrix is not None and len(t_matrix) > 0 and np.ndim(t_matrix) == 2:
+                t_matrix = np.array(t_matrix)
+                # Apply layer-by-layer LCE attenuation correction across shower depth
+                t_eval_data, _ = compute_event_reconstructed_energy(
+                    prompt_counts_per_event=t_matrix,
+                    
+                    lambda_eff=30.0  # WLS effective attenuation length (mm)
+                )
+            else:
+                t_eval_data = t_totals
+
             # --- DEBUG AND FILTER ---
-            if len(t_totals) > 0:
-                print(f"  [{mod} @ {ekey}] RAW  -> N: {len(t_totals)}, Mean: {np.mean(t_totals):.1f}, Max: {np.max(t_totals)}")
+            if len(t_eval_data) > 0:
+                print(f"  [{mod} @ {ekey}] RAW  -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Max: {np.max(t_eval_data)}")
             
-            # Cut out events that recorded exactly 0 photons
-            t_totals = t_totals[t_totals > 0]
+            # Cut out events that recorded exactly 0 or negative photons
+            t_eval_data = t_eval_data[t_eval_data > 0]
             
-            if len(t_totals) > 0:
-                print(f"  [{mod} @ {ekey}] >0 CUT -> N: {len(t_totals)}, Mean: {np.mean(t_totals):.1f}, Median: {np.median(t_totals):.1f}")
+            if len(t_eval_data) > 0:
+                print(f"  [{mod} @ {ekey}] >0 CUT -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Median: {np.median(t_eval_data):.1f}")
             # ------------------------
 
-            if len(t_totals) < 5: continue
+            if len(t_eval_data) < 5: continue
 
             # Convert the percentage output of robust_resolution back to a fraction
-            res_t_val_pct, res_t_err_val_pct = robust_resolution(t_totals, nsig=2.0, max_iters=4)
+            res_t_val_pct, res_t_err_val_pct = robust_resolution(t_eval_data, nsig=2.0, max_iters=4)
             res_t_val = res_t_val_pct / 100.0
             res_t_err_val = res_t_err_val_pct / 100.0
 
-            mu_val = float(np.mean(t_totals)) # Ensure mu_val is defined for downstream arrays
+            mu_val = float(np.mean(t_eval_data)) # Ensure mu_val is defined for downstream arrays
 
             if mu_val > 0.1 and res_t_val > 0:
                 if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
                     energies_gev_t.append(E_val)
                     mu_t_list.append(mu_val)
                     res_t_list.append(res_t_val)
-                    mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_totals)))
+                    mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_eval_data)))
                     res_t_err.append(res_t_err_val)
                 else:
                     print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_t_val*100:.1f}%)")
@@ -1368,8 +1390,9 @@ def main():
                             color="gray", alpha=0.7, label="Sim Raw (Uncorrected E-type)")
 
             # Depth-Corrected Resolution
-            ax_res.errorbar(energies_gev, res_e_corr_list, yerr=res_e_corr_err, fmt=mod_markers.get(mod, 's'),
-                            color=mod_colors.get(mod, 'black'), label="Sim Corrected (Depth-Weighted LCE)")
+            if 'res_e_corr_list' in locals() and len(res_e_corr_list) == len(energies_gev):
+                ax_res.errorbar(energies_gev, res_e_corr_list, yerr=res_e_corr_err, fmt=mod_markers.get(mod, 's'),
+                                color=mod_colors.get(mod, 'black'), label="Sim Corrected (Depth-Weighted LCE)")
 
             if popt_lin is not None:
                 x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
@@ -1382,14 +1405,15 @@ def main():
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
 
-            
-
             # --- ROBUST RESOLUTION FIT GUARD ---
+            # Fit against depth-corrected values if available, else raw
+            target_res = res_e_corr_list if ('res_e_corr_list' in locals() and len(res_e_corr_list) == len(energies_gev)) else res_e_list
+            
             popt_res = None
             fit_label = "Fit failed (Not enough data points)"
             if len(energies_gev) >= 3:
                 try:
-                    popt_res, _ = curve_fit(resolution_func, energies_gev, res_e_list,
+                    popt_res, _ = curve_fit(resolution_func, energies_gev, target_res,
                                             p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
                     c_f, s_f, n_f = popt_res
                     fit_label = f"Fit: {c_f * 100:.1f}% $\\oplus$ {s_f * 100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.1f}%/E"
@@ -1406,7 +1430,7 @@ def main():
                 ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
                             color="black", linestyle="--", label=fit_label)
                 
-                # -- External reference overlays (only active when plotting fit curve space) --
+                # -- External reference overlays --
                 for ref_name, ref_p in ENERGY_REF_CURVES.items():
                     y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
                     ax_res.plot(x_res_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5,
@@ -1428,7 +1452,6 @@ def main():
             plt.close(fig_er)
         else:
             print(f"  [WARNING] Not enough E-type energy points for {mod} energy_performance plot.")
-
         # ─────────────────────────────────────────────────────────────────────
         # 3-EXTRA. EXPORT MEAN PHOTON COUNTS & GENERATE HISTOGRAM FIT PANELS
         # ─────────────────────────────────────────────────────────────────────
