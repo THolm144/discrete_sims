@@ -169,23 +169,25 @@ def gaussian(x, amp, mean, sigma):
 
 
 
-def robust_resolution(data, nsig=2.0, max_iters=4):
+def robust_resolution(data, nsig=2.0, max_iters=4, nbins=80):
     """
     Computes fractional resolution (sigma/mean in %) with uncertainty.
-    Uses ROOT's Log-Likelihood Minuit fit (RQL0) to perfectly replicate the C++ script.
+    Uses ROOT's Log-Likelihood Minuit fit (RQL0) on a trimmed core window,
+    handling continuous floating-point values (GeV) properly.
     """
+    data = np.asarray(data)
+    data = data[np.isfinite(data)]
     N = len(data)
     if N < 2:
         return -1.0, 1e9  
     
     # --- 1. FALLBACK METRICS ---
-    # We still use your existing robust numpy fallback if the ROOT fit fails
-    median = np.median(data)
+    median = float(np.median(data))
     q75, q25 = np.percentile(data, [75, 25])
     iqr = q75 - q25
     sg_robust = iqr / 1.349 
     if sg_robust == 0:  
-        sg_robust = np.std(data, ddof=1)
+        sg_robust = float(np.std(data, ddof=1))
         
     fallback_res = 100.0 * sg_robust / median if median > 0 else -1.0
     fallback_err = fallback_res / np.sqrt(2.0 * N) if (N > 1 and fallback_res > 0) else 1e9
@@ -193,53 +195,48 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     if median <= 0 or sg_robust <= 0:
         return fallback_res, fallback_err
 
-    # --- 2. CREATE ROOT HISTOGRAM ---
-    # Create a unique name to prevent ROOT memory warnings during loops
+    # --- 2. CREATE ROOT HISTOGRAM (Continuous Float-Safe) ---
     unique_id = uuid.uuid4().hex
     hname = f"h_{unique_id}"
     fname = f"f_{unique_id}"
     
-
-    # Define integer-aligned boundaries to capture discrete photon counts cleanly
-    hist_min = max(0, int(np.floor(median - 5 * sg_robust)))
-    hist_max = int(np.ceil(median + 5 * sg_robust))
-    nbins = hist_max - hist_min + 1
-    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
-    h.SetDirectory(0)  # <-- ADD THIS: Tells ROOT C++ not to own this object
+    # Continuous bounds (works for float GeV and integer photon counts)
+    hist_min = max(0.0, median - 5.0 * sg_robust)
+    hist_max = median + 5.0 * sg_robust
     
-    # Fill the ROOT histogram with the numpy data
+    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min, hist_max)
+    h.SetDirectory(0) 
+    
     for val in data:
         h.Fill(val)
 
-    # --- 3. THE C++ ITERATIVE FIT ---
-    # Grab initial seeds directly from the histogram
+    # Rebin dynamically if bin width is too coarse relative to sigma
+    bw = h.GetBinWidth(1)
+    if bw > 0 and sg_robust > 0:
+        rebin_factor = int(np.round((sg_robust / 5.0) / bw))
+        if rebin_factor > 1:
+            h.Rebin(rebin_factor)
+
+    # --- 3. THE ITERATIVE CORE FIT ---
     mu = h.GetMean()
     sg = h.GetRMS()
     
     g = ROOT.TF1(fname, "gaus", mu - nsig * sg, mu + nsig * sg)
-    
-    fit_success = False
     sigma_err = 0.0
 
-    # Iterative core-fit exactly mirroring C++ coreFit()
     for _ in range(max_iters):
+        if sg <= 0:
+            break
         g.SetRange(mu - nsig * sg, mu + nsig * sg)
-        # R = Range, Q = Quiet, L = Log-Likelihood, 0 = Don't draw
-        h.Fit(g, "RQL0")
+        h.Fit(g, "RQL0") # Range, Quiet, Log-Likelihood, No Draw
         
         mu = g.GetParameter(1)
         sg = g.GetParameter(2)
         sigma_err = g.GetParError(2)
-        
-        if sg <= 0:
-            break
 
-    # --- 4. C++ EVALUATION LOGIC ---
-    # Check if the fit relative error on sigma exceeds 25% (exactly as in robustRes)
+    # --- 4. EVALUATION & FALLBACK CHECK ---
     fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
 
-   
-    # --- 5. RETURN RESULT ---
     if fit_ok:
         res = 100.0 * sg / mu
         err = 100.0 * sigma_err / mu
