@@ -1157,6 +1157,41 @@ def main():
             print(f"[SUCCESS] Saved longitudinal overlay plot for {mod}")
         else:
             print(f"[WARNING] Not enough DoseActor truth curves to build longitudinal overlay for {mod}")
+
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 3-PRE. TRANSVERSE CHANNEL SUMMING (EVENT-BY-EVENT)
+        # ─────────────────────────────────────────────────────────────────────
+        # Sum photon counts across all T-type capillaries for each individual event
+        # to replicate multi-channel SiPM array readout in test beam.
+        
+        for ekey in energy_keys:
+            event_dict = master_summary[mod][ekey]
+            
+            # Find all T-type channel keys (e.g. 'dw_t1', 'dw_t2', or multi-channel arrays)
+            # Exclude pre-existing aggregated keys if re-running
+            t_channel_keys = [
+                k for k in event_dict.keys() 
+                if ("dw_t" in k.lower() or "t_type" in k.lower()) 
+                and k != "dw_t_total_summed"
+                and isinstance(event_dict[k], (list, np.ndarray))
+            ]
+
+            if t_channel_keys:
+                # Convert all channel lists/arrays to 2D matrix: shape = (n_channels, n_events)
+                channel_data_list = [np.array(event_dict[k]) for k in t_channel_keys]
+                
+                # Handle potential length mismatches cleanly
+                min_events = min(len(arr) for arr in channel_data_list)
+                
+                if min_events > 0:
+                    # Stack and sum across channels (axis 0) for each event
+                    stacked_channels = np.vstack([arr[:min_events] for arr in channel_data_list])
+                    summed_t_events = np.sum(stacked_channels, axis=0)
+                    
+                    # Store transverse sum back into master_summary
+                    master_summary[mod][ekey]["dw_t_total_summed"] = summed_t_events
+                    print(f"[{mod} @ {ekey}] Summed {len(t_channel_keys)} T-channels across {min_events} events.")
 # ─────────────────────────────────────────────────────────────────────
         # 3. ENERGY LINEARITY AND RESOLUTION PANELS (E-type channels)
         # ─────────────────────────────────────────────────────────────────────
@@ -1195,7 +1230,7 @@ def main():
             E_val = extract_numerical_energy(ekey)
             if E_val <= 0: continue
 
-            t_totals = master_summary[mod][ekey].get("dw_t_total", np.array([]))
+            t_totals = master_summary[mod][ekey].get("dw_t_total_summed", np.array([]))
             t_totals = np.array(t_totals) # Ensure it's a numpy array
             
             # --- DEBUG AND FILTER ---
@@ -1337,8 +1372,9 @@ def main():
         def gaussian_fit_func(x, amp, mu, sig):
             return amp * np.exp(-0.5 * ((x - mu) / sig) ** 2)
 
-        def plot_photon_histograms(channel_type, target_energies, summary_key):
+        def plot_photon_histograms(channel_type, target_energies, summary_key, mu_list, res_list):
             # Safe conversion to standard Python list of floats
+            pre_calculated = {float(e): (m, m * r) for e, m, r in zip(target_energies, mu_list, res_list)}
             target_energies_list = [float(e) for e in list(target_energies)]
             if len(target_energies_list) == 0:
                 return
@@ -1451,7 +1487,7 @@ def main():
 
         # Call helpers
         plot_photon_histograms("E", energies_gev, "dw_e_total")
-        plot_photon_histograms("T", energies_gev_t, "dw_t_total")
+        plot_photon_histograms("T", energies_gev_t, "dw_t_total_summed")
         # ─────────────────────────────────────────────────────────────────
         # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
         # ─────────────────────────────────────────────────────────────────
