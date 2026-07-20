@@ -215,43 +215,67 @@
     <propertiestable>
       <!-- Extremely fast organic decay time constant (3.5ns) -->
       <property name="WLSTIMECONSTANT" value="3.5" unit="ns"/>
-      
-      <!-- Refractive index typical for organic plastic WLS filament cores (~1.57-1.60) -->
+
+      <!-- Self-scintillation: direct dE/dx in the fiber, matching Walker's
+           RADiCALsimDSB DetectorConstruction.cc:162-166. His code default is
+           10000 ph/MeV (RADICAL_SCINT_YIELD=1.0), but his own validation found
+           that overshoots the paper's real light yield by about 15x (373
+           detected pe/MeV in fiber vs paper's about 25 npe/MeV). His actual
+           paper-matched production run used RADICAL_SCINT_YIELD=0.07, i.e.
+           10000 times 0.07 = 700 ph/MeV. Using that tuned value here. See
+           CLAUDE.md, "YIELD-SWEEP POSTMORTEM" section. -->
+      <property name="SCINTILLATIONYIELD"          value="700"/>
+      <property name="RESOLUTIONSCALE"              value="1.0"/>
+      <property name="SCINTILLATIONTIMECONSTANT1"   value="3.5" unit="ns"/>
+      <property name="SCINTILLATIONYIELD1"          value="1.0"/>
+
+      <!-- Self-scint emission spectrum: reuses the WLS emission shape below,
+           since it's the same DSB1 fluorescence line whether excited by
+           dE/dx directly or by an absorbed LYSO photon. -->
+      <propertyvector name="SCINTILLATIONCOMPONENT1" energyunit="eV">
+        <ve energy="1.55" value="0.00"/>  <!-- 800nm cutoff -->
+        <ve energy="1.90" value="0.05"/>  <!-- 652nm -->
+        <ve energy="2.15" value="0.30"/>  <!-- 576nm -->
+        <ve energy="2.35" value="0.75"/>  <!-- 527nm -->
+        <ve energy="2.51" value="1.00"/>  <!-- 494nm, true peak of DSB1 emission -->
+        <ve energy="2.58" value="0.40"/>  <!-- 480nm -->
+        <ve energy="2.64" value="0.00"/>  <!-- 470nm cutoff -->
+        <ve energy="6.20" value="0.00"/>
+      </propertyvector>
+
+      <!-- Refractive index typical for organic plastic WLS filament cores -->
       <propertyvector name="RINDEX" energyunit="eV">
         <ve energy="1.55" value="1.57"/>
         <ve energy="6.20" value="1.57"/>
       </propertyvector>
-      
+
       <!-- Bulk material absorption length: transparent to its own shifted light -->
       <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">
         <ve energy="1.55" value="10.0"/>
         <ve energy="6.20" value="10.0"/>
       </propertyvector>
-      
-      <!-- WLS Absorption Length: Smoothed out to simulate a realistic absorption band.
-           Captures LYSO blue light (~420nm / 2.95 eV) beautifully, while staying 
-           transparent to its own green emission light (< 2.45 eV). -->
+
+      <!-- WLS Absorption Length: unchanged from your original -->
       <propertyvector name="WLSABSLENGTH" unit="m" energyunit="eV">
         <ve energy="1.55" value="1000.0"/>
-        <ve energy="2.40" value="1000.0"/> <!-- Transparent in the red/yellow -->
-        <ve energy="2.48" value="5.000"/>   <!-- Onset of the absorption band (~500nm) -->
-        <ve energy="2.55" value="0.100"/>   <!-- Transition zone -->
-        <ve energy="2.70" value="0.001"/>   <!-- Strong absorption starts (~460nm) -->
-        <ve energy="2.95" value="0.0001"/>  <!-- Peak absorption matching LYSO emission (~420nm) -->
+        <ve energy="2.40" value="1000.0"/>
+        <ve energy="2.48" value="5.000"/>
+        <ve energy="2.55" value="0.100"/>
+        <ve energy="2.70" value="0.001"/>
+        <ve energy="2.95" value="0.0001"/>
         <ve energy="3.54" value="0.0001"/>
         <ve energy="6.20" value="0.0001"/>
       </propertyvector>
-      
-      <!-- WLS Re-emission Spectrum: Fully normalized (Peak = 1.0) 
-           Emits smoothly across a green spectrum peaking at ~495nm (2.51 eV) -->
+
+      <!-- WLS Re-emission Spectrum: unchanged from your original -->
       <propertyvector name="WLSCOMPONENT" energyunit="eV">
-        <ve energy="1.55" value="0.00"/>  <!-- 800nm (Cutoff) -->
-        <ve energy="1.90" value="0.05"/>  <!-- 652nm -->
-        <ve energy="2.15" value="0.30"/>  <!-- 576nm -->
-        <ve energy="2.35" value="0.75"/>  <!-- 527nm -->
-        <ve energy="2.51" value="1.00"/>  <!-- 494nm (True peak of DSB1 emission) -->
-        <ve energy="2.58" value="0.40"/>  <!-- 480nm -->
-        <ve energy="2.64" value="0.00"/>  <!-- 470nm (High energy wing cutoff) -->
+        <ve energy="1.55" value="0.00"/>
+        <ve energy="1.90" value="0.05"/>
+        <ve energy="2.15" value="0.30"/>
+        <ve energy="2.35" value="0.75"/>
+        <ve energy="2.51" value="1.00"/>
+        <ve energy="2.58" value="0.40"/>
+        <ve energy="2.64" value="0.00"/>
         <ve energy="6.20" value="0.00"/>
       </propertyvector>
     </propertiestable>
