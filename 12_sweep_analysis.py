@@ -445,6 +445,61 @@ def print_channel_diagnostics(label, mod, ekey, totals, mu_fit, sigma_fit):
     print(f"    [DIAG:{label}] {mod} {ekey}: N={n}, raw mean={raw_mean:.2f}, raw std={raw_std:.2f}, "
           f"raw res={raw_res*100:.1f}%, range=[{lo:.0f},{hi:.0f}], zero-frac={frac_zero*100:.1f}%, "
           f"fit mu={mu_fit:.3f}, fit sigma={sigma_fit:.3f}, fit res={fit_res*100:.1f}%{flag_str}")
+    
+    import numpy as np
+
+def compute_event_reconstructed_energy(prompt_counts_per_event, lyso_bounds, detected_z_sensor, lambda_eff=30.0):
+    """
+    Computes depth-corrected prompt energy on an event-by-event basis.
+    
+    Parameters:
+    -----------
+    prompt_counts_per_event : np.ndarray, shape (N_events, 29)
+        Matrix containing prompt photon counts for each layer (columns) per event (rows).
+    lyso_bounds : list of tuples
+        (z_lo, z_hi) for each of the 29 LYSO layers.
+    detected_z_sensor : float
+        Z-coordinate of the active downstream sensor.
+    lambda_eff : float
+        Effective optical attenuation length in mm (default 30.0 mm).
+        
+    Returns:
+    --------
+    e_reco_events : np.ndarray, shape (N_events,)
+        Corrected reconstructed energy proxy per event.
+    z_cog_events : np.ndarray, shape (N_events,)
+        Center-of-gravity shower depth (in layer numbers 1..29) per event.
+    """
+    # 1. Calculate distances from each layer center to the downstream sensor
+    distances = np.array([
+        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
+        for z_lo, z_hi in lyso_bounds
+    ])  # Shape: (29,)
+
+    # 2. Compute physical LCE vector across layers
+    lce_weights = np.exp(-distances / lambda_eff)  # Shape: (29,)
+
+    # 3. Layer-by-layer LCE correction per event
+    # Divides each column (layer) by its corresponding LCE factor
+    corrected_counts_per_layer = prompt_counts_per_event / lce_weights  # Shape: (N_events, 29)
+
+    # 4. Total reconstructed prompt energy per event
+    e_reco_events = np.sum(corrected_counts_per_layer, axis=1)  # Shape: (N_events,)
+
+    # 5. Compute Event Center of Gravity (z_COG) in layer index space (1 to 29)
+    layer_indices = np.arange(1, len(lyso_bounds) + 1)
+    raw_totals = np.sum(prompt_counts_per_event, axis=1)
+    
+    # Avoid division by zero for empty events
+    valid_mask = raw_totals > 0
+    z_cog_events = np.zeros(len(prompt_counts_per_event))
+    z_cog_events[valid_mask] = np.sum(
+        prompt_counts_per_event[valid_mask] * layer_indices, axis=1
+    ) / raw_totals[valid_mask]
+
+    return e_reco_events, z_cog_events
+
+    
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
@@ -652,6 +707,23 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     master_e_events = sorted(list(down_first.keys()))
     master_t_events = sorted(list(down_first_t.keys()))
 
+    # --- Depth-Correction via Event-by-Event Timing (LCE Recovery) ---
+    lambda_eff = 30.0  # Effective optical attenuation length in mm
+    dw_e_total_corr = []
+
+    for k in master_e_events:
+        raw_counts = dw_e_hits_per_ev.get(k, 0) + up_e_hits_per_ev.get(k, 0)
+        
+        if k in common_e_keys:
+            # Reconstruct longitudinal shower z-depth from time difference
+            z_est = v_eff * (down_first[k] - up_first[k]) / 2.0
+            dist = np.abs(detected_z_sensor - z_est)
+            weight = np.exp(dist / lambda_eff)
+            dw_e_total_corr.append(raw_counts * weight)
+        else:
+            # Fallback for single-ended hits where coincidence time is missing
+            dw_e_total_corr.append(raw_counts)
+
     return {
         "sigma_t_ps": sigma_t_ps,
         "raw_bm_data": all_bm_raw_ps,
@@ -664,8 +736,9 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         # Aligned primary time measurements
         "dw_first_times": np.array([down_first[k] for k in master_e_events]),
         
-        # Combined dual-ended yields (Front + Back) aligned perfectly by Event ID
+        # Combined dual-ended yields
         "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) + up_e_hits_per_ev.get(k, 0) for k in master_e_events]),
+        "dw_e_total_corr": np.array(dw_e_total_corr),  # <-- Depth-corrected yield
         "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) + up_t_hits_per_ev.get(k, 0) for k in master_t_events]),
         
         "run_dirs": sorted(run_dirs),
@@ -1196,28 +1269,37 @@ def main():
         # 3. ENERGY LINEARITY AND RESOLUTION PANELS (E-type channels)
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
+        res_e_corr_list, res_e_corr_err = [], []
 
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
             if E_val <= 0: continue
 
             e_totals = master_summary[mod][ekey].get("dw_e_total", np.array([]))
+            e_totals_corr = master_summary[mod][ekey].get("dw_e_total_corr", np.array([]))
             if len(e_totals) < 5: continue
 
-            # Convert the percentage output of robust_resolution back to a fraction
+            # Evaluate Raw Resolution
             res_val_pct, res_err_val_pct = robust_resolution(e_totals, nsig=2.0, max_iters=4)
             res_val = res_val_pct / 100.0
             res_err_val = res_err_val_pct / 100.0
 
-            mu_val = float(np.mean(e_totals)) # Ensure mu_val is defined for downstream arrays
+            # Evaluate Depth-Corrected Resolution
+            res_corr_pct, res_corr_err_pct = robust_resolution(e_totals_corr, nsig=2.0, max_iters=4)
+            res_corr_val = res_corr_pct / 100.0
+            res_corr_err_val = res_corr_err_pct / 100.0
+
+            mu_val = float(np.mean(e_totals))
 
             if mu_val > 0.1 and res_val > 0:
                 if not np.isnan(res_val) and not np.isinf(res_val) and res_val < 10.0:
                     energies_gev.append(E_val)
                     mu_e_list.append(mu_val)
                     res_e_list.append(res_val)
+                    res_e_corr_list.append(res_corr_val)
                     mu_e_err.append(mu_val * res_val / np.sqrt(len(e_totals)))
                     res_e_err.append(res_err_val)
+                    res_e_corr_err.append(res_corr_err_val)
                 else:
                     print(f"  [FILTERED] E-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_val*100:.1f}%)")
 
@@ -1284,8 +1366,13 @@ def main():
                 except Exception as e:
                     print(f"  [WARNING] Linearity fit failed for {mod}: {e}")
 
-            ax_lin.errorbar(energies_gev, mu_e_list, yerr=mu_e_err, fmt=mod_markers.get(mod, 'o'),
-                            color=mod_colors.get(mod, 'black'), label=f"Simulated Data ({mod})")
+            # Uncorrected Raw Resolution
+            ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
+                            color="gray", alpha=0.7, label="Sim Raw (Uncorrected E-type)")
+
+            # Depth-Corrected Resolution
+            ax_res.errorbar(energies_gev, res_e_corr_list, yerr=res_e_corr_err, fmt=mod_markers.get(mod, 's'),
+                            color=mod_colors.get(mod, 'black'), label="Sim Corrected (Depth-Weighted LCE)")
 
             if popt_lin is not None:
                 x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
@@ -1297,6 +1384,8 @@ def main():
             ax_lin.set_title("Energy Linearity", fontsize=13, fontweight="bold")
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
+
+            
 
             # --- ROBUST RESOLUTION FIT GUARD ---
             popt_res = None
