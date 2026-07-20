@@ -1726,6 +1726,7 @@ def main():
             if len(energies_gev_t) >= 3:
                 try:
                     # Fit against the PROJECTED T-type resolution
+                    # Note: p0 and bounds are expecting standard decimal form
                     popt_res_t, _ = curve_fit(resolution_func, energies_gev_t, proj_res_t,
                                               p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
                     c_ft, s_ft, n_ft = popt_res_t
@@ -1734,31 +1735,31 @@ def main():
 
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
-            # Original Raw Points
-            ax_sm.errorbar(energies_gev_t, res_t_list * 100.0, yerr=res_t_err_arr * 100.0,
-                           fmt=mod_markers.get(mod, 's'), color="gray", alpha=0.7,
-                           markersize=7, capsize=4, capthick=1.2,
+            # Original Raw Points (Decimal Form)
+            ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
+                           fmt='s', color="gray", alpha=0.7,
+                           markersize=6, capsize=3, capthick=1.2,
                            label="Sim Raw (Uncorrected T-type)")
 
-            # Projected Points
-            ax_sm.errorbar(energies_gev_t, proj_res_t * 100.0, yerr=proj_err_t * 100.0,
+            # Projected Points (Decimal Form)
+            ax_sm.errorbar(energies_gev_t, proj_res_t, yerr=proj_err_t,
                            fmt='D', color="darkorange",
-                           markersize=7, capsize=4, capthick=1.2,
+                           markersize=6, capsize=3, capthick=1.2,
                            label=f"Projected ({n_baseline} SiPMs Baseline)")
 
             if popt_res_t is not None:
                 x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
-                # Plot projected fit curve
-                ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t) * 100.0,
+                # Plot projected fit curve (Decimal Form)
+                ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t),
                            color="darkorange", linestyle='--', linewidth=2.0)
 
-                # Reference overlays
+                # Reference overlays (Decimal Form)
                 if 'ENERGY_REF_CURVES' in globals():
                     for ref_name, ref_p in ENERGY_REF_CURVES.items():
-                        y_ref = energy_ref_curve(x_sm_smooth, ref_p["c"], ref_p["s"], ref_p["n"]) * 100.0
+                        y_ref = energy_ref_curve(x_sm_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
                         ax_sm.plot(x_sm_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5)
 
-            # Build the text box string
+            # Build the text box string (Multiplied by 100 for display)
             fit_text = ""
             if popt_res_t is not None:
                 fit_text += (
@@ -1780,9 +1781,9 @@ def main():
                        ha='right', va='top', fontsize=9, color="black", 
                        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="lightgray"))
 
-            ax_sm.set_xlabel("E$_{beam}$ (GeV)", fontsize=11)
-            ax_sm.set_ylabel(r"$\sigma$/mean (%)", fontsize=11)
-            ax_sm.set_title(f"Shower-max energy resolution (T-type) — {mod}", fontsize=13, fontweight="bold")
+            ax_sm.set_xlabel("Beam Energy (GeV)", fontsize=11)
+            ax_sm.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11) # Changed from % to match E-type
+            ax_sm.set_title(f"Shower-max Energy Resolution (T-type) — {mod}", fontsize=13, fontweight="bold")
             ax_sm.grid(True, linestyle=":", alpha=0.6)
             
             # Moved legend to lower left so it doesn't overlap with the top-right text box
@@ -1793,9 +1794,6 @@ def main():
             plt.close(fig_sm)
         else:
             print(f"  [WARNING] Not enough T-type energy points for {mod} shower-max plot.")
-
-
-        
 
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
