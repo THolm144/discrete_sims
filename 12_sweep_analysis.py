@@ -1373,8 +1373,6 @@ def main():
             return amp * np.exp(-0.5 * ((x - mu) / sig) ** 2)
 
         def plot_photon_histograms(channel_type, target_energies, summary_key, mu_list, res_list):
-            # Safe conversion to standard Python list of floats
-            pre_calculated = {float(e): (m, m * r) for e, m, r in zip(target_energies, mu_list, res_list)}
             target_energies_list = [float(e) for e in list(target_energies)]
             if len(target_energies_list) == 0:
                 return
@@ -1411,7 +1409,7 @@ def main():
 
                 plotted_count += 1
 
-                # Clean outliers for visualization focus
+                # Broad outlier rejection for axis range determination
                 median_val = float(np.median(data))
                 std_val = float(np.std(data)) if len(data) > 1 else 1.0
                 lo_bnd = max(0.0, median_val - 3.5 * std_val)
@@ -1438,30 +1436,41 @@ def main():
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
 
-                # Initial guesses
+                # Initial seed guesses from bin peak
                 max_idx = np.argmax(counts)
                 mu_g = float(bin_centers[max_idx])
-                sig_g = max(1.0, std_val * 0.8)
+                sig_g = max(1.0, std_val * 0.6)
                 amp_g = float(counts.max())
 
-                try:
-                    # Fit to top-half of peak
-                    fit_mask = counts >= (counts.max() * 0.4)
-                    if np.sum(fit_mask) >= 3:
-                        popt, _ = curve_fit(
-                            gaussian_fit_func, bin_centers[fit_mask], counts[fit_mask],
-                            p0=[amp_g, mu_g, sig_g],
-                            bounds=([0, 0, 0.1], [counts.max() * 2.0, max(1.0, clean_data.max() * 1.5), max(10.0, (hi_bnd - lo_bnd) * 2.0)])
-                        )
-                        amp_f, mu_f, sig_f = popt
-                        x_fit = np.linspace(max(0, mu_f - 3 * sig_f), mu_f + 3 * sig_f, 300)
-                        y_fit = gaussian_fit_func(x_fit, *popt)
+                # ─────────────────────────────────────────────────────────────
+                # ITERATIVE GAUSSIAN CORE FIT (Rejects asymmetric tails)
+                # ─────────────────────────────────────────────────────────────
+                fit_mask = (bin_centers >= (mu_g - 1.5 * sig_g)) & (bin_centers <= (mu_g + 1.5 * sig_g))
+                amp_f, mu_f, sig_f = amp_g, mu_g, sig_g
+                fit_success = False
 
-                        ax.plot(x_fit, y_fit, "k--", linewidth=2.0,
-                                label=f"Gaussian Fit\n$\mu$ = {mu_f:.1f} hits\n$\sigma$ = {sig_f:.1f} hits\n$\sigma/\mu$ = {(sig_f/mu_f)*100:.2f}%")
-                    else:
-                        raise ValueError("Not enough bins above half-max threshold")
-                except Exception:
+                for _ in range(3):  # 3 refinement iterations
+                    if np.sum(fit_mask) >= 3:
+                        try:
+                            popt, _ = curve_fit(
+                                gaussian_fit_func, bin_centers[fit_mask], counts[fit_mask],
+                                p0=[amp_f, mu_f, sig_f],
+                                bounds=([0, 0, 0.1], [counts.max() * 2.0, clean_data.max() * 1.5, (hi_bnd - lo_bnd)])
+                            )
+                            amp_f, mu_f, sig_f = popt
+                            # Narrow mask tightly to core around newly fitted mu
+                            fit_mask = (bin_centers >= (mu_f - 1.5 * sig_f)) & (bin_centers <= (mu_f + 1.5 * sig_f))
+                            fit_success = True
+                        except Exception:
+                            break
+
+                if fit_success and sig_f > 0 and mu_f > 0:
+                    x_fit = np.linspace(max(0.0, mu_f - 3.5 * sig_f), mu_f + 3.5 * sig_f, 300)
+                    y_fit = gaussian_fit_func(x_fit, amp_f, mu_f, sig_f)
+
+                    ax.plot(x_fit, y_fit, "k--", linewidth=2.0,
+                            label=f"Gaussian Core Fit\n$\mu$ = {mu_f:.1f} hits\n$\sigma$ = {sig_f:.1f} hits\n$\sigma/\mu$ = {(sig_f/mu_f)*100:.2f}%")
+                else:
                     ax.text(0.05, 0.80, f"Fit Fallback (Peak RMS)\n$\mu$={median_val:.1f}, $\sigma$={std_val:.1f}", 
                             transform=ax.transAxes, color="black", fontsize=8)
 
@@ -1480,17 +1489,20 @@ def main():
                 fig_h.tight_layout()
                 
                 save_file = mod_dir / f"{mod}_{channel_type.lower()}_type_histograms.png"
-                fig_h.savefig(save_file, dpi=200)
+                fig_h.savefig(save_file, dpi=100)
                 print(f"[SUCCESS] Saved {channel_type}-type histogram panel to: {save_file.resolve()}")
 
             plt.close(fig_h)
 
-        # UPDATED CALL:
+        # ─────────────────────────────────────────────────────────────────────
+        # CALL HELPERS
+        # ─────────────────────────────────────────────────────────────────────
         plot_photon_histograms("E", energies_gev, "dw_e_total", mu_e_list, res_e_list)
 
-# And for T-type:
         t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
         plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
+
+
         # ─────────────────────────────────────────────────────────────────
         # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
         # ─────────────────────────────────────────────────────────────────
