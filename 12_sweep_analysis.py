@@ -499,7 +499,50 @@ def compute_event_reconstructed_energy(prompt_counts_per_event, lyso_bounds, det
 
     return e_reco_events, z_cog_events
 
+
+
+def plot_energy_resolution(energy_points, raw_resolutions, raw_resolution_errors, active_sipms, baseline_sipms=64):
+    """
+    Plots the energy resolution and adds a theoretical line correcting 
+    for the reduced number of SiPMs.
+    """
+    plt.figure(figsize=(10, 6))
     
+    # 1. Plot the raw data (from the reduced SiPM configuration)
+    plt.errorbar(energy_points, raw_resolutions, yerr=raw_resolution_errors, 
+                 fmt='o', label=f'Simulated Data ({active_sipms} SiPMs)', color='blue')
+    
+    # -------------------------------------------------------------------
+    # NEW: Calculate and plot the corrected baseline resolution line
+    # -------------------------------------------------------------------
+    # Coverage fraction determines the loss in photon statistics.
+    # We multiply the resolution by sqrt(active / baseline) to project 
+    # what the resolution would recover to if fully instrumented.
+    
+    coverage_ratio = active_sipms / baseline_sipms
+    correction_factor = np.sqrt(coverage_ratio)
+    
+    corrected_resolutions = [res * correction_factor for res in raw_resolutions]
+    corrected_errors = [err * correction_factor for err in raw_resolution_errors]
+    
+    # Plot the projected fully-instrumented line
+    plt.errorbar(energy_points, corrected_resolutions, yerr=corrected_errors,
+                 fmt='s--', label=f'Corrected Projection (Full {baseline_sipms} SiPMs)', 
+                 color='orange', alpha=0.8)
+    
+    # Optional: If you use a fit function (e.g., stochastic term a/sqrt(E) + const b)
+    # You can also scale the 'a' parameter of your curve_fit and plot that theoretical curve here.
+    # -------------------------------------------------------------------
+    
+    # Formatting the plot
+    plt.title('RADiCAL Energy Resolution vs. Energy', fontsize=14)
+    plt.xlabel('Reconstructed Energy [GeV]', fontsize=12)
+    plt.ylabel(r'Energy Resolution ($\sigma / E$)', fontsize=12)
+    plt.grid(True, which='both', linestyle='--', alpha=0.6)
+    plt.legend(loc='upper right', fontsize=11)
+    
+    plt.tight_layout()
+    plt.show()   
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE ENGINE: DATA PARSING & COINCIDENCE FOLDING (vectorized)
@@ -1405,40 +1448,58 @@ def main():
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
 
-            # --- ROBUST RESOLUTION FIT GUARD ---
+            # --- SIPM CORRECTION MATH ---
+            # Dynamically determine the number of active downstream E-type SiPMs
+            # radi_cal (Standard) = 2 downstream E-type
+            # rc_hex (Hex) = 3 downstream E-type
+            # Baseline reference from the paper = 8
+            n_active = 6 if "rc_hex" in mod else 4
+            n_baseline = 8
+            correction_factor = np.sqrt(n_active / n_baseline)
+
             # Fit against depth-corrected values if available, else raw
-            target_res = res_e_corr_list if ('res_e_corr_list' in locals() and len(res_e_corr_list) == len(energies_gev)) else res_e_list
+            base_target_res = np.array(res_e_corr_list) if ('res_e_corr_list' in locals() and len(res_e_corr_list) == len(energies_gev)) else res_e_list
+            base_target_err = np.array(res_e_corr_err) if ('res_e_corr_err' in locals() and len(res_e_corr_err) == len(energies_gev)) else res_e_err_arr
             
+            proj_res = base_target_res * correction_factor
+            proj_err = base_target_err * correction_factor
+
+            # --- ROBUST RESOLUTION FIT GUARD ---
             popt_res = None
             fit_label = "Fit failed (Not enough data points)"
             if len(energies_gev) >= 3:
                 try:
-                    popt_res, _ = curve_fit(resolution_func, energies_gev, target_res,
+                    # Fit the projected fully-instrumented resolution
+                    popt_res, _ = curve_fit(resolution_func, energies_gev, proj_res,
                                             p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
                     c_f, s_f, n_f = popt_res
-                    fit_label = f"Fit: {c_f * 100:.1f}% $\\oplus$ {s_f * 100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.1f}%/E"
+                    fit_label = f"Proj Fit: {c_f * 100:.1f}% $\\oplus$ {s_f * 100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.1f}%/E"
                 except Exception as e:
                     print(f"  [WARNING] Resolution fit failed for {mod}: {e}")
             else:
                 fit_label = f"Fit skipped (Requires 3 points; have {len(energies_gev)})"
 
-            ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
-                            color=mod_colors.get(mod, 'black'), label="Simulated Resolution (E-type)")
+            # Plot the projected corrected data points
+            ax_res.errorbar(energies_gev, proj_res, yerr=proj_err, fmt='D',
+                            color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
 
             if popt_res is not None:
                 x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
+                # Plot the fitted curve based on the projected resolution
                 ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
-                            color="black", linestyle="--", label=fit_label)
+                            color="darkorange", linestyle="--", linewidth=2.0, label=fit_label)
                 
                 # -- External reference overlays --
-                for ref_name, ref_p in ENERGY_REF_CURVES.items():
-                    y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
-                    ax_res.plot(x_res_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5,
-                                label=f"{ref_name}: {ref_p['c']*100:.2f}$\\oplus${ref_p['s']*100:.2f}/$\\sqrt{{E}}$"
-                                      f"$\\oplus${ref_p['n']*100:.2f}/E")
+                if 'ENERGY_REF_CURVES' in globals():
+                    for ref_name, ref_p in ENERGY_REF_CURVES.items():
+                        y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
+                        ax_res.plot(x_res_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5,
+                                    label=f"{ref_name}: {ref_p['c']*100:.2f}%$\\oplus${ref_p['s']*100:.2f}%/$\\sqrt{{E}}$"
+                                          f"$\\oplus${ref_p['n']*100:.2f}%/E")
             
-            ax_res.axhspan(ENERGY_DATA_BAND_FRAC[0], ENERGY_DATA_BAND_FRAC[1], color="lightgray", alpha=0.4,
-                           label=f"DATA sum$_{{lg}}$: {ENERGY_DATA_BAND_FRAC[0]*100:.0f}-{ENERGY_DATA_BAND_FRAC[1]*100:.0f}%")
+            if 'ENERGY_DATA_BAND_FRAC' in globals():
+                ax_res.axhspan(ENERGY_DATA_BAND_FRAC[0], ENERGY_DATA_BAND_FRAC[1], color="lightgray", alpha=0.4,
+                               label=f"DATA sum$_{{lg}}$: {ENERGY_DATA_BAND_FRAC[0]*100:.0f}-{ENERGY_DATA_BAND_FRAC[1]*100:.0f}%")
 
             ax_res.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_res.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
