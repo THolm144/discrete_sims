@@ -1485,9 +1485,12 @@ def main():
 
             plt.close(fig_h)
 
-        # Call helpers
-        plot_photon_histograms("E", energies_gev, "dw_e_total")
-        plot_photon_histograms("T", energies_gev_t, "dw_t_total_summed")
+        # UPDATED CALL:
+        plot_photon_histograms("E", energies_gev, "dw_e_total", mu_e_list, res_e_list)
+
+# And for T-type:
+        t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
+        plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
         # ─────────────────────────────────────────────────────────────────
         # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
         # ─────────────────────────────────────────────────────────────────
