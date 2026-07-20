@@ -1323,13 +1323,13 @@ def main():
 
             for E_v, mu_v, res_v in zip(energies_gev, mu_e_list, res_e_list):
                 std_v = mu_v * res_v
-                f_out.write(f"{E_v:<12.1f} | {'E-Type':<10} | {mu_v:<14.2f} | {std_v:<14.2f} | {res_v*100.0:<12.2f}\n")
+                f_out.write(f"{float(E_v):<12.1f} | {'E-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
             
             f_out.write(f"{'-'*70}\n")
 
             for E_v, mu_v, res_v in zip(energies_gev_t, mu_t_list, res_t_list):
                 std_v = mu_v * res_v
-                f_out.write(f"{E_v:<12.1f} | {'T-Type':<10} | {mu_v:<14.2f} | {std_v:<14.2f} | {res_v*100.0:<12.2f}\n")
+                f_out.write(f"{float(E_v):<12.1f} | {'T-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
 
         print(f"[SUCCESS] Saved mean photon count report to: {mean_txt_path.resolve()}")
 
@@ -1338,42 +1338,59 @@ def main():
             return amp * np.exp(-0.5 * ((x - mu) / sig) ** 2)
 
         def plot_photon_histograms(channel_type, target_energies, summary_key):
-            if not target_energies:
+            # Safe conversion to standard Python list of floats
+            target_energies_list = [float(e) for e in list(target_energies)]
+            if len(target_energies_list) == 0:
                 return
 
-            n_e = len(target_energies)
+            # Match valid keys based on target_energies floats
+            valid_keys = []
+            for ekey in sorted(energy_keys, key=extract_numerical_energy):
+                e_val = float(extract_numerical_energy(ekey))
+                if any(np.isclose(e_val, te) for te in target_energies_list):
+                    valid_keys.append(ekey)
+
+            if not valid_keys:
+                return
+
+            n_e = len(valid_keys)
             ncols = 2 if n_e >= 2 else 1
             nrows = int(np.ceil(n_e / ncols))
 
             fig_h, axs_h = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
             axs_h = axs_h.flatten()
 
-            for idx, ekey in enumerate(sorted(energy_keys, key=extract_numerical_energy)):
-                E_val = extract_numerical_energy(ekey)
-                if E_val not in target_energies or idx >= len(axs_h):
-                    continue
-
+            plotted_count = 0
+            for idx, ekey in enumerate(valid_keys):
                 ax = axs_h[idx]
+                E_val = float(extract_numerical_energy(ekey))
+
                 data = master_summary[mod][ekey].get(summary_key, np.array([]))
                 data = np.array(data)
                 data = data[data > 0]  # Filter zero-photon events
 
                 if len(data) < 5:
+                    ax.text(0.5, 0.5, f"Insufficient Data (N={len(data)})", ha="center", va="center", transform=ax.transAxes)
                     continue
+
+                plotted_count += 1
 
                 # Clean outliers for visualization focus
                 median_val = float(np.median(data))
-                std_val = float(np.std(data))
+                std_val = float(np.std(data)) if len(data) > 1 else 1.0
                 lo_bnd = max(0.0, median_val - 3.5 * std_val)
                 hi_bnd = median_val + 3.5 * std_val
+
+                if hi_bnd <= lo_bnd:
+                    hi_bnd = lo_bnd + 10.0
 
                 clean_data = data[(data >= lo_bnd) & (data <= hi_bnd)]
                 if len(clean_data) < 5:
                     clean_data = data
 
                 # Freedman-Diaconis binning
-                iqr = np.percentile(clean_data, 75) - np.percentile(clean_data, 25)
-                bin_w = 2.0 * iqr / (len(clean_data) ** (1.0 / 3.0)) if iqr > 0 else std_val / 5.0
+                iqr = float(np.percentile(clean_data, 75) - np.percentile(clean_data, 25))
+                bin_w = 2.0 * iqr / (len(clean_data) ** (1.0 / 3.0)) if iqr > 0 else max(1.0, std_val / 5.0)
                 bin_w = max(1.0, bin_w)
                 n_bins = max(15, int(np.ceil((clean_data.max() - clean_data.min()) / bin_w)))
 
@@ -1385,28 +1402,32 @@ def main():
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
 
-                # Fit Gaussian around peak
+                # Initial guesses
                 max_idx = np.argmax(counts)
-                mu_g = bin_centers[max_idx]
-                sig_g = std_val * 0.8
-                amp_g = counts.max()
+                mu_g = float(bin_centers[max_idx])
+                sig_g = max(1.0, std_val * 0.8)
+                amp_g = float(counts.max())
 
                 try:
-                    # Fit to upper half of peak
+                    # Fit to top-half of peak
                     fit_mask = counts >= (counts.max() * 0.4)
-                    popt, _ = curve_fit(
-                        gaussian_fit_func, bin_centers[fit_mask], counts[fit_mask],
-                        p0=[amp_g, mu_g, sig_g],
-                        bounds=([0, 0, 0.1], [counts.max() * 2.0, clean_data.max(), (hi_bnd - lo_bnd)])
-                    )
-                    amp_f, mu_f, sig_f = popt
-                    x_fit = np.linspace(mu_f - 3 * sig_f, mu_f + 3 * sig_f, 300)
-                    y_fit = gaussian_fit_func(x_fit, *popt)
+                    if np.sum(fit_mask) >= 3:
+                        popt, _ = curve_fit(
+                            gaussian_fit_func, bin_centers[fit_mask], counts[fit_mask],
+                            p0=[amp_g, mu_g, sig_g],
+                            bounds=([0, 0, 0.1], [counts.max() * 2.0, max(1.0, clean_data.max() * 1.5), max(10.0, (hi_bnd - lo_bnd) * 2.0)])
+                        )
+                        amp_f, mu_f, sig_f = popt
+                        x_fit = np.linspace(max(0, mu_f - 3 * sig_f), mu_f + 3 * sig_f, 300)
+                        y_fit = gaussian_fit_func(x_fit, *popt)
 
-                    ax.plot(x_fit, y_fit, "k--", linewidth=2.0,
-                            label=f"Gaussian Fit\n$\mu$ = {mu_f:.1f} hits\n$\sigma$ = {sig_f:.1f} hits\n$\sigma/\mu$ = {(sig_f/mu_f)*100:.2f}%")
-                except Exception as e:
-                    ax.text(0.05, 0.85, f"Fit Failed: {e}", transform=ax.transAxes, color="red", fontsize=8)
+                        ax.plot(x_fit, y_fit, "k--", linewidth=2.0,
+                                label=f"Gaussian Fit\n$\mu$ = {mu_f:.1f} hits\n$\sigma$ = {sig_f:.1f} hits\n$\sigma/\mu$ = {(sig_f/mu_f)*100:.2f}%")
+                    else:
+                        raise ValueError("Not enough bins above half-max threshold")
+                except Exception:
+                    ax.text(0.05, 0.80, f"Fit Fallback (Peak RMS)\n$\mu$={median_val:.1f}, $\sigma$={std_val:.1f}", 
+                            transform=ax.transAxes, color="black", fontsize=8)
 
                 ax.set_title(f"{channel_type} Channel — {E_val:g} GeV", fontsize=11, fontweight="bold")
                 ax.set_xlabel("Detected Photon Count (Hits)", fontsize=10)
@@ -1414,19 +1435,21 @@ def main():
                 ax.grid(True, linestyle=":", alpha=0.6)
                 ax.legend(loc="upper right", fontsize=8)
 
-            # Delete unused subplots
-            for idx in range(len(target_energies), len(axs_h)):
+            # Clean up empty subplots
+            for idx in range(n_e, len(axs_h)):
                 fig_h.delaxes(axs_h[idx])
 
-            fig_h.suptitle(f"{channel_type}-Type Photon Distributions & Gaussian Fits — {mod}", fontsize=13, fontweight="bold")
-            fig_h.tight_layout()
-            
-            save_file = mod_dir / f"{mod}_{channel_type.lower()}_type_histograms.png"
-            fig_h.savefig(save_file, dpi=200)
-            plt.close(fig_h)
-            print(f"[SUCCESS] Saved {channel_type}-type histogram panel to: {save_file.resolve()}")
+            if plotted_count > 0:
+                fig_h.suptitle(f"{channel_type}-Type Photon Distributions & Gaussian Fits — {mod}", fontsize=13, fontweight="bold")
+                fig_h.tight_layout()
+                
+                save_file = mod_dir / f"{mod}_{channel_type.lower()}_type_histograms.png"
+                fig_h.savefig(save_file, dpi=200)
+                print(f"[SUCCESS] Saved {channel_type}-type histogram panel to: {save_file.resolve()}")
 
-        # Generate panels for E-Type and T-Type
+            plt.close(fig_h)
+
+        # Call helpers
         plot_photon_histograms("E", energies_gev, "dw_e_total")
         plot_photon_histograms("T", energies_gev_t, "dw_t_total")
         # ─────────────────────────────────────────────────────────────────
