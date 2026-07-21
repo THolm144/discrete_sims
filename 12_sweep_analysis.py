@@ -1368,6 +1368,7 @@ def main():
                 except Exception as e:
                     print(f"  [WARNING] Linearity fit failed for {mod}: {e}")
 
+            # Plot Uncorrected and Corrected simulation points
             ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
                             color="gray", alpha=0.7, label="Sim Raw (Uncorrected E-type)")
 
@@ -1375,6 +1376,7 @@ def main():
                 ax_res.errorbar(energies_gev, res_e_corr_list, yerr=res_e_corr_err, fmt=mod_markers.get(mod, 's'),
                                 color=mod_colors.get(mod, 'black'), label="Sim Corrected (Depth-Weighted LCE)")
 
+            # Linearity panel
             if popt_lin is not None:
                 x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
                 ax_lin.plot(x_lin_smooth, linear_func(x_lin_smooth, *popt_lin),
@@ -1386,6 +1388,7 @@ def main():
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
 
+            # Projected 8 SiPM baseline calculations
             n_active = 6 if "rc_hex" in mod else 4
             n_baseline = 8
             correction_factor = np.sqrt(n_active / n_baseline)
@@ -1413,16 +1416,30 @@ def main():
             ax_res.errorbar(energies_gev, proj_res, yerr=proj_err, fmt='D',
                             color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
 
+            x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 200)
+
+            # Plot simulation projected fit curve
             if popt_res is not None:
-                x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
                 ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
                             color="darkorange", linestyle="--", linewidth=2.0, label=fit_label)
+
+            # ─────────────────────────────────────────────────────────────────
+            # OVERLAY PAPER FIG 17 REFERENCE LINE
+            # ─────────────────────────────────────────────────────────────────
+            c_paper, s_paper, n_paper = 0.0931, 0.5204, 0.3162
+            y_paper = np.sqrt(c_paper**2 + (s_paper / np.sqrt(x_res_smooth))**2 + (n_paper / x_res_smooth)**2)
+
+            ax_res.plot(
+                x_res_smooth, y_paper,
+                color="black", linestyle=":", linewidth=2.0, zorder=2,
+                label=r"Paper Fig 17 ($9.31\% \oplus 52.04\%/\sqrt{E} \oplus 31.62\%/E$)"
+            )
 
             ax_res.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_res.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
             ax_res.set_title("Energy Resolution (E-type channels)", fontsize=13, fontweight="bold")
             ax_res.grid(True, linestyle=":", alpha=0.6)
-            ax_res.legend(fontsize=10)
+            ax_res.legend(fontsize=9, loc="upper right")
 
             fig_er.suptitle(f"Calorimeter Energy Performance — {mod}", fontsize=15, fontweight="bold")
             fig_er.tight_layout()
@@ -1672,17 +1689,30 @@ def main():
 
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
+            # 1. Plot Simulation Data
             ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
                            fmt='s', color="gray", alpha=0.7, label="Sim Raw (Uncorrected T-type)")
 
             ax_sm.errorbar(energies_gev_t, proj_res_t, yerr=proj_err_t,
                            fmt='D', color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
 
+            # 2. Plot Simulation Fit
+            x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
             if popt_res_t is not None:
-                x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
                 ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t),
                            color="darkorange", linestyle='--', linewidth=2.0)
 
+            # 3. OVERLAY PAPER FIG 17 REFERENCE LINE
+            c_paper, s_paper, n_paper = 0.0931, 0.5204, 0.3162
+            y_paper = np.sqrt(c_paper**2 + (s_paper / np.sqrt(x_sm_smooth))**2 + (n_paper / x_sm_smooth)**2)
+            
+            ax_sm.plot(
+                x_sm_smooth, y_paper,
+                color="black", linestyle=":", linewidth=2.0, zorder=2,
+                label=r"Paper Fig 17 ($9.31\% \oplus 52.04\%/\sqrt{E} \oplus 31.62\%/E$)"
+            )
+
+            # Text box details
             fit_text = ""
             if popt_res_t is not None:
                 fit_text += f"Proj Fit: {c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$\n"
