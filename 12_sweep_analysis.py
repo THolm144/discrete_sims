@@ -1471,7 +1471,7 @@ def main():
                 try:
                     # Fit the projected fully-instrumented resolution
                     popt_res, _ = curve_fit(resolution_func, energies_gev, proj_res,
-                                            p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 10.0]))
+                                            p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 0.5]))
                     c_f, s_f, n_f = popt_res
                     fit_label = f"Proj Fit: {c_f * 100:.1f}% $\\oplus$ {s_f * 100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.1f}%/E"
                 except Exception as e:
