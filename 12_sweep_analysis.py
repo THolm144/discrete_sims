@@ -1469,18 +1469,19 @@ def main():
             fit_label = "Fit failed (Not enough data points)"
             if len(energies_gev) >= 3:
                 try:
-                    # Fit the projected fully-instrumented resolution
                     popt_res, _ = curve_fit(
-                        resolution_func, 
+                        robust_resolution, 
                         energies_gev, 
                         res_e_list,
                         p0=[0.08, 0.50], 
-                        bounds = ([0.0, 0.0], [1.0, 5.0])
+                        bounds=([0.0, 0.0], [1.0, 5.0])
                     )
                     c_f, s_f = popt_res
                     fit_label = f"Proj Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$"
+
                 except Exception as e:
-                    print(f"  [WARNING] Resolution fit failed for {mod}: {e}")
+                    print(f"[FIT ERROR] Curve fit crashed with: {e}")
+                    fit_label = "Proj Fit: Fit Failed"
             else:
                 fit_label = f"Fit skipped (Requires 3 points; have {len(energies_gev)})"
 
