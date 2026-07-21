@@ -217,8 +217,8 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
                 edep_ps.attached_to     = vol_name
                 edep_ps.output_filename = f"showermax_edep_{i}.root"
                 
-                # "inside" safely measures dE/dx continuously within the volume
-                edep_ps.steps_to_store  = "inside"  
+                
+                edep_ps.steps_to_store  = "all"  
                 
                 F_edep = GateFilterBuilder()
                 edep_ps.filter    = (F_edep.ParticleName != "opticalphoton")
