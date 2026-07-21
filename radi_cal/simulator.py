@@ -168,16 +168,21 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     # we eliminate duplicate filter processing loops for every step inside the target volume.
 
     # ── Optical exits ─────────────────────────────────────────────────────
+    # ── Optical exits ─────────────────────────────────────────────────────
     if caps["optical"] and caps.get("optical_exits", False):
-        exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
-        exited.attached_to     = target_vol
-        exited.output_filename = "optical_exited.root"
-        exited.steps_to_store  = "exiting"
-        exited.attributes = [
-            "ParticleName", "KineticEnergy", "TrackCreatorProcess",
-            "Position", "TrackID", "EventID", "GlobalTime",
-        ]
-        registry["optical_exited_actor"] = exited
+        # OpenGATE cannot evaluate 'exiting' steps for top-level / world volumes
+        if target_vol == "world":
+            print("[ACTOR] WARNING: Skipping 'optical_exited' actor because 'world' has no parent volume.")
+        else:
+            exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
+            exited.attached_to     = target_vol
+            exited.output_filename = "optical_exited.root"
+            exited.steps_to_store  = "exiting"
+            exited.attributes = [
+                "ParticleName", "KineticEnergy", "TrackCreatorProcess",
+                "Position", "TrackID", "EventID", "GlobalTime",
+            ]
+            registry["optical_exited_actor"] = exited
 
     # ── Per-channel screen hit actors ─────────────────────────────────────
     if caps["sipm_hits"] and detector_volumes:
