@@ -110,10 +110,9 @@ Depending on the study, additional calibration or reconstruction steps may be pe
 
 Current analyses include work related to
 
-- attenuation measurements
+
 - detector timing performance
 - energy calibration
-- detector response matrices
 - profile reconstruction
 - parameter sweeps
 - diagnostic plotting
@@ -139,7 +138,6 @@ These define detector materials, optical properties, and surface interactions us
 Simulation and analysis scripts generate outputs such as
 
 - ROOT files
-- calibration products
 - reconstructed profiles
 - timing reports
 - summary statistics
@@ -162,6 +160,21 @@ Future improvements include
 - command-line interfaces
 - example datasets and tutorials
 
+---
+
+## Current work
+---
+- ScintX simulation - simulation of the conditions at the UIowa FLASH beam facility contructed to model the response of a patented material, ScintillatorX, and discover its light yield in combination with experiment.
+
+- quartz/iron calorimeter simulation - tests the idea of pulling more data from a CMS-style calorimeter by adding a Cherenkov-only detector that is an iron shield in front of a grid of quartz cubes with sipms behind them. This simulation specifically verifies the capability of such a device to reproduce a shower profile by measuring the number of sipm hits vs increasing thickness of shielding.
+
+- RADiCAL simulations - these are primarily proof of concept tests for various theorized iterations of the RADiCAL shashlik-style calorimeter. They are split into 4 different geometries and 3 different types of wavelength-shifting fibre. The geometries are as follows: 
+       - standard square, which is the basic module, where 2 of the capillaries therein are t-type with wavelength shifter at shower max only and the other 2 are e-type and have wls throughout.
+       - triple square, which is the same as the standard squaree except the LYSO scintillating blocks are three times as thick.
+       - standard hexagon, which is heaxagonally shaped and has 3 of each t-type and e-type.
+       - triple hexagon, which is the same as the standard hex module except for having three times as much LYSO.
+
+The three wavelength shifters simulated in each of the four modules are DSB1, BCF92, and LuAG:Ce.
 ---
 
 ## Contributing
