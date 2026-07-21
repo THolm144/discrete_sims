@@ -1308,11 +1308,11 @@ def main():
                     # Store transverse sum back into master_summary
                     master_summary[mod][ekey]["dw_t_total_summed"] = summed_t_events
                     print(f"[{mod} @ {ekey}] Summed {len(t_channel_keys)} T-channels across {min_events} events.")
-# ─────────────────────────────────────────────────────────────────────
-        # 3. ENERGY LINEARITY AND RESOLUTION PANELS (E-type channels)
+# ──────# ─────────────────────────────────────────────────────────────────────
+        # 3. E-TYPE CHANNELS INPUT & PLOTTING
         # ─────────────────────────────────────────────────────────────────────
-        energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
-        res_e_corr_list, res_e_corr_err = [], []
+        energies_gev, mu_e_list, res_e_list, res_e_corr_list = [], [], [], []
+        res_e_err, res_e_corr_err, mu_e_err = [], [], []
 
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
@@ -1346,67 +1346,7 @@ def main():
                 else:
                     print(f"  [FILTERED] E-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_val*100:.1f}%)")
 
-        # ─────────────────────────────────────────────────────────────────────
-        # 3-T. SHOWER-MAX RESOLUTION INPUT (T-type channels)
-        # ─────────────────────────────────────────────────────────────────────
-        energies_gev_t, mu_t_list, res_t_list, mu_t_err, res_t_err = [], [], [], [], []
-
-        # Resolve calorimeter geometry and downstream sensor location for LCE correction
-        
-
-        for ekey in energy_keys:
-            E_val = extract_numerical_energy(ekey)
-            if E_val <= 0: continue
-
-            # --- Z_COG DEPTH CORRECTION FOR T-CHANNELS ---
-            # Retrieve 2D per-layer count matrix if present; otherwise fall back to 1D raw totals
-            t_matrix = master_summary[mod][ekey].get("dw_t_layer_matrix", 
-                       master_summary[mod][ekey].get("t_layer_matrix", None))
-            
-            t_totals = master_summary[mod][ekey].get("dw_t_total_summed", np.array([]))
-            t_totals = np.array(t_totals)
-
-            if t_matrix is not None and len(t_matrix) > 0 and np.ndim(t_matrix) == 2:
-                t_matrix = np.array(t_matrix)
-                # Apply layer-by-layer LCE attenuation correction across shower depth
-                t_eval_data, _ = compute_event_reconstructed_energy(
-                    prompt_counts_per_event=t_matrix,
-                    
-                    lambda_eff=30.0  # WLS effective attenuation length (mm)
-                )
-            else:
-                t_eval_data = t_totals
-
-            # --- DEBUG AND FILTER ---
-            if len(t_eval_data) > 0:
-                print(f"  [{mod} @ {ekey}] RAW  -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Max: {np.max(t_eval_data)}")
-            
-            # Cut out events that recorded exactly 0 or negative photons
-            t_eval_data = t_eval_data[t_eval_data > 0]
-            
-            if len(t_eval_data) > 0:
-                print(f"  [{mod} @ {ekey}] >0 CUT -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Median: {np.median(t_eval_data):.1f}")
-            # ------------------------
-
-            if len(t_eval_data) < 5: continue
-
-            # Convert the percentage output of robust_resolution back to a fraction
-            res_t_val_pct, res_t_err_val_pct = robust_resolution(t_eval_data, nsig=2.0, max_iters=4)
-            res_t_val = res_t_val_pct / 100.0
-            res_t_err_val = res_t_err_val_pct / 100.0
-
-            mu_val = float(np.mean(t_eval_data)) # Ensure mu_val is defined for downstream arrays
-
-            if mu_val > 0.1 and res_t_val > 0:
-                if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
-                    energies_gev_t.append(E_val)
-                    mu_t_list.append(mu_val)
-                    res_t_list.append(res_t_val)
-                    mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_eval_data)))
-                    res_t_err.append(res_t_err_val)
-                else:
-                    print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_t_val*100:.1f}%)")
-
+        # Define 2-parameter resolution function (C, S)
         def resolution_func(E, c, s):
             return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2)
 
@@ -1449,15 +1389,10 @@ def main():
             ax_lin.legend(fontsize=10)
 
             # --- SIPM CORRECTION MATH ---
-            # Dynamically determine the number of active downstream E-type SiPMs
-            # radi_cal (Standard) = 2 downstream E-type
-            # rc_hex (Hex) = 3 downstream E-type
-            # Baseline reference from the paper = 8
             n_active = 6 if "rc_hex" in mod else 4
             n_baseline = 8
             correction_factor = np.sqrt(n_active / n_baseline)
 
-            # Fit against depth-corrected values if available, else raw
             base_target_res = np.array(res_e_corr_list) if ('res_e_corr_list' in locals() and len(res_e_corr_list) == len(energies_gev)) else res_e_list
             base_target_err = np.array(res_e_corr_err) if ('res_e_corr_err' in locals() and len(res_e_corr_err) == len(energies_gev)) else res_e_err_arr
             
@@ -1470,9 +1405,9 @@ def main():
             if len(energies_gev) >= 3:
                 try:
                     popt_res, _ = curve_fit(
-                        robust_resolution, 
+                        resolution_func, 
                         energies_gev, 
-                        res_e_list,
+                        proj_res,
                         p0=[0.08, 0.50], 
                         bounds=([0.0, 0.0], [1.0, 5.0])
                     )
@@ -1480,7 +1415,7 @@ def main():
                     fit_label = f"Proj Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$"
 
                 except Exception as e:
-                    print(f"[FIT ERROR] Curve fit crashed with: {e}")
+                    print(f"[FIT ERROR] E-type curve fit crashed with: {e}")
                     fit_label = "Proj Fit: Fit Failed"
             else:
                 fit_label = f"Fit skipped (Requires 3 points; have {len(energies_gev)})"
@@ -1491,11 +1426,10 @@ def main():
 
             if popt_res is not None:
                 x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
-                # Plot the fitted curve based on the projected resolution
                 ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
                             color="darkorange", linestyle="--", linewidth=2.0, label=fit_label)
                 
-                # -- External reference overlays --
+                # External reference overlays
                 if 'ENERGY_REF_CURVES' in globals():
                     for ref_name, ref_p in ENERGY_REF_CURVES.items():
                         y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
@@ -1710,16 +1644,69 @@ def main():
             t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
             plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
 
-        # ─────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # 3-T. SHOWER-MAX RESOLUTION INPUT (T-type channels)
+        # ─────────────────────────────────────────────────────────────────────
+        energies_gev_t, mu_t_list, res_t_list, mu_t_err, res_t_err = [], [], [], [], []
+
+        for ekey in energy_keys:
+            E_val = extract_numerical_energy(ekey)
+            if E_val <= 0: continue
+
+            # --- Z_COG DEPTH CORRECTION FOR T-CHANNELS ---
+            t_matrix = master_summary[mod][ekey].get("dw_t_layer_matrix", 
+                       master_summary[mod][ekey].get("t_layer_matrix", None))
+            
+            t_totals = master_summary[mod][ekey].get("dw_t_total_summed", np.array([]))
+            t_totals = np.array(t_totals)
+
+            if t_matrix is not None and len(t_matrix) > 0 and np.ndim(t_matrix) == 2:
+                t_matrix = np.array(t_matrix)
+                t_eval_data, _ = compute_event_reconstructed_energy(
+                    prompt_counts_per_event=t_matrix,
+                    lambda_eff=30.0  # WLS effective attenuation length (mm)
+                )
+            else:
+                t_eval_data = t_totals
+
+            if len(t_eval_data) > 0:
+                print(f"  [{mod} @ {ekey}] RAW  -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Max: {np.max(t_eval_data)}")
+            
+            # Cut out events that recorded exactly 0 or negative photons
+            t_eval_data = t_eval_data[t_eval_data > 0]
+            
+            if len(t_eval_data) > 0:
+                print(f"  [{mod} @ {ekey}] >0 CUT -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Median: {np.median(t_eval_data):.1f}")
+
+            if len(t_eval_data) < 5: continue
+
+            res_t_val_pct, res_t_err_val_pct = robust_resolution(t_eval_data, nsig=2.0, max_iters=4)
+            res_t_val = res_t_val_pct / 100.0
+            res_t_err_val = res_t_err_val_pct / 100.0
+
+            mu_val = float(np.mean(t_eval_data))
+
+            if mu_val > 0.1 and res_t_val > 0:
+                if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
+                    energies_gev_t.append(E_val)
+                    mu_t_list.append(mu_val)
+                    res_t_list.append(res_t_val)
+                    mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_eval_data)))
+                    res_t_err.append(res_t_err_val)
+                else:
+                    print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_t_val*100:.1f}%)")
+
+        # [Histogram generator section operates between here]
+
+        # ─────────────────────────────────────────────────────────────────────
         # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
-        # ─────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
         if len(energies_gev_t) >= 1:
             energies_gev_t = np.array(energies_gev_t)
             res_t_list = np.array(res_t_list)
             res_t_err_arr = np.array(res_t_err)
 
             # --- SIPM CORRECTION MATH (T-Type) ---
-            # Dynamically determine the total number of active T-type SiPMs (Up + Down)
             n_active_t = 6 if "rc_hex" in mod else 4
             n_baseline = 8
             correction_factor_t = np.sqrt(n_active_t / n_baseline)
@@ -1728,26 +1715,30 @@ def main():
             proj_err_t = res_t_err_arr * correction_factor_t
 
             popt_res_t = None
-            c_ft, s_ft, n_ft = 0.0, 0.0, 0.0
+            c_ft, s_ft = 0.0, 0.0
             if len(energies_gev_t) >= 3:
                 try:
                     # Fit against the PROJECTED T-type resolution
-                    # Note: p0 and bounds are expecting standard decimal form
-                    popt_res_t, _ = curve_fit(resolution_func, energies_gev_t, proj_res_t,
-                                              p0 = [0.08, 0.50], bounds = ([0.0, 0.0], [1.0, 5.0]))
-                    c_ft, s_ft, n_ft = popt_res_t
+                    popt_res_t, _ = curve_fit(
+                        resolution_func, 
+                        energies_gev_t, 
+                        proj_res_t,
+                        p0=[0.08, 0.50], 
+                        bounds=([0.0, 0.0], [1.0, 5.0])
+                    )
+                    c_ft, s_ft = popt_res_t  # Correctly unpacking 2 parameters
                 except Exception as e:
                     print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
 
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
-            # Original Raw Points (Decimal Form)
+            # Original Raw Points
             ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
                            fmt='s', color="gray", alpha=0.7,
                            markersize=6, capsize=3, capthick=1.2,
                            label="Sim Raw (Uncorrected T-type)")
 
-            # Projected Points (Decimal Form)
+            # Projected Points
             ax_sm.errorbar(energies_gev_t, proj_res_t, yerr=proj_err_t,
                            fmt='D', color="darkorange",
                            markersize=6, capsize=3, capthick=1.2,
@@ -1755,22 +1746,21 @@ def main():
 
             if popt_res_t is not None:
                 x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
-                # Plot projected fit curve (Decimal Form)
                 ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t),
                            color="darkorange", linestyle='--', linewidth=2.0)
 
-                # Reference overlays (Decimal Form)
+                # Reference overlays
                 if 'ENERGY_REF_CURVES' in globals():
                     for ref_name, ref_p in ENERGY_REF_CURVES.items():
                         y_ref = energy_ref_curve(x_sm_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
                         ax_sm.plot(x_sm_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5)
 
-            # Build the text box string (Multiplied by 100 for display)
+            # Build the text box string for 2 parameters
             fit_text = ""
             if popt_res_t is not None:
                 fit_text += (
                     f"Proj Fit: "
-                    f"{c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$ $\\oplus$ {n_ft*100:.2f}%/E\n"
+                    f"{c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$\n"
                 )
             else:
                 fit_text += f"Proj Fit: skipped (< 3 points)\n"
@@ -1782,17 +1772,14 @@ def main():
                         f"$\\oplus$ {ref_p['n']*100:.2f}%/E\n"
                     )
             
-            # Place the text box in the upper right
             ax_sm.text(0.98, 0.97, fit_text.strip(), transform=ax_sm.transAxes,
                        ha='right', va='top', fontsize=9, color="black", 
                        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="lightgray"))
 
             ax_sm.set_xlabel("Beam Energy (GeV)", fontsize=11)
-            ax_sm.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11) # Changed from % to match E-type
+            ax_sm.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
             ax_sm.set_title(f"Shower-max Energy Resolution (T-type) — {mod}", fontsize=13, fontweight="bold")
             ax_sm.grid(True, linestyle=":", alpha=0.6)
-            
-            # Moved legend to lower left so it doesn't overlap with the top-right text box
             ax_sm.legend(fontsize=9, loc='lower left') 
 
             fig_sm.tight_layout()
