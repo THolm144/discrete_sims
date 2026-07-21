@@ -451,6 +451,32 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool = False, module_name: str
     master_t_events = sorted(list(down_first_t.keys()))
     dw_t_total = np.array([dw_t_hits_per_ev.get(k, 0) + up_t_hits_per_ev.get(k, 0) for k in master_t_events])
 
+    # --- Read DoseActor / Active Energy Deposition ---
+    edep_per_run = []
+    # Check for postprocessed .txt files in batch_dir first
+    txt_files = sorted(batch_dir.glob("run_*_Dose.txt"))
+    if txt_files:
+        for txt_f in txt_files:
+            data = np.loadtxt(txt_f)
+            edep_per_run.append(np.sum(data[:, 1]) if data.ndim > 1 else np.sum(data))
+    else:
+        # Fallback: Read DoseActor .mhd files from run_* subdirectories
+        for r_dir in sorted(batch_dir.glob("run_*")):
+            mhd_files = list(r_dir.glob("*edep*.mhd")) + list(r_dir.glob("*Dose*.mhd"))
+            if mhd_files:
+                mhd_path = mhd_files[0]
+                try:
+                    import SimpleITK as sitk
+                    img = sitk.ReadImage(str(mhd_path))
+                    arr = sitk.GetArrayFromImage(img)
+                    edep_per_run.append(float(np.sum(arr)))
+                except ImportError:
+                    try:
+                        import itk
+                        arr = itk.array_from_image(itk.imread(str(mhd_path)))
+                        edep_per_run.append(float(np.sum(arr)))
+                    except Exception:
+                        pass
     return {
         "sigma_t_ps": sigma_t_ps,
         "raw_bm_data": all_bm_raw_ps,
@@ -462,9 +488,10 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool = False, module_name: str
 
         "dw_first_times": np.array([down_first_t[k] for k in master_t_events if k in down_first_t]),
 
-        # Combined 4 T-fiber photon yields
-        "dw_e_total": dw_t_total,       # Direct mapping for standard analysis scripts
+        # Yields & Energy Deposition
+        "dw_e_total": dw_t_total,
         "dw_t_total": dw_t_total,
+        "edep_total": np.array(edep_per_run),
         "run_dirs": sorted(run_dirs),
     }
 
@@ -507,6 +534,8 @@ def main():
     mean_yields = []
     res_percent = []
     res_err_percent = []
+    res_edep_percent = []
+    res_edep_err_percent = []
     timing_res_ps = []
 
     for edir in energy_dirs:
@@ -520,49 +549,55 @@ def main():
             mean_yields.append(0.0)
             res_percent.append(0.0)
             res_err_percent.append(0.0)
+            res_edep_percent.append(0.0)
+            res_edep_err_percent.append(0.0)
             timing_res_ps.append(0.0)
             continue
 
+        # 1. Optical Photons Resolution
         photon_counts = res_dict["dw_t_total"]
         mean_N = np.mean(photon_counts)
         res, err = robust_resolution(photon_counts)
         st_ps = res_dict["sigma_t_ps"]
 
+        # 2. DoseActor Active Edep Resolution
+        edep_vals = res_dict.get("edep_total", np.array([]))
+        if len(edep_vals) > 1:
+            res_e, err_e = robust_resolution(edep_vals)
+        else:
+            res_e, err_e = 0.0, 0.0
+
         mean_yields.append(mean_N)
         res_percent.append(res)
         res_err_percent.append(err)
+        res_edep_percent.append(res_e)
+        res_edep_err_percent.append(err_e)
         timing_res_ps.append(st_ps)
 
         print(f"     -> Events: {len(photon_counts)}")
-        print(f"     -> Mean Light Yield: {mean_N:.2f} optical photons (4 T-fibers)")
-        print(f"     -> Energy Resolution: {res:.2f}% ± {err:.2f}%")
-        print(f"     -> Timing Resolution (10% quantile): {st_ps:.1f} ps")
+        print(f"     -> Mean Light Yield: {mean_N:.2f} optical photons")
+        print(f"     -> Photon Resolution: {res:.2f}% ± {err:.2f}%")
+        print(f"     -> Active Edep Resolution: {res_e:.2f}% ± {err_e:.2f}%")
+        print(f"     -> Timing Resolution: {st_ps:.1f} ps")
 
-    # Save summary dataframe
-    df_summary = pd.DataFrame({
-        "Energy_GeV": energies_gev,
-        "Mean_Photons_4T": mean_yields,
-        "Energy_Resolution_Percent": res_percent,
-        "Energy_Resolution_Err_Percent": res_err_percent,
-        "Timing_Resolution_ps": timing_res_ps,
-    })
-    csv_path = out_dir / "sweep_4T_summary.csv"
-    df_summary.to_csv(csv_path, index=False)
-    print(f"\n [✓] Results saved to: {csv_path}")
-
-    # ── Plot Energy Resolution & Paper Comparison ────────────────────────────
+    # ── Plotting ─────────────────────────────────────────────────────────────
     fig, ax1 = plt.subplots(figsize=(9, 6))
 
-    # 1. Plot simulated resolution data points
+    # Plot Simulated Optical Photon Resolution
     ax1.errorbar(
         energies_gev, res_percent, yerr=res_err_percent, 
-        fmt='o-', color='tab:blue', lw=2, capsize=4, label=f'Simulated ({args.module})'
+        fmt='o-', color='tab:blue', lw=2, capsize=4, label=f'Simulated Photons ({args.module})'
     )
 
-    # 2. Generate smooth energy range for continuous reference curves
-    e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
+    # Plot Simulated Active Edep Resolution (if available)
+    if any(r > 0 for r in res_edep_percent):
+        ax1.errorbar(
+            energies_gev, res_edep_percent, yerr=res_edep_err_percent, 
+            fmt='s-', color='tab:green', lw=2, capsize=4, label='Simulated Active $E_{dep}$ (DoseActor)'
+        )
 
-    # 3. Plot Reference Curves
+    # Plot Continuous Paper Reference Curve
+    e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
     for label, params in ENERGY_REF_CURVES.items():
         ref_curve = resolution_fit_func(e_smooth, params["c"], params["s"], params["n"])
         ax1.plot(
@@ -576,21 +611,17 @@ def main():
 
     # Right Y-Axis: Light Yield
     ax2 = ax1.twinx()
-    ax2.plot(energies_gev, mean_yields, 's--', color='tab:red', lw=2, label='Mean Photon Yield')
+    ax2.plot(energies_gev, mean_yields, 'd--', color='tab:red', lw=1.5, alpha=0.7, label='Mean Photon Yield')
     ax2.set_ylabel('Mean Photon Yield [4 T-Fibers]', color='tab:red', fontsize=12)
     ax2.tick_params(axis='y', labelcolor='tab:red')
 
-    # Combined Legend
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=10)
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=9)
 
     plt.title(f'4 T-Fiber Dynamic Optical Sweep vs. Paper Data ({args.module})', fontsize=13)
     fig.tight_layout()
     plot_path = out_dir / "energy_resolution_linearity_4T.png"
     plt.savefig(plot_path, dpi=300)
     plt.close()
-    print(f" [✓] Summary plot generated: {plot_path}")
-
-if __name__ == "__main__":
-    main()
+    print(f"\n [✓] Summary plot generated: {plot_path}")
