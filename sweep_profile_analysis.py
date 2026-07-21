@@ -396,12 +396,22 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         hist_lt, _ = np.histogram(lt_downstream_opt, bins=lt_bins)
         lt_counts += hist_lt
 
-        # ── GRAPH 4: Prompt Photon Weighted-Centroid Assignment ──────────────
-        # Soft-assign each downstream optical photon to nearby layers using a
-        # Gaussian kernel in flight-time space, rather than a hard in/out cut.
+        # ── GRAPH 4: Asymmetric Leading-Edge Prompt Reconstruction ────────────
+        # 1. Compute time difference between measured arrival and straight-line expectation
         diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
+
+        # 2. Define asymmetric leading-edge gates (in nanoseconds)
+        #    t_jitter: Tolerates sensor/electronic jitter on the early side
+        #    t_gate  : Cuts off delayed modal-dispersion light on the late side
+        t_jitter_ns = 2.0 * SIGMA_NS   # e.g., 0.04 ns (40 ps)
+        t_gate_ns   = 0.08             # Tight 80 ps prompt gate
+
+        # 3. Create leading-edge mask: keep only hits where -t_jitter <= diff <= +t_gate
+        leading_edge_mask = (diff >= -t_jitter_ns) & (diff <= t_gate_ns)
+
+        # 4. Calculate Gaussian weights strictly within the leading-edge window
         weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
-        weights[np.abs(diff) > 4.0 * SIGMA_NS] = 0.0   # truncate negligible tails, keeps it cheap
+        weights[~leading_edge_mask] = 0.0
 
         # ─────────────────────────────────────────────────────────────────
         # IDENTIFY TRUE ORIGIN LAYER (for stacked histogram)
