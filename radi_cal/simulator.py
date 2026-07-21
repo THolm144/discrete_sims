@@ -148,13 +148,13 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
 
     # ── Optical exits ─────────────────────────────────────────────────────
+    # Safe guard: Disable exiting actor on root/top-level/subtraction volumes
+    # to prevent C++ 'fAttachedToVolumeMotherName is None' crash.
     if caps["optical"] and caps.get("optical_exits", False):
-        if target_vol not in sim.volume_manager.volumes:
-            print(f"[ACTOR] WARNING: Target volume '{target_vol}' not found in simulation geometry. "
-                  f"Skipping 'optical_exited' actor.")
-        elif target_vol in ["world", "calorimeter"]:
-            print(f"[ACTOR] WARNING: Skipping 'optical_exited' actor for top-level volume '{target_vol}' "
-                  f"to prevent OpenGATE mother-volume crash.")
+        valid_vols = sim.volume_manager.volumes
+        if target_vol not in valid_vols or target_vol in ["world", "calorimeter"]:
+            print(f"[ACTOR] SAFELY SKIPPING 'optical_exited' for volume '{target_vol}' "
+                  f"(prevents OpenGATE mother-volume C++ exception).")
         else:
             exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
             exited.attached_to     = target_vol
