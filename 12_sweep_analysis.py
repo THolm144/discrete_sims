@@ -1309,7 +1309,7 @@ def main():
                     master_summary[mod][ekey]["dw_t_total_summed"] = summed_t_events
                     print(f"[{mod} @ {ekey}] Summed {len(t_channel_keys)} T-channels across {min_events} events.")
 # ─────# ─────────────────────────────────────────────────────────────────────
-        # 3-pre INITIALIZE DATA CONTAINERS (At start of module loop)
+        # 3-PRE. INITIALIZE DATA CONTAINERS
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, res_e_corr_list = [], [], [], []
         res_e_err, res_e_corr_err, mu_e_err = [], [], []
@@ -1318,7 +1318,7 @@ def main():
         res_t_err, mu_t_err = [], []
 
         # ─────────────────────────────────────────────────────────────────────
-        # 3-A. E-TYPE CHANNELS INPUT & PLOTTING
+        # 3a. E-TYPE CHANNELS INPUT & PLOTTING
         # ─────────────────────────────────────────────────────────────────────
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
@@ -1430,7 +1430,7 @@ def main():
             plt.close(fig_er)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 3-B. SHOWER-MAX RESOLUTION INPUT (T-type channels)
+        # 3b. SHOWER-MAX DATA COLLECTION (T-type channels)
         # ─────────────────────────────────────────────────────────────────────
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
@@ -1469,43 +1469,10 @@ def main():
                     res_t_err.append(res_t_err_val)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 3-C. EXPORT REPORT & HISTOGRAM PANELS (Runs AFTER data is collected)
-        # ─────────────────────────────────────────────────────────────────────
-        mean_txt_path = mod_dir / f"{mod}_mean_photon_counts.txt"
-        with open(mean_txt_path, "w") as f_out:
-            f_out.write(f"{'='*70}\n")
-            f_out.write(f" MEAN PHOTON COUNTS & RESOLUTION DENOMINATORS — {mod}\n")
-            f_out.write(f"{'='*70}\n")
-            f_out.write(f"{'Energy (GeV)':<12} | {'Channel':<10} | {'Mean (mu)':<14} | {'Std (sigma)':<14} | {'sigma/mu (%)':<12}\n")
-            f_out.write(f"{'-'*70}\n")
-
-            for E_v, mu_v, res_v in zip(energies_gev, mu_e_list, res_e_list):
-                std_v = mu_v * res_v
-                f_out.write(f"{float(E_v):<12.1f} | {'E-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
-            
-            f_out.write(f"{'-'*70}\n")
-
-            for E_v, mu_v, res_v in zip(energies_gev_t, mu_t_list, res_t_list):
-                std_v = mu_v * res_v
-                f_out.write(f"{float(E_v):<12.1f} | {'T-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
-
-        print(f"[SUCCESS] Saved mean photon count report to: {mean_txt_path.resolve()}")
-
-        # Execute histogram plotting helpers
-        if len(energies_gev) > 0:
-            e_key = "dw_e_total_summed" if "dw_e_total_summed" in master_summary[mod][energy_keys[0]] else "dw_e_total"
-            plot_photon_histograms("E", energies_gev, e_key, mu_e_list, res_e_list)
-
-        if len(energies_gev_t) > 0:
-            t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
-            plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
-
-        
-       # ─────────────────────────────────────────────────────────────────────
-        # 3-D. EXPORT MEAN PHOTON COUNTS & GENERATE HISTOGRAM FIT PANELS
+        # 3c. EXPORT MEAN PHOTON COUNTS & GENERATE HISTOGRAM FIT PANELS
         # ─────────────────────────────────────────────────────────────────────
 
-        # 1. Write Mean Photon Counts (Denominators) to .txt file
+        # 1. Write Mean Photon Counts (.txt report)
         mean_txt_path = mod_dir / f"{mod}_mean_photon_counts.txt"
         with open(mean_txt_path, "w") as f_out:
             f_out.write(f"{'='*70}\n")
@@ -1526,11 +1493,11 @@ def main():
 
         print(f"[SUCCESS] Saved mean photon count report to: {mean_txt_path.resolve()}")
 
-        # 2. Gaussian Fit Function
+        # 2. Gaussian Fit Function Definition
         def gaussian_fit_func(x, amp, mu, sig):
             return amp * np.exp(-0.5 * ((x - mu) / sig) ** 2)
 
-        # 3. Histogram Subplot Panel Generator Function
+        # 3. Histogram Subplot Panel Generator Function Definition
         def plot_photon_histograms(channel_type, target_energies, summary_key, mu_list, res_list):
             target_energies_list = [float(e) for e in list(target_energies)]
             if len(target_energies_list) == 0:
@@ -1567,7 +1534,6 @@ def main():
 
                 plotted_count += 1
 
-                # Outlier bounds determination
                 median_val = float(np.median(data))
                 std_val = float(np.std(data)) if len(data) > 1 else 1.0
                 lo_bnd = max(0.0, median_val - 3.5 * std_val)
@@ -1580,13 +1546,11 @@ def main():
                 if len(clean_data) < 5:
                     clean_data = data
 
-                # Freedman-Diaconis binning
                 iqr = float(np.percentile(clean_data, 75) - np.percentile(clean_data, 25))
                 bin_w = 2.0 * iqr / (len(clean_data) ** (1.0 / 3.0)) if iqr > 0 else max(1.0, std_val / 5.0)
                 bin_w = max(1.0, bin_w)
                 n_bins = max(15, int(np.ceil((clean_data.max() - clean_data.min()) / bin_w)))
 
-                # Plot Histogram
                 counts, edges, _ = ax.hist(
                     clean_data, bins=n_bins, color=mod_colors.get(mod, "#004488"),
                     alpha=0.55, edgecolor="black", label=f"Sim Data ({channel_type})"
@@ -1594,15 +1558,11 @@ def main():
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
 
-                # Initial seed guesses from bin peak
                 max_idx = np.argmax(counts)
                 mu_g = float(bin_centers[max_idx])
                 sig_g = max(1.0, std_val * 0.6)
                 amp_g = float(counts.max())
 
-                # ─────────────────────────────────────────────────────────────
-                # ITERATIVE GAUSSIAN CORE FIT
-                # ─────────────────────────────────────────────────────────────
                 nsig_window = 1.5
                 fit_mask = (bin_centers >= (mu_g - nsig_window * sig_g)) & (bin_centers <= (mu_g + nsig_window * sig_g))
                 amp_f, mu_f, sig_f = amp_g, mu_g, sig_g
@@ -1622,17 +1582,12 @@ def main():
                         except Exception:
                             break
 
-                # ─────────────────────────────────────────────────────────────
-                # FIT DRAWING & VISUAL MARKERS (Runs AFTER fit loop completes)
-                # ─────────────────────────────────────────────────────────────
                 if fit_success and sig_f > 0 and mu_f > 0:
                     x_fit = np.linspace(max(0.0, mu_f - 3.5 * sig_f), mu_f + 3.5 * sig_f, 300)
                     y_fit = gaussian_fit_func(x_fit, amp_f, mu_f, sig_f)
 
-                    # 1. Fitted Curve
                     ax.plot(x_fit, y_fit, "k--", linewidth=2.0, label="Gaussian Core Fit")
 
-                    # 2. Shaded Fit Window
                     ax.axvspan(
                         mu_f - nsig_window * sig_f,
                         mu_f + nsig_window * sig_f,
@@ -1640,15 +1595,12 @@ def main():
                         label=f"Fit Core ($\pm{nsig_window:g}\sigma$)"
                     )
 
-                    # 3. Vertical Line for Fitted Mean (mu)
                     ax.axvline(mu_f, color="crimson", linestyle="-", linewidth=1.8, zorder=3, label=f"Fit $\mu$ ({mu_f:.1f})")
 
-                    # 4. Horizontal Width Bar at 1-Sigma Height
                     y_1sig = amp_f * np.exp(-0.5)
                     ax.hlines(y=y_1sig, xmin=mu_f - sig_f, xmax=mu_f + sig_f, color="crimson", linewidth=2.5, zorder=4, label=f"Fit $\sigma$ ({sig_f:.1f})")
                     ax.plot([mu_f - sig_f, mu_f + sig_f], [y_1sig, y_1sig], "|", color="crimson", markersize=8, markeredgewidth=2, zorder=5)
 
-                    # Summary Text Box
                     res_val = (sig_f / mu_f) * 100.0
                     info_text = f"$\mu = {mu_f:.1f}$ hits\n$\sigma = {sig_f:.1f}$ hits\n$\sigma/\mu = {res_val:.2f}\%$"
                     ax.text(
@@ -1669,7 +1621,6 @@ def main():
                 ax.grid(True, linestyle=":", alpha=0.6)
                 ax.legend(loc="upper right", fontsize=8)
 
-            # Clean empty grid slots (Runs AFTER all subplots finished)
             for idx in range(n_e, len(axs_h)):
                 fig_h.delaxes(axs_h[idx])
 
@@ -1683,16 +1634,74 @@ def main():
 
             plt.close(fig_h)
 
-        # 4. EXECUTE HELPERS
-        if 'energies_gev' in locals() and len(energies_gev) > 0:
+        # 4. NOW Safely Execute Helpers
+        if len(energies_gev) > 0:
             e_key = "dw_e_total_summed" if "dw_e_total_summed" in master_summary[mod][energy_keys[0]] else "dw_e_total"
             plot_photon_histograms("E", energies_gev, e_key, mu_e_list, res_e_list)
 
-        if 'energies_gev_t' in locals() and len(energies_gev_t) > 0:
+        if len(energies_gev_t) > 0:
             t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
             plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
 
-    
+        # ─────────────────────────────────────────────────────────────────────
+        # 3d. T-TYPE SHOWER-MAX RESOLUTION PLOT
+        # ─────────────────────────────────────────────────────────────────────
+        if len(energies_gev_t) >= 1:
+            energies_gev_t = np.array(energies_gev_t)
+            res_t_list = np.array(res_t_list)
+            res_t_err_arr = np.array(res_t_err)
+
+            n_active_t = 6 if "rc_hex" in mod else 4
+            n_baseline = 8
+            correction_factor_t = np.sqrt(n_active_t / n_baseline)
+
+            proj_res_t = res_t_list * correction_factor_t
+            proj_err_t = res_t_err_arr * correction_factor_t
+
+            popt_res_t = None
+            c_ft, s_ft = 0.0, 0.0
+            if len(energies_gev_t) >= 3:
+                try:
+                    popt_res_t, _ = curve_fit(
+                        resolution_func, energies_gev_t, proj_res_t,
+                        p0=[0.08, 0.50], bounds=([0.0, 0.0], [1.0, 5.0])
+                    )
+                    c_ft, s_ft = popt_res_t
+                except Exception as e:
+                    print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
+
+            fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
+
+            ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
+                           fmt='s', color="gray", alpha=0.7, label="Sim Raw (Uncorrected T-type)")
+
+            ax_sm.errorbar(energies_gev_t, proj_res_t, yerr=proj_err_t,
+                           fmt='D', color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
+
+            if popt_res_t is not None:
+                x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
+                ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t),
+                           color="darkorange", linestyle='--', linewidth=2.0)
+
+            fit_text = ""
+            if popt_res_t is not None:
+                fit_text += f"Proj Fit: {c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$\n"
+            else:
+                fit_text += f"Proj Fit: skipped (< 3 points)\n"
+                
+            ax_sm.text(0.98, 0.97, fit_text.strip(), transform=ax_sm.transAxes,
+                       ha='right', va='top', fontsize=9, color="black", 
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="lightgray"))
+
+            ax_sm.set_xlabel("Beam Energy (GeV)", fontsize=11)
+            ax_sm.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
+            ax_sm.set_title(f"Shower-max Energy Resolution (T-type) — {mod}", fontsize=13, fontweight="bold")
+            ax_sm.grid(True, linestyle=":", alpha=0.6)
+            ax_sm.legend(fontsize=9, loc='lower left') 
+
+            fig_sm.tight_layout()
+            fig_sm.savefig(mod_dir / f"{mod}_showermax_energy_resolution.png", dpi=200)
+            plt.close(fig_sm)
 
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
