@@ -1692,65 +1692,7 @@ def main():
             t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
             plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
 
-    # ─────────────────────────────────────────────────────────────────────
-        # 3B. SHOWER-MAX ENERGY RESOLUTION PLOT
-        # ─────────────────────────────────────────────────────────────────────
-        if len(energies_gev_t) >= 1:
-            energies_gev_t = np.array(energies_gev_t)
-            res_t_list = np.array(res_t_list)
-            res_t_err_arr = np.array(res_t_err)
-
-            n_active_t = 6 if "rc_hex" in mod else 4
-            n_baseline = 8
-            correction_factor_t = np.sqrt(n_active_t / n_baseline)
-
-            proj_res_t = res_t_list * correction_factor_t
-            proj_err_t = res_t_err_arr * correction_factor_t
-
-            popt_res_t = None
-            c_ft, s_ft = 0.0, 0.0
-            if len(energies_gev_t) >= 3:
-                try:
-                    popt_res_t, _ = curve_fit(
-                        resolution_func, energies_gev_t, proj_res_t,
-                        p0=[0.08, 0.50], bounds=([0.0, 0.0], [1.0, 5.0])
-                    )
-                    c_ft, s_ft = popt_res_t
-                except Exception as e:
-                    print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
-
-            fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
-
-            ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
-                           fmt='s', color="gray", alpha=0.7, label="Sim Raw (Uncorrected T-type)")
-
-            ax_sm.errorbar(energies_gev_t, proj_res_t, yerr=proj_err_t,
-                           fmt='D', color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
-
-            if popt_res_t is not None:
-                x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
-                ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t),
-                           color="darkorange", linestyle='--', linewidth=2.0)
-
-            fit_text = ""
-            if popt_res_t is not None:
-                fit_text += f"Proj Fit: {c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$\n"
-            else:
-                fit_text += f"Proj Fit: skipped (< 3 points)\n"
-                
-            ax_sm.text(0.98, 0.97, fit_text.strip(), transform=ax_sm.transAxes,
-                       ha='right', va='top', fontsize=9, color="black", 
-                       bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="lightgray"))
-
-            ax_sm.set_xlabel("Beam Energy (GeV)", fontsize=11)
-            ax_sm.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
-            ax_sm.set_title(f"Shower-max Energy Resolution (T-type) — {mod}", fontsize=13, fontweight="bold")
-            ax_sm.grid(True, linestyle=":", alpha=0.6)
-            ax_sm.legend(fontsize=9, loc='lower left') 
-
-            fig_sm.tight_layout()
-            fig_sm.savefig(mod_dir / f"{mod}_showermax_energy_resolution.png", dpi=200)
-            plt.close(fig_sm)   
+    
 
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
