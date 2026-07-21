@@ -229,6 +229,33 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
                     F = GateFilterBuilder()
                     killer.filter = (F.ParticleName == "opticalphoton")
 
+    # ── Shower-max raw dE/dx (no optical transport) ────────────────────────
+    # Sim analog of Walker's H1[28]: per-event energy deposited directly in
+    # the shower-max LYSO layers, independent of scintillation yield / light
+    # collection. Runs alongside the existing optical readout in the same
+    # events, so no separate pass is needed. Compare its sigma/mean to the
+    # photon-count curve to see whether the large stochastic term is real
+    # shower-sampling physics or an artifact of the optical chain.
+    shower_first = getattr(world, "_SHOWER_FIRST", None)
+    shower_last  = getattr(world, "_SHOWER_LAST", None)
+    if shower_first is not None and shower_last is not None:
+        showermax_lyso_vols = [
+            f"lyso_{i}" for i in range(shower_first, shower_last + 1)
+            if f"lyso_{i}" in sim.volume_manager.volumes
+        ]
+        if showermax_lyso_vols:
+            edep_ps = sim.add_actor("PhaseSpaceActor", "showermax_edep")
+            edep_ps.attached_to     = showermax_lyso_vols
+            edep_ps.output_filename = "showermax_edep.root"
+            edep_ps.steps_to_store  = "all"   # need every dE/dx step, not just boundary crossings
+            F_edep = GateFilterBuilder()
+            edep_ps.filter    = (F_edep.ParticleName != "opticalphoton")
+            edep_ps.attributes = ["EventID", "TotalEnergyDeposit"]
+            registry["showermax_edep_actor"] = edep_ps
+        else:
+            print(f"  WARNING: no lyso_{{{shower_first}..{shower_last}}} volumes found — "
+                  f"skipping showermax_edep actor.")
+
     # ── Dose actor ────────────────────────────────────────────────────────
     if caps["dose"]:
         phantom_cm = world.PHANTOM_CM

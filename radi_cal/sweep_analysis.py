@@ -247,6 +247,47 @@ def analyze_energy_batch(batch_dir: Path, module_name: str = "dsb1_radi_cal_ener
 
     return {"dw_t_total": dw_t_total}
 
+
+def analyze_showermax_edep_batch(batch_dir: Path):
+    """
+    Per-event RAW dE/dx (no optical transport) summed over the shower-max
+    LYSO layers — the sim analog of Walker's H1[28]. Reads the
+    'showermax_edep.root' PhaseSpaceActor output (EventID, TotalEnergyDeposit
+    per step, opticalphoton already filtered out at the actor level) and
+    returns one total-energy-deposited value (MeV) per event.
+
+    Requires the 'showermax_edep' PhaseSpaceActor added in simulator.py —
+    older run directories generated before that actor existed will simply
+    have no showermax_edep.root files and this returns None.
+    """
+    edep_files = sorted(batch_dir.rglob("showermax_edep.root"))
+    if not edep_files:
+        return None
+
+    edep_sum_per_ev = {}  # (run_tag, EventID) -> summed TotalEnergyDeposit
+    for fpath in edep_files:
+        run_tag = fpath.parent.name
+        try:
+            with uproot.open(fpath) as f:
+                tk = next((k for k in f.keys() if "showermax_edep" in k.split(";")[0]), None)
+                if not tk:
+                    continue
+                tree = f[tk]
+                if tree.num_entries == 0:
+                    continue
+                arrs = tree.arrays(["EventID", "TotalEnergyDeposit"], library="np")
+        except Exception:
+            continue
+
+        for e_id, dep in zip(arrs["EventID"], arrs["TotalEnergyDeposit"]):
+            key = (run_tag, int(e_id))
+            edep_sum_per_ev[key] = edep_sum_per_ev.get(key, 0.0) + float(dep)
+
+    if not edep_sum_per_ev:
+        return None
+
+    return np.array(list(edep_sum_per_ev.values()))  # MeV per event
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN EXECUTION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,6 +328,7 @@ def main():
 
     energies_gev, mean_yields, res_percent, res_err_percent = [], [], [], []
     photon_counts_by_energy = []  # keep raw per-event arrays for the calibrated-energy curve
+    edep_res_percent, edep_res_err_percent = [], []  # raw dE/dx (Walker's H1[28] analog)
 
     for edir in energy_dirs:
         e_val = extract_numerical_energy(edir.name)
@@ -307,6 +349,19 @@ def main():
         res_err_percent.append(err)
         photon_counts_by_energy.append(photon_counts)
 
+        # Raw dE/dx in the shower-max LYSO band, independent of photon yield/optics
+        edep_MeV = analyze_showermax_edep_batch(edir)
+        if edep_MeV is not None and len(edep_MeV) >= 2:
+            res_e, err_e = robust_resolution(edep_MeV)
+            edep_res_percent.append(res_e)
+            edep_res_err_percent.append(err_e)
+            print(f"     -> [dE/dx] Events: {len(edep_MeV)} | Mean Edep: {np.mean(edep_MeV):.2f} MeV "
+                  f"| Resolution: {res_e:.2f}% ± {err_e:.2f}%")
+        else:
+            edep_res_percent.append(np.nan)
+            edep_res_err_percent.append(np.nan)
+            print(f"     -> [dE/dx] No showermax_edep.root found for this energy point (older run?)")
+
         print(f"     -> Events: {len(photon_counts)} | Mean Photons: {mean_N:.1f} | Resolution: {res:.2f}% ± {err:.2f}%")
 
     if not energies_gev:
@@ -315,6 +370,9 @@ def main():
 
     energies_gev = np.array(energies_gev)
     res_percent = np.array(res_percent)
+    edep_res_percent = np.array(edep_res_percent)
+    edep_res_err_percent = np.array(edep_res_err_percent)
+    edep_mask = np.isfinite(edep_res_percent)
     res_err_percent = np.array(res_err_percent)
 
     # --- Fit simulation points with physically bounded curve_fit ---
@@ -382,6 +440,24 @@ def main():
             print(f" [+] Calibrated fit warning: curve_fit failed ({e}). Not plotting a calibrated fit curve.")
             popt_calib = None
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # RAW dE/dx CURVE (Walker's H1[28] analog — no optical transport at all)
+    # ─────────────────────────────────────────────────────────────────────────
+    popt_edep = None
+    if edep_mask.sum() >= 3:
+        try:
+            popt_edep, _ = curve_fit(
+                resolution_fit_func,
+                energies_gev[edep_mask],
+                edep_res_percent[edep_mask],
+                sigma=edep_res_err_percent[edep_mask],
+                p0=[10.0, 50.0, 30.0],
+                bounds=([0.0, 0.0, 0.0], [30.0, 150.0, 100.0])
+            )
+        except Exception as e:
+            print(f" [+] dE/dx fit warning: curve_fit failed ({e}). Not plotting a dE/dx fit curve.")
+            popt_edep = None
+
     # Save summary dataframe
     df_summary = pd.DataFrame({
         "Energy_GeV": energies_gev,
@@ -390,6 +466,8 @@ def main():
         "Energy_Resolution_Err_Percent": res_err_percent,
         "Calibrated_Energy_Resolution_Percent": res_calib_percent,
         "Calibrated_Energy_Resolution_Err_Percent": res_calib_err_percent,
+        "ShowerMax_dEdx_Resolution_Percent": edep_res_percent,
+        "ShowerMax_dEdx_Resolution_Err_Percent": edep_res_err_percent,
     })
     df_summary.to_csv(out_dir / "sweep_4T_summary.csv", index=False)
 
@@ -425,6 +503,28 @@ def main():
         if popt_calib is not None:
             calib_curve = resolution_fit_func(e_smooth, *popt_calib)
             plt.plot(e_smooth, calib_curve, 'c--', lw=1.8)
+
+    # 2c. Raw dE/dx Data Points + Fit (Green Triangles) — Walker's H1[28]
+    #     analog: energy deposited directly in the shower-max LYSO layers,
+    #     with NO optical transport / photon yield involved at all. This is
+    #     the cleanest test of whether the large stochastic term is real
+    #     shower-sampling physics (this curve is also steep) or an artifact
+    #     of the optical/light-collection chain (this curve would be flat-ish
+    #     while pink/cyan stay steep).
+    if edep_mask.sum() >= 1:
+        if popt_edep is not None:
+            edep_label = (f'sim (raw dE/dx): {popt_edep[0]:.2f}% $\\oplus$ '
+                           f'{popt_edep[1]:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {popt_edep[2]:.1f}%/E')
+        else:
+            edep_label = 'sim (raw dE/dx)'
+        plt.errorbar(
+            energies_gev[edep_mask], edep_res_percent[edep_mask], yerr=edep_res_err_percent[edep_mask],
+            fmt='^', color='g', ecolor='g', capsize=3, elinewidth=1.2,
+            label=edep_label
+        )
+        if popt_edep is not None:
+            edep_curve = resolution_fit_func(e_smooth, *popt_edep)
+            plt.plot(e_smooth, edep_curve, 'g--', lw=1.8)
 
     # 3. Continuous Reference Curves
     for label, params in ENERGY_REF_CURVES.items():
