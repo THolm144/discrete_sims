@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <surfaces>
-<surface name="wls_surface" type="dielectric_dielectric" model="unified" finish="polished">
+
+  <surface name="Polished" 
+           model="unified" 
+           type="dielectric_dielectric" 
+           finish="polished" 
+           sigmaalpha="0.0">
     <propertiestable>
-      </propertiestable>
+      <propertyvector name="REFLECTIVITY" energyunit="eV">
+        <ve energy="1.0" value="0.0"/>
+        <ve energy="4.5" value="0.0"/>
+      </propertyvector>
+    </propertiestable>
   </surface>
 
   <surface model="unified"
@@ -37,42 +46,6 @@
           <propertyvector name="DIFFUSLOBCONSTANT" energyunit="eV">
               <ve energy="1.0" value="1.0"/>
               <ve energy="4.5" value="1.0"/>
-          </propertyvector>
-      </propertiestable>
-  </surface>
-
-  <surface name="lyso/quartz" model="unified" finish="polished" type="dielectric_dielectric">
-      <propertiestable>
-          </propertiestable>
-  </surface>
-
-  <surface name="lyso/dsb1" model="unified" finish="polished" type="dielectric_dielectric">
-      <propertiestable>
-          </propertiestable>
-  </surface>
-  <surface name="quartz/quartz_ideal" model="unified" finish="polished" type="dielectric_dielectric">
-      <propertiestable>
-          <propertyvector name="REFLECTIVITY" energyunit="eV">
-              <ve energy="1.0" value="0.0"/>
-              <ve energy="4.5" value="0.0"/>
-          </propertyvector>
-      </propertiestable>
-  </surface>
-
-  <surface name="dsb1/dsb1_ideal" model="unified" finish="polished" type="dielectric_dielectric">
-      <propertiestable>
-          <propertyvector name="REFLECTIVITY" energyunit="eV">
-              <ve energy="1.0" value="0.0"/>
-              <ve energy="4.5" value="0.0"/>
-          </propertyvector>
-      </propertiestable>
-  </surface>
-
-  <surface name="dsb1/quartz_ideal" model="unified" finish="polished" type="dielectric_dielectric">
-      <propertiestable>
-          <propertyvector name="REFLECTIVITY" energyunit="eV">
-              <ve energy="1.0" value="0.0"/>
-              <ve energy="4.5" value="0.0"/>
           </propertyvector>
       </propertiestable>
   </surface>
