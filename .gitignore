@@ -6,6 +6,17 @@
 *.zraw
 *.png
 
+# Ignore all this stuff:
+__pycache__/
+*.py[cod]
+*.pkl
+*.png
+*.pdf
+*.root
+analysis/
+12_sweep_analysis/sweep_summary_*/
+output/
+
 # Ignore local and nested runs/analysis paths
 runs/
 analysis/
