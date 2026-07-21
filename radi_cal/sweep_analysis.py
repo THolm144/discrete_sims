@@ -5,6 +5,16 @@ unified_sweep_analysis_4T.py
 Optimized version for aggregating timing and energy resolution results 
 for 4-T fiber RADiCAL geometries, matching paper comparison curves.
 """
+#!/usr/bin/env python3
+import os
+
+# MUST be set before importing numpy/scipy/ROOT!
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import argparse
+import datetime
+# ... rest of your script imports
 import argparse
 import datetime
 import pickle
