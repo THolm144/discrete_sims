@@ -79,6 +79,8 @@ def parse_args():
     p.add_argument("--beam-offset", type=float, default=None)
     p.add_argument("--beam-x", type=float, default=None)
     p.add_argument("--beam-y", type=float, default=None)
+    p.add_argument("--optical-exits", choices=["on", "off", "world"], default="off",
+                   help="Toggle optical exit PhaseSpaceActor (default: off to avoid root volume errors).")
     return p.parse_args()
 
 
@@ -102,6 +104,7 @@ def resolve_capabilities(world, args) -> dict:
         "optical":                args.optical,
         "dose":                   args.dose,
         "sipm_hits":              getattr(args, "sipm_hits", "world"),
+        "optical_exits":          getattr(args, "optical_exits", "world"),
         "sipm_hits_optical_only": getattr(args, "hits_optical_only", "world"),
     }
     for key, val in override_map.items():
@@ -109,7 +112,6 @@ def resolve_capabilities(world, args) -> dict:
             caps[key] = True
         elif val == "off":
             caps[key] = False
-        # val == "world" -> leave whatever the world manifest (or default) set
 
     return caps
 
@@ -168,11 +170,10 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     # we eliminate duplicate filter processing loops for every step inside the target volume.
 
     # ── Optical exits ─────────────────────────────────────────────────────
-    # ── Optical exits ─────────────────────────────────────────────────────
     if caps["optical"] and caps.get("optical_exits", False):
-        # OpenGATE cannot evaluate 'exiting' steps for top-level / world volumes
-        if target_vol == "world":
-            print("[ACTOR] WARNING: Skipping 'optical_exited' actor because 'world' has no parent volume.")
+        if target_vol in ["world", "calorimeter"]:
+            print(f"[ACTOR] WARNING: Skipping 'optical_exited' actor for top-level volume '{target_vol}' "
+                  f"to prevent OpenGATE mother-volume crash.")
         else:
             exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
             exited.attached_to     = target_vol
