@@ -13,6 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 import itertools
 import re
+import uuid
 import numpy as np
 import pandas as pd
 import uproot
@@ -22,7 +23,6 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import gaussian_kde
 import ROOT
-import uuid
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -89,6 +89,11 @@ def v_eff_for_module(mod: str) -> float:
     return (C_LIGHT_MM_NS / REFRACTIVE_INDEX.get(mod, 1.55)) * BOUNCE_FACTOR
 
 def robust_resolution(data, nsig=2.0, max_iters=4):
+    """
+    Python/ROOT replica of scan_resolution.C robustRes():
+    Iterative +/- nsig core fit with dynamic binning (~sigma/5), falling back to
+    RMS/median if the relative fit error on sigma exceeds 25%.
+    """
     N = len(data)
     if N < 2:
         return -1.0, 1e9  
@@ -108,14 +113,17 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     hname = f"h_{unique_id}"
     fname = f"f_{unique_id}"
 
-    hist_min = max(0, int(np.floor(median - 5 * sg_robust)))
-    hist_max = int(np.ceil(median + 5 * sg_robust))
-    nbins = max(10, hist_max - hist_min + 1)
-    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
+    # Dynamic rebinning (matching scan_resolution.C: bin_width ~ sg_robust / 5.0)
+    hist_min = max(0, int(np.floor(median - 5.0 * sg_robust)))
+    hist_max = int(np.ceil(median + 5.0 * sg_robust))
+    bin_width = max(1.0, sg_robust / 5.0)
+    nbins = max(10, int(np.ceil((hist_max - hist_min) / bin_width)))
+
+    h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5 * bin_width, hist_max + 0.5 * bin_width)
     h.SetDirectory(0)
 
     for val in data:
-        h.Fill(val)
+        h.Fill(float(val))
 
     mu = h.GetMean()
     sg = h.GetRMS()
@@ -131,8 +139,15 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
         if sg <= 0:
             break
 
+    # Core fit quality check (relative error on sigma < 25%)
     fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
-    return (100.0 * sg / mu, 100.0 * sigma_err / mu) if fit_ok else (fallback_res, fallback_err)
+    res_tuple = (100.0 * sg / mu, 100.0 * sigma_err / mu) if fit_ok else (fallback_res, fallback_err)
+
+    # Memory cleanup for ROOT objects
+    h.Delete()
+    g.Delete()
+
+    return res_tuple
 
 def extract_numerical_energy(label: str) -> float:
     try:
@@ -234,6 +249,9 @@ def main():
     parser.add_argument("--output-dir", type=str, default="./analysis_output", help="Output directory for plots and CSV")
     args = parser.parse_args()
 
+    # ROOT Headless Setup
+    ROOT.gROOT.SetBatch(True)
+
     base_path = Path(args.runs_dir)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -289,17 +307,20 @@ def main():
     res_percent = np.array(res_percent)
     res_err_percent = np.array(res_err_percent)
 
-    # --- Fit simulation points to c (+) s/sqrt(E) (+) n/E ---
-    popt_sim = [15.92, 0.0, 122.8] # Default initial guess
+    # --- Fit simulation points with physically bounded curve_fit ---
+    popt_sim = [15.92, 0.0, 122.8]  # Default fallback reference
     try:
         popt, _ = curve_fit(
-            resolution_fit_func, energies_gev, res_percent, 
-            sigma=res_err_percent, p0=[15.0, 0.0, 100.0],
-            bounds=([0.0, 0.0, 0.0], [50.0, 100.0, 500.0])
+            resolution_fit_func, 
+            energies_gev, 
+            res_percent, 
+            sigma=res_err_percent, 
+            p0=[12.0, 50.0, 30.0],                          # Physical initial seed (c, s, n)
+            bounds=([0.0, 0.0, 0.0], [30.0, 150.0, 100.0])  # Cap n <= 100 to prevent fit degeneracy
         )
         popt_sim = popt
-    except Exception:
-        pass
+    except Exception as e:
+        print(f" [+] Fit Warning: curve_fit failed ({e}). Using default reference curves.")
 
     # Save summary dataframe
     df_summary = pd.DataFrame({
@@ -317,16 +338,15 @@ def main():
     plt.errorbar(
         energies_gev, res_percent, yerr=res_err_percent,
         fmt='s', color='m', ecolor='m', capsize=3, elinewidth=1.2,
-        label=f'sim (photon count): {popt_sim[0]:.2f} $\oplus$ {popt_sim[1]:.1f}/$\sqrt{{E}}$ $\oplus$ {popt_sim[2]:.1f}/E'
+        label=f'sim (photon count): {popt_sim[0]:.2f}% $\\oplus$ {popt_sim[1]:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {popt_sim[2]:.1f}%/E'
     )
 
     # 2. Fitted Sim Curve (Magenta Dashed Line)
-    e_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 200)
+    e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
     sim_curve = resolution_fit_func(e_smooth, *popt_sim)
     plt.plot(e_smooth, sim_curve, 'm--', lw=1.8)
 
-    # Plot Continuous Reference Curves
-    e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
+    # 3. Continuous Reference Curves
     for label, params in ENERGY_REF_CURVES.items():
         ref_curve = resolution_fit_func(e_smooth, params["c"], params["s"], params["n"])
         plt.plot(
@@ -335,7 +355,7 @@ def main():
             ls=params.get("ls", "--"), 
             lw=1.8, 
             color=params.get("color", "gray"),
-            label=f'{label}: {params["c"]}% $\\oplus$ {params["s"]}%/$\\sqrt{{E}}$ $\\oplus$ {params["n"]}%/E'
+            label=f'{label}: {params["c"]:.2f}% $\\oplus$ {params["s"]:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {params["n"]:.1f}%/E'
         )
 
     plt.title('Shower-max energy resolution', fontsize=16, pad=12)
