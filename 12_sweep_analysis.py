@@ -1475,7 +1475,7 @@ def main():
                         energies_gev, 
                         res_e_list,
                         p0=[0.08, 0.50], 
-                        bounds=(0, [1.0, 5.0])
+                        bounds = ([0.0, 0.0], [1.0, 5.0])
                     )
                     c_f, s_f = popt_res
                     fit_label = f"Proj Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$"
@@ -1733,7 +1733,7 @@ def main():
                     # Fit against the PROJECTED T-type resolution
                     # Note: p0 and bounds are expecting standard decimal form
                     popt_res_t, _ = curve_fit(resolution_func, energies_gev_t, proj_res_t,
-                                              p0=[0.05, 0.2, 0.05], bounds = ([0.0, 0.0], [1.0, 5.0]))
+                                              p0 = [0.08, 0.50], bounds = ([0.0, 0.0], [1.0, 5.0]))
                     c_ft, s_ft, n_ft = popt_res_t
                 except Exception as e:
                     print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
