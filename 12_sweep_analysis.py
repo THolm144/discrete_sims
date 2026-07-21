@@ -1470,10 +1470,15 @@ def main():
             if len(energies_gev) >= 3:
                 try:
                     # Fit the projected fully-instrumented resolution
-                    popt_res, _ = curve_fit(resolution_func, energies_gev, proj_res,
-                                            p0=[0.05, 0.2, 0.05], bounds=(0, [2.0, 10.0, 0.5]))
-                    c_f, s_f, n_f = popt_res
-                    fit_label = f"Proj Fit: {c_f * 100:.1f}% $\\oplus$ {s_f * 100:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.1f}%/E"
+                    popt_res, _ = curve_fit(
+                        resolution_func, 
+                        energies_gev, 
+                        res_e_list,
+                        p0=[0.08, 0.50], 
+                        bounds=(0, [1.0, 5.0])
+                    )
+                    c_f, s_f = popt_res
+                    fit_label = f"Proj Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$"
                 except Exception as e:
                     print(f"  [WARNING] Resolution fit failed for {mod}: {e}")
             else:
