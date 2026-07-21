@@ -63,8 +63,23 @@ SQUARE_CAP_XY = np.array([
     [ _SQUARE_HOLE_OFFSET, -_SQUARE_HOLE_OFFSET],  # 3
 ])
 
-# Paper Fig 17 Reference: c=9.31%, s=52.04%, n=31.62%
-PAPER_FIG17 = {"c": 9.31, "s": 52.04, "n": 31.62}
+# Reference curves for resolution comparison
+ENERGY_REF_CURVES = {
+    "paper Fig 17": {
+        "c": 9.31, 
+        "s": 52.04, 
+        "n": 31.62, 
+        "color": "gray", 
+        "ls": "--"
+    },
+    "New Reference": {
+        "c": 15.92, 
+        "s": 0.0, 
+        "n": 122.8, 
+        "color": "darkorange", 
+        "ls": "-."
+    },
+}
 
 def resolution_fit_func(E, c, s, n):
     """ Energy resolution parametrization: c (+) s/sqrt(E) (+) n/E in % """
@@ -310,12 +325,18 @@ def main():
     sim_curve = resolution_fit_func(e_smooth, *popt_sim)
     plt.plot(e_smooth, sim_curve, 'm--', lw=1.8)
 
-    # 3. Paper Fig 17 Reference Curve (Gray Dashed Line)
-    paper_curve = resolution_fit_func(e_smooth, PAPER_FIG17["c"], PAPER_FIG17["s"], PAPER_FIG17["n"])
-    plt.plot(
-        e_smooth, paper_curve, color='gray', ls='--', lw=1.8,
-        label=f'paper Fig 17: {PAPER_FIG17["c"]} $\oplus$ {PAPER_FIG17["s"]}/$\sqrt{{E}}$ $\oplus$ {PAPER_FIG17["n"]}/E'
-    )
+    # Plot Continuous Reference Curves
+    e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
+    for label, params in ENERGY_REF_CURVES.items():
+        ref_curve = resolution_fit_func(e_smooth, params["c"], params["s"], params["n"])
+        plt.plot(
+            e_smooth, 
+            ref_curve, 
+            ls=params.get("ls", "--"), 
+            lw=1.8, 
+            color=params.get("color", "gray"),
+            label=f'{label}: {params["c"]}% $\\oplus$ {params["s"]}%/$\\sqrt{{E}}$ $\\oplus$ {params["n"]}%/E'
+        )
 
     plt.title('Shower-max energy resolution', fontsize=16, pad=12)
     plt.xlabel(r'$E_{\mathrm{beam}}$ (GeV)', fontsize=14)
