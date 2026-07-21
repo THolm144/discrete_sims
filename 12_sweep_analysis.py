@@ -1948,6 +1948,62 @@ def main():
     print(f"[SUCCESS] Saved Energy Resolution vs Energy plot to: {eres_save_path.resolve()}")
 
     # ─────────────────────────────────────────────────────────────────────
+    # 4D. NEW OPTIMIZED ENERGY RESOLUTION PLOT (DEPTH-CORRECTED)
+    # ─────────────────────────────────────────────────────────────────────
+    print("\n--- Generating New Depth-Corrected Energy Resolution Plots ---")
+    for mod in modules:
+        if mod not in master_summary or not master_summary[mod]:
+            continue
+
+        energy_points = []
+        raw_resolutions = []
+        raw_resolution_errors = []
+
+        # Sort energies numerically
+        energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
+        
+        for ekey in energy_keys:
+            data = master_summary[mod][ekey]
+            
+            # Use the new depth-corrected array you added to analyze_energy_batch!
+            if "dw_e_total_corr" in data:
+                corrected_yields = data["dw_e_total_corr"]
+                
+                # Calculate resolution using your robust Gaussian fitter
+                res_val, res_err = robust_resolution(corrected_yields)
+                
+                # If fit was successful (returns > 0)
+                if res_val > 0:
+                    energy_points.append(extract_numerical_energy(ekey))
+                    # Convert from percentage (robust_resolution output) back to fraction
+                    raw_resolutions.append(res_val / 100.0)
+                    raw_resolution_errors.append(res_err / 100.0)
+        
+        if energy_points:
+            print(f"[SUCCESS] Generating optimized resolution plot for {mod} with {len(energy_points)} points...")
+            
+            # Determine geometry for scaling
+            is_hex = "hex" in mod.lower()
+            active_channels = 3 if is_hex else 2  # E-channels: 3 for hex, 2 for square
+            baseline_channels = 64 # Adjust this to your assumed full containment baseline
+            
+            # Call your new plotting function
+            try:
+                # Assuming plot_energy_resolution saves the plot internally or returns a fig.
+                # If it doesn't save internally, you can wrap plt.savefig() around this call.
+                plot_energy_resolution(
+                    energy_points=energy_points,
+                    raw_resolutions=raw_resolutions,
+                    raw_resolution_errors=raw_resolution_errors,
+                    active_sipms=active_channels,
+                    baseline_sipms=baseline_channels,
+                    # If your function accepts a title or save path, pass them here:
+                    # title=f"Optimized Energy Resolution - {mod}",
+                    # save_path=summary_dir / f"{mod}_optimized_energy_resolution.png"
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to generate optimized plot for {mod}: {e}")
+    # ─────────────────────────────────────────────────────────────────────
     # 5. Plot Transverse Shower Profiles for Each Module and Energy
     # ─────────────────────────────────────────────────────────────────────
     def plot_transverse_profile(transverse_data, module_name):
