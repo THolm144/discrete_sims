@@ -688,8 +688,8 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         if c is not None: dw_q_chunks.append(c)
 
         # Prompt-filtered PHOTON-COUNT masks — WLS-only
-        m_t_up_prompt = is_t & is_optical & is_wls & near_up & is_prompt
-        m_t_dw_prompt = is_t & is_optical & is_wls & near_dw & is_prompt
+        m_t_up_prompt = is_t & is_optical  & near_up & is_prompt
+        m_t_dw_prompt = is_t & is_optical & near_dw & is_prompt
 
         c = _chunk_series(m_t_up_prompt, gt, ev, run_tag)
         if c is not None: up_t_hit_chunks.append(c)
