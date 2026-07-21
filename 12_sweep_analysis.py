@@ -1407,8 +1407,8 @@ def main():
                 else:
                     print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_t_val*100:.1f}%)")
 
-        def resolution_func(E, c, s, n):
-            return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
+        def resolution_func(E, c, s):
+            return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2)
 
         if len(energies_gev) >= 1:
             energies_gev = np.array(energies_gev)
