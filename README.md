@@ -162,20 +162,46 @@ Future improvements include
 
 ---
 
-## Current work
----
-- ScintX simulation - simulation of the conditions at the UIowa FLASH beam facility contructed to model the response of a patented material, ScintillatorX, and discover its light yield in combination with experiment.
+## Current Work
 
-- quartz/iron calorimeter simulation - tests the idea of pulling more data from a CMS-style calorimeter by adding a Cherenkov-only detector that is an iron shield in front of a grid of quartz cubes with sipms behind them. This simulation specifically verifies the capability of such a device to reproduce a shower profile by measuring the number of sipm hits vs increasing thickness of shielding.
+### ScintX Simulation
+Simulation of the conditions at the University of Iowa FLASH beam facility. This project models the response of the patented **ScintillatorX** material and compares the simulated response with experimental measurements to determine its light yield.
 
-- RADiCAL simulations - these are primarily proof of concept tests for various theorized iterations of the RADiCAL shashlik-style calorimeter. They are split into 4 different geometries and 3 different types of wavelength-shifting fibre. The geometries are as follows: 
-       - standard square, which is the basic module, where 2 of the capillaries therein are t-type with wavelength shifter at shower max only and the other 2 are e-type and have wls throughout.
-       - triple square, which is the same as the standard squaree except the LYSO scintillating blocks are three times as thick.
-       - standard hexagon, which is heaxagonally shaped and has 3 of each t-type and e-type.
-       - triple hexagon, which is the same as the standard hex module except for having three times as much LYSO.
+### Quartz/Iron Calorimeter Simulation
+Tests the concept of extracting additional information from a CMS-style calorimeter by adding a Cherenkov-only detector consisting of an iron absorber followed by a grid of quartz cubes instrumented with SiPMs. The simulation evaluates whether the detector can reconstruct the longitudinal shower profile by measuring the number of SiPM hits as a function of increasing iron thickness.
 
-The three wavelength shifters simulated in each of the four modules are DSB1, BCF92, and LuAG:Ce.
----
+### RADiCAL Simulations
+A collection of proof-of-concept simulations exploring several proposed iterations of the RADiCAL shashlik-style calorimeter.
+
+#### Geometries
+
+- **Standard Square**
+  - Baseline module.
+  - Contains four capillaries:
+    - **2 T-type** fibers with wavelength shifter only at shower maximum.
+    - **2 E-type** fibers with wavelength shifter along the entire fiber.
+
+- **Triple Square**
+  - Same geometry as the Standard Square.
+  - LYSO scintillator blocks are **3× thicker**.
+
+- **Standard Hexagon**
+  - Hexagonal module.
+  - Contains:
+    - **3 T-type** fibers.
+    - **3 E-type** fibers.
+
+- **Triple Hexagon**
+  - Same geometry as the Standard Hexagon.
+  - LYSO scintillator blocks are **3× thicker**.
+
+#### Wavelength-Shifting Fibers
+
+Each geometry is simulated with the following wavelength shifters:
+
+- **DSB1**
+- **BCF92**
+- **LuAG:Ce**
 
 ## Contributing
 
