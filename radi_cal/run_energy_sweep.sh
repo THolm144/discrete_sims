@@ -1,5 +1,5 @@
 #!/bin/bash
-WORLD="dsb1_radi_cal_energy"
+WORLD="radi_cal"
 PARTICLE="e-"
 BEAM_RADIUS=0.01
 OPTICAL="on"
