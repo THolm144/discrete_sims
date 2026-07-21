@@ -250,7 +250,7 @@
            paper-matched production run used RADICAL_SCINT_YIELD=0.07, i.e.
            10000 times 0.07 = 700 ph/MeV. Using that tuned value here. See
            CLAUDE.md, "YIELD-SWEEP POSTMORTEM" section. -->
-      <property name="SCINTILLATIONYIELD"          value="700"/>
+      <property name="SCINTILLATIONYIELD"          value="10000"/>
       <property name="RESOLUTIONSCALE"              value="1.0"/>
       <property name="SCINTILLATIONTIMECONSTANT1"   value="3.5" unit="ns"/>
       <property name="SCINTILLATIONYIELD1"          value="1.0"/>
