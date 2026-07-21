@@ -89,7 +89,17 @@ _N_W = 28
 
 ARRIVAL_QUANTILE = 0.10
 MIN_PHOTONS_PER_FACE = 1
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTICAL KINEMATICS & REFERENCE PARAMETERS
+# ─────────────────────────────────────────────────────────────────────────────
+C_LIGHT_MM_NS = 299.792
 
+# Reference curves for resolution comparison
+ENERGY_REF_CURVES = {
+    "paper Fig 17": {"c": 9.31, "s": 52.04, "n": 31.62},
+}
+
+PAPER_FIG17 = ENERGY_REF_CURVES["paper Fig 17"]
 # ── Geometry mappings ──────────────────────────────────────────────────────
 
 _KNOWN_MODULE_LYSO_THICK = {
@@ -269,6 +279,10 @@ def _grouped(chunks, how):
     else:
         s = g.quantile(how)
     return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
+
+def resolution_fit_func(E, c, s, n):
+    """ Energy resolution parametrization: c (+) s/sqrt(E) (+) n/E in % """
+    return np.sqrt(c**2 + (s / np.sqrt(E))**2 + (n / E)**2)
 
 def analyze_energy_batch(batch_dir: Path, is_hex: bool = False, module_name: str = "dsb1_radi_cal_4t", verbose_label: str = "", all_t_type: bool = True):
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"))
@@ -545,17 +559,16 @@ def main():
         fmt='o-', color='tab:blue', lw=2, capsize=4, label=f'Simulated ({args.module})'
     )
 
-    # 2. Overlay Paper Parameterized Reference Curve (Fig 17)
-    e_smooth = np.linspace(min(energies_gev), max(energies_gev), 100)
-    for label, params in ENERGY_REF_CURVES.items():
-        ref_res_percent = energy_ref_curve(e_smooth, params["c"], params["s"], params["n"]) * 100.0
-        ax1.plot(e_smooth, ref_res_percent, color=params["color"], ls=params["ls"], label=label)
+    # 2. Generate smooth energy range for continuous reference curves
+    e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
 
-    # 3. Overlay Test-Beam Experimental Data Band (11% - 19%)
-    ax1.axhspan(
-        ENERGY_DATA_BAND_FRAC[0] * 100, ENERGY_DATA_BAND_FRAC[1] * 100,
-        color='gray', alpha=0.15, label='Test Beam Data Range (11-19%)'
-    )
+    # 3. Plot Reference Curves
+    for label, params in ENERGY_REF_CURVES.items():
+        ref_curve = resolution_fit_func(e_smooth, params["c"], params["s"], params["n"])
+        ax1.plot(
+            e_smooth, ref_curve, ls='--', lw=1.8, color='gray',
+            label=f'{label}: {params["c"]}% $\oplus$ {params["s"]}%/$\sqrt{{E}}$ $\oplus$ {params["n"]}%/E'
+        )
 
     ax1.set_xlabel('Beam Energy [GeV]', fontsize=12)
     ax1.set_ylabel(r'Energy Resolution $\sigma_E / E$ [%]', fontsize=12)
