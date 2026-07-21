@@ -206,24 +206,31 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     shower_first = getattr(world, "_SHOWER_FIRST", None)
     shower_last  = getattr(world, "_SHOWER_LAST", None)
     if shower_first is not None and shower_last is not None:
-        showermax_lyso_vols = [
-            f"lyso_{i}" for i in range(shower_first, shower_last + 1)
-            if f"lyso_{i}" in sim.volume_manager.volumes
-        ]
-        if showermax_lyso_vols:
-            edep_ps = sim.add_actor("PhaseSpaceActor", "showermax_edep")
-            edep_ps.attached_to     = showermax_lyso_vols
-            edep_ps.output_filename = "showermax_edep.root"
-            # CHANGED: "entering" avoids calling IsStepExitingAttachedVolume() in C++
-            edep_ps.steps_to_store  = "entering"
-            F_edep = GateFilterBuilder()
-            edep_ps.filter    = (F_edep.ParticleName != "opticalphoton")
-            edep_ps.attributes = ["EventID", "TotalEnergyDeposit"]
-            registry["showermax_edep_actor"] = edep_ps
-            print(f"[ACTOR] Configured 'showermax_edep' actor for volumes: {showermax_lyso_vols}")
-        else:
+        found_any = False
+        for i in range(shower_first, shower_last + 1):
+            vol_name = f"lyso_{i}"
+            if vol_name in sim.volume_manager.volumes:
+                found_any = True
+                edep_ps = sim.add_actor("PhaseSpaceActor", f"showermax_edep_{i}")
+                
+                # FIX: Attach to a single string volume name, not a list
+                edep_ps.attached_to     = vol_name
+                edep_ps.output_filename = f"showermax_edep_{i}.root"
+                
+                # "inside" safely measures dE/dx continuously within the volume
+                edep_ps.steps_to_store  = "inside"  
+                
+                F_edep = GateFilterBuilder()
+                edep_ps.filter    = (F_edep.ParticleName != "opticalphoton")
+                edep_ps.attributes = ["EventID", "TotalEnergyDeposit"]
+                
+                # Add to registry
+                registry[f"showermax_edep_actor_{i}"] = edep_ps
+                print(f"[ACTOR] Configured 'showermax_edep' actor for volume: {vol_name}")
+                
+        if not found_any:
             print(f"  WARNING: no lyso_{{{shower_first}..{shower_last}}} volumes found — "
-                  f"skipping showermax_edep actor.")
+                  f"skipping showermax_edep actors.")
 
     # ── Dose actor ────────────────────────────────────────────────────────
     if caps["dose"]:
