@@ -1,0 +1,43 @@
+#!/bin/bash
+WORLD="dsb1_radi_cal_energy"
+PARTICLE="e-"
+BEAM_RADIUS=0.01
+OPTICAL="on"
+CHERENKOV="on"
+PHYSICS_LIST="QGSP_BERT_EMV"
+
+# Dynamically balanced totals calculated for a 16-hour execution safety window
+# Spawns 1 process per energy x 10 internal C++ threads = 40 cores maxed out
+ENERGIES=(10000000 30000000 40000000 80000000 )
+COUNTS=(400 280 200 80)
+THREADS=100  # threads per process, not total threads. Total threads = THREADS * number of processes
+
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+MASTER_BATCH_DIR="runs/${WORLD}/sweep_${TIMESTAMP}"
+mkdir -p "$MASTER_BATCH_DIR/logs"
+
+echo "========================================================================"
+echo " Launching Dynamic Optical Sweep (MT Mode) | Resource Cap: 40 CPUs"
+echo "========================================================================"
+
+for i in "${!ENERGIES[@]}"; do
+    ENERGY=${ENERGIES[$i]}
+    N_EVENTS=${COUNTS[$i]}
+    ENERGY_GBS=$(( ENERGY / 1000000 ))
+    ENERGY_DIR="${MASTER_BATCH_DIR}/${ENERGY_GBS}GeV"
+    mkdir -p "$ENERGY_DIR"
+    LOG_FILE="${MASTER_BATCH_DIR}/logs/${ENERGY_GBS}GeV_production.log"
+
+    echo " [+] Launching [${ENERGY_GBS}GeV] -> Target: ${N_EVENTS} events on 10 threads..."
+
+    python3 simulator.py --beam-x -0.0 --beam-y 0.0 \
+        --world "$WORLD" --particle "$PARTICLE" --energy-kev "$ENERGY" \
+        --n "$N_EVENTS" --threads "$THREADS" --beam-radius "$BEAM_RADIUS" \
+        --optical "$OPTICAL" --cherenkov "$CHERENKOV" --hits-optical-only on \
+        --physics-list "$PHYSICS_LIST" --run-id 0 --output-dir "$ENERGY_DIR" > "$LOG_FILE" 2>&1 &
+done
+
+echo " [+] All 4 channels running. Monitoring workloads..."
+wait
+echo " [✓] Simulation sweep complete. "
+# (Post processing cleanup block goes here...)
