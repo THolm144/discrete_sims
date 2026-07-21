@@ -5,16 +5,12 @@ unified_sweep_analysis_4T.py
 Optimized version for aggregating timing and energy resolution results 
 for 4-T fiber RADiCAL geometries, matching paper comparison curves.
 """
-#!/usr/bin/env python3
 import os
 
 # MUST be set before importing numpy/scipy/ROOT!
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import argparse
-import datetime
-# ... rest of your script imports
 import argparse
 import datetime
 import pickle
@@ -153,7 +149,9 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
     res_tuple = (100.0 * sg / mu, 100.0 * sigma_err / mu) if fit_ok else (fallback_res, fallback_err)
 
-    # Memory cleanup for ROOT objects
+    # Memory cleanup: Disown objects before explicit C++ deletion to prevent PyROOT double-free segfaults
+    ROOT.SetOwnership(h, False)
+    ROOT.SetOwnership(g, False)
     h.Delete()
     g.Delete()
 
