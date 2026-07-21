@@ -148,8 +148,6 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
 
     # ── Optical exits ─────────────────────────────────────────────────────
-    # Safe guard: Disable exiting actor on root/top-level/subtraction volumes
-    # to prevent C++ 'fAttachedToVolumeMotherName is None' crash.
     if caps["optical"] and caps.get("optical_exits", False):
         valid_vols = sim.volume_manager.volumes
         if target_vol not in valid_vols or target_vol in ["world", "calorimeter"]:
@@ -216,7 +214,8 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             edep_ps = sim.add_actor("PhaseSpaceActor", "showermax_edep")
             edep_ps.attached_to     = showermax_lyso_vols
             edep_ps.output_filename = "showermax_edep.root"
-            edep_ps.steps_to_store  = "all"
+            # CHANGED: "entering" avoids calling IsStepExitingAttachedVolume() in C++
+            edep_ps.steps_to_store  = "entering"
             F_edep = GateFilterBuilder()
             edep_ps.filter    = (F_edep.ParticleName != "opticalphoton")
             edep_ps.attributes = ["EventID", "TotalEnergyDeposit"]
