@@ -25,14 +25,9 @@ import opengate as gate
 DEFAULT_CAPABILITIES = {
     "optical":                False,
     "dose":                   True,
-    "sipm_hits":               False,
+    "sipm_hits":              False,
     "optical_exits":          False,
     "calorimeter_mode":       False,
-    # NEW — opt-in only. A world must explicitly set this True in its own
-    # CAPABILITIES dict, or the run must pass --hits-optical-only on, for
-    # detector_hits actors to filter out non-opticalphoton hits at the
-    # source. Defaults to False so quartz_8x8 / ScintX / any world that
-    # doesn't opt in keeps recording every particle type, unchanged.
     "sipm_hits_optical_only": False,
 }
 
@@ -53,8 +48,6 @@ def parse_args():
     p.add_argument("--particle",     default="proton")
     p.add_argument("--energy-kev",   type=float, default=500_000)
     p.add_argument("--n",            type=int,   default=10_000)
-    # OPTIMIZATION: Reduced default threads to a balanced 8 to avoid thread initialization
-    # and context-switching overhead on smaller particle counts.
     p.add_argument("--threads",      type=int,   default=8)
     p.add_argument("--beam-radius",  type=float, default=1.0,
                    help="Beam disc radius in cm (default: 1.0)")
@@ -66,16 +59,12 @@ def parse_args():
                    help="Override world optical capability. 'world' = respect world manifest.")
     p.add_argument("--dose",         choices=["on", "off", "world"],  default="world")
     p.add_argument("--sipm-hits",    choices=["on", "off", "world"],  default="world")
+    p.add_argument("--optical-exits", choices=["on", "off", "world"], default="off",
+                   help="Toggle optical exit PhaseSpaceActor (default: off).")
     p.add_argument("--cherenkov",    choices=["on", "off"],           default="on",
                    help="Toggle Cherenkov radiation when optical physics is enabled.")
-    # NEW — opt-in filter to shrink detector_hits_*.root files by dropping
-    # non-opticalphoton hits at the actor level, before anything is written
-    # to disk. 'world' = respect the world manifest's sipm_hits_optical_only
-    # flag (defaults False if unset), so existing worlds are unaffected
-    # unless they opt in or you pass --hits-optical-only on explicitly.
     p.add_argument("--hits-optical-only", choices=["on", "off", "world"], default="world",
-                   help="Filter detector_hits actors to opticalphoton hits only. "
-                        "'world' = respect world manifest (default off).")
+                   help="Filter detector_hits actors to opticalphoton hits only.")
     p.add_argument("--beam-offset", type=float, default=None)
     p.add_argument("--beam-x", type=float, default=None)
     p.add_argument("--beam-y", type=float, default=None)
@@ -102,6 +91,7 @@ def resolve_capabilities(world, args) -> dict:
         "optical":                args.optical,
         "dose":                   args.dose,
         "sipm_hits":              getattr(args, "sipm_hits", "world"),
+        "optical_exits":          getattr(args, "optical_exits", "world"),
         "sipm_hits_optical_only": getattr(args, "hits_optical_only", "world"),
     }
     for key, val in override_map.items():
@@ -109,7 +99,6 @@ def resolve_capabilities(world, args) -> dict:
             caps[key] = True
         elif val == "off":
             caps[key] = False
-        # val == "world" -> leave whatever the world manifest (or default) set
 
     return caps
 
@@ -148,10 +137,6 @@ def resolve_output_dirs(args, script_dir: Path) -> tuple[Path, Path]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
-    """
-    Attach actors based on the resolved capability flags.
-    Returns a registry dict so metadata can be written without coupling.
-    """
     registry = {
         "optical_exited_actor": None,
         "hit_actors":           [],
@@ -159,32 +144,30 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
         "is_calorimeter":       caps["calorimeter_mode"],
     }
 
-    target_vol       = getattr(world, "TARGET_VOLUME_NAME",    "target")
+    target_vol       = getattr(world, "TARGET_VOLUME_NAME", "calorimeter")
     detector_volumes = getattr(world, "DETECTOR_VOLUME_NAMES", [])
-
-    # ── Time Cut Actor ────────────────────────────────────────────────────
-    # OPTIMIZATION: Removed local 'optical_time_breaker' from here.
-    # The global fail-safe attached to "world" handles this completely, meaning 
-    # we eliminate duplicate filter processing loops for every step inside the target volume.
 
     # ── Optical exits ─────────────────────────────────────────────────────
     if caps["optical"] and caps.get("optical_exits", False):
-        exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
-        exited.attached_to     = target_vol
-        exited.output_filename = "optical_exited.root"
-        exited.steps_to_store  = "exiting"
-        exited.attributes = [
-            "ParticleName", "KineticEnergy", "TrackCreatorProcess",
-            "Position", "TrackID", "EventID", "GlobalTime",
-        ]
-        registry["optical_exited_actor"] = exited
+        valid_vols = sim.volume_manager.volumes
+        if target_vol not in valid_vols or target_vol in ["world", "calorimeter"]:
+            print(f"[ACTOR] SAFELY SKIPPING 'optical_exited' for volume '{target_vol}' "
+                  f"(prevents OpenGATE mother-volume C++ exception).")
+        else:
+            exited = sim.add_actor("PhaseSpaceActor", "optical_exited")
+            exited.attached_to     = target_vol
+            exited.output_filename = "optical_exited.root"
+            exited.steps_to_store  = "exiting"
+            exited.attributes = [
+                "ParticleName", "KineticEnergy", "TrackCreatorProcess",
+                "Position", "TrackID", "EventID", "GlobalTime",
+            ]
+            registry["optical_exited_actor"] = exited
 
     # ── Per-channel screen hit actors ─────────────────────────────────────
     if caps["sipm_hits"] and detector_volumes:
         print(f"[ACTOR] Registered volumes: {list(sim.volume_manager.volumes.keys())[:20]} ...")
 
-        # NEW — build the optical-photon-only filter once, reused across
-        # every detector_hits actor, if this run has opted in.
         optical_only = caps.get("sipm_hits_optical_only", False)
         hit_filter = None
         if optical_only:
@@ -201,23 +184,13 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
             hits.attached_to                = vol_name
             hits.authorize_repeated_volumes = True
             hits.output_filename            = f"detector_hits_{idx}.root"
-
-            # OPTIMIZATION: Changed from "all" to "entering". Storing "all" records every tiny
-            # scattering step inside the volume, blowing up file sizes and introducing massive disk I/O bottlenecks.
-            hits.steps_to_store              = "entering"
+            hits.steps_to_store             = "entering"
 
             if hit_filter is not None:
                 hits.filter = hit_filter
 
-            # TRIMMED — dropped KineticEnergy, TrackCreatorProcess, TrackID.
-            # None of the current analysis scripts (timing_res.py, the ToF
-            # reconstruction script) read these fields from detector_hits
-            # files; they only use ParticleName, Position, EventID,
-            # GlobalTime, LocalTime. Verify no world-specific analyze()
-            # hook depends on the dropped fields before relying on this
-            # for worlds other than radi_cal_energy / radi_cal_triple.
             hits.attributes = [
-                "ParticleName", "Position", "EventID", "GlobalTime", "TrackCreatorProcess","LocalTime",
+                "ParticleName", "Position", "EventID", "GlobalTime", "TrackCreatorProcess", "LocalTime",
             ]
             registry["hit_actors"].append(hits)
             if caps.get("optical", False):
@@ -229,13 +202,44 @@ def wire_actors(sim, world, caps: dict, run_dir: Path, units) -> dict:
                     F = GateFilterBuilder()
                     killer.filter = (F.ParticleName == "opticalphoton")
 
+    # ── Shower-max raw dE/dx (no optical transport) ────────────────────────
+    shower_first = getattr(world, "_SHOWER_FIRST", None)
+    shower_last  = getattr(world, "_SHOWER_LAST", None)
+    if shower_first is not None and shower_last is not None:
+        found_any = False
+        for i in range(shower_first, shower_last + 1):
+            vol_name = f"lyso_{i}"
+            if vol_name in sim.volume_manager.volumes:
+                found_any = True
+                edep_ps = sim.add_actor("PhaseSpaceActor", f"showermax_edep_{i}")
+                
+                # FIX: Attach to a single string volume name, not a list
+                edep_ps.attached_to     = vol_name
+                edep_ps.output_filename = f"showermax_edep_{i}.root"
+                
+                # "inside" safely measures dE/dx continuously within the volume
+                edep_ps.steps_to_store  = "inside"  
+                
+                F_edep = GateFilterBuilder()
+                edep_ps.filter    = (F_edep.ParticleName != "opticalphoton")
+                edep_ps.attributes = ["EventID", "TotalEnergyDeposit"]
+                
+                # Add to registry
+                registry[f"showermax_edep_actor_{i}"] = edep_ps
+                print(f"[ACTOR] Configured 'showermax_edep' actor for volume: {vol_name}")
+                
+        if not found_any:
+            print(f"  WARNING: no lyso_{{{shower_first}..{shower_last}}} volumes found — "
+                  f"skipping showermax_edep actors.")
+
     # ── Dose actor ────────────────────────────────────────────────────────
     if caps["dose"]:
         phantom_cm = world.PHANTOM_CM
+        dose_vol = target_vol if target_vol in sim.volume_manager.volumes else "calorimeter"
         if caps["calorimeter_mode"]:
-            dose = _wire_calorimeter_dose(sim, world, target_vol, phantom_cm, units)
+            dose = _wire_calorimeter_dose(sim, world, dose_vol, phantom_cm, units)
         else:
-            dose = _wire_standard_dose(sim, target_vol, phantom_cm, units)
+            dose = _wire_standard_dose(sim, dose_vol, phantom_cm, units)
 
         if hasattr(world, "configure_dose_actor"):
             world.configure_dose_actor(dose, units)
@@ -338,17 +342,9 @@ def configure_physics(sim, args, script_dir: Path, world,
                       caps: dict, target_vol: str, units):
     sim.physics_manager.physics_list_name = args.physics_list
 
-    # OPTIMIZATION: Implemented a global production range cut (1.0 mm). This prevents
-    # Geant4 from generating and endlessly tracking low-energy secondary delta-electrons
-    # that chew up CPU cycles without impacting macroscopic dosage metrics.
     sim.g4_commands_before_init.append("/run/setCut 0.1 mm")
-    # Enable tracking scintillation secondaries first
     sim.g4_commands_before_init.append("/process/optical/scintillation/setTrackSecondariesFirst true")
-
-# Enable tracking Cherenkov secondaries first
     sim.g4_commands_before_init.append("/process/optical/cerenkov/setTrackSecondariesFirst true")
-
-# Set the maximum Cherenkov photons per step (e.g., 300)
     sim.g4_commands_before_init.append("/process/optical/cerenkov/setMaxPhotons 300")
 
     surface_file = script_dir / "SurfaceProperties.xml"
@@ -361,7 +357,6 @@ def configure_physics(sim, args, script_dir: Path, world,
         if optical_file.exists():
             sim.physics_manager.optical_properties_file = str(optical_file)
 
-        # ─── THE FIXED OPENGATE 10 PRE-INIT QUEUE ─────────────────────────────
         if getattr(args, "cherenkov", "on") == "off":
             sim.g4_commands_before_init.append("/process/optical/processActivation Cerenkov false")
             print("[SIM] Optical physics ENABLED (Scintillation ONLY, Cherenkov DISABLED).")
@@ -392,7 +387,7 @@ def save_metadata(args, batch_dir: Path, run_dir: Path, world,
         "output_dir":         str(run_dir),
         "material":           getattr(world, "MATERIAL",    "unknown"),
         "phantom_cm":         getattr(world, "PHANTOM_CM",  None),
-        "target_volume":      getattr(world, "TARGET_VOLUME_NAME", "target"),
+        "target_volume":      getattr(world, "TARGET_VOLUME_NAME", "calorimeter"),
         "detector_volumes":   getattr(world, "DETECTOR_VOLUME_NAMES", []),
         "expected_dedx":      getattr(world, "EXPECTED_DEDX", 1.0),
         "active_z_ranges_mm": getattr(world, "ACTIVE_Z_RANGES_MM", None),
@@ -405,36 +400,6 @@ def save_metadata(args, batch_dir: Path, run_dir: Path, world,
     with open(path, "w") as f:
         json.dump(metadata, f, indent=4)
     print(f"  Metadata → {path}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CALORIMETER POST-PROCESSING
-# ─────────────────────────────────────────────────────────────────────────────
-
-def postprocess_calorimeter(run_dir: Path, batch_dir: Path, run_id: int, world):
-    import itk
-
-    res_mm = getattr(world, "CALORIMETER_Z_RES_MM", 0.1)
-
-    long_mhd = run_dir / "run_Dose_edep.mhd"
-    long_txt  = batch_dir / f"run_{run_id}_Dose.txt"
-    if long_mhd.exists():
-        arr = itk.array_from_image(itk.imread(str(long_mhd))).reshape(-1)
-        np.savetxt(str(long_txt),
-                   np.c_[np.arange(len(arr)), arr],
-                   fmt="%d %.6f")
-        print(f"  Longitudinal profile → {long_txt.name}")
-    else:
-        print(f"  WARNING: {long_mhd.name} not found")
-
-    trans_mhd = run_dir / "transverse_shower_max_edep.mhd"
-    trans_npy  = batch_dir / f"run_{run_id}_Hits.npy"
-    if trans_mhd.exists():
-        arr = itk.array_from_image(itk.imread(str(trans_mhd)))
-        np.save(str(trans_npy), arr.reshape(arr.shape[1], arr.shape[2]))
-        print(f"  Transverse matrix    → {trans_npy.name}")
-    else:
-        print(f"  WARNING: {trans_mhd.name} not found")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -475,7 +440,7 @@ def main():
     if hasattr(world, "add_optical_surfaces"):
         world.add_optical_surfaces(sim, units)
 
-    target_vol     = getattr(world, "TARGET_VOLUME_NAME", "target")
+    target_vol     = getattr(world, "TARGET_VOLUME_NAME", "calorimeter")
     actor_registry = wire_actors(sim, world, caps, run_dir, units)
 
     add_beam_source(sim, args, world, beam_cfg, units)
@@ -503,7 +468,6 @@ def main():
             (F.ParticleName == "opticalphoton") &
             (F.GlobalTime > 20.0 * units.ns)
         )
-    # ───────────────────────────────────────────────────────────────────────
 
     sim.run()
 

@@ -18,7 +18,7 @@ CAPABILITIES = {
     "optical":          True,
     "dose":             True,
     "sipm_hits":        True,
-    "optical_exits":    True,
+    "optical_exits":    False,
     "calorimeter_mode": True,
 }
 
