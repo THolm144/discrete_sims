@@ -536,22 +536,43 @@ def main():
     df_summary.to_csv(csv_path, index=False)
     print(f"\n [✓] Results saved to: {csv_path}")
 
-    # Plot Energy Resolution & Light Yield
-    fig, ax1 = plt.subplots(figsize=(8, 5))
-    color = 'tab:blue'
+    # ── Plot Energy Resolution & Paper Comparison ────────────────────────────
+    fig, ax1 = plt.subplots(figsize=(9, 6))
+
+    # 1. Plot simulated resolution data points
+    ax1.errorbar(
+        energies_gev, res_percent, yerr=res_err_percent, 
+        fmt='o-', color='tab:blue', lw=2, capsize=4, label=f'Simulated ({args.module})'
+    )
+
+    # 2. Overlay Paper Parameterized Reference Curve (Fig 17)
+    e_smooth = np.linspace(min(energies_gev), max(energies_gev), 100)
+    for label, params in ENERGY_REF_CURVES.items():
+        ref_res_percent = energy_ref_curve(e_smooth, params["c"], params["s"], params["n"]) * 100.0
+        ax1.plot(e_smooth, ref_res_percent, color=params["color"], ls=params["ls"], label=label)
+
+    # 3. Overlay Test-Beam Experimental Data Band (11% - 19%)
+    ax1.axhspan(
+        ENERGY_DATA_BAND_FRAC[0] * 100, ENERGY_DATA_BAND_FRAC[1] * 100,
+        color='gray', alpha=0.15, label='Test Beam Data Range (11-19%)'
+    )
+
     ax1.set_xlabel('Beam Energy [GeV]', fontsize=12)
-    ax1.set_ylabel(r'Energy Resolution $\sigma_E / E$ [%]', color=color, fontsize=12)
-    ax1.errorbar(energies_gev, res_percent, yerr=res_err_percent, fmt='o-', color=color, lw=2, capsize=4, label='Resolution')
-    ax1.tick_params(axis='y', labelcolor=color)
+    ax1.set_ylabel(r'Energy Resolution $\sigma_E / E$ [%]', fontsize=12)
     ax1.grid(True, linestyle='--', alpha=0.5)
 
+    # Right Y-Axis: Light Yield
     ax2 = ax1.twinx()
-    color = 'tab:red'
-    ax2.set_ylabel('Mean Photon Yield [4 T-Fibers]', color=color, fontsize=12)
-    ax2.plot(energies_gev, mean_yields, 's--', color=color, lw=2, label='Light Yield')
-    ax2.tick_params(axis='y', labelcolor=color)
+    ax2.plot(energies_gev, mean_yields, 's--', color='tab:red', lw=2, label='Mean Photon Yield')
+    ax2.set_ylabel('Mean Photon Yield [4 T-Fibers]', color='tab:red', fontsize=12)
+    ax2.tick_params(axis='y', labelcolor='tab:red')
 
-    plt.title(f'4 T-Fiber Dynamic Optical Sweep ({args.module})', fontsize=14)
+    # Combined Legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=10)
+
+    plt.title(f'4 T-Fiber Dynamic Optical Sweep vs. Paper Data ({args.module})', fontsize=13)
     fig.tight_layout()
     plot_path = out_dir / "energy_resolution_linearity_4T.png"
     plt.savefig(plot_path, dpi=300)
