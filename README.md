@@ -174,7 +174,8 @@ Tests the concept of extracting additional information from a CMS-style calorime
 A collection of proof-of-concept simulations exploring several proposed iterations of the RADiCAL shashlik-style calorimeter.
 
 #### Geometries
-
+- **Original Model**
+   - See square standard, but all t-type fibres
 - **Standard Square**
   - Baseline module.
   - Contains four capillaries:
