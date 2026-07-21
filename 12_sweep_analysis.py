@@ -177,7 +177,7 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     N = len(data)
     if N < 2:
         return -1.0, 1e9  
-    
+
     # --- 1. FALLBACK METRICS ---
     # We still use your existing robust numpy fallback if the ROOT fit fails
     median = np.median(data)
@@ -186,7 +186,7 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     sg_robust = iqr / 1.349 
     if sg_robust == 0:  
         sg_robust = np.std(data, ddof=1)
-        
+
     fallback_res = 100.0 * sg_robust / median if median > 0 else -1.0
     fallback_err = fallback_res / np.sqrt(2.0 * N) if (N > 1 and fallback_res > 0) else 1e9
 
@@ -198,7 +198,7 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     unique_id = uuid.uuid4().hex
     hname = f"h_{unique_id}"
     fname = f"f_{unique_id}"
-    
+
 
     # Define integer-aligned boundaries to capture discrete photon counts cleanly
     hist_min = max(0, int(np.floor(median - 5 * sg_robust)))
@@ -206,7 +206,7 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     nbins = hist_max - hist_min + 1
     h = ROOT.TH1D(hname, "temp_hist", nbins, hist_min - 0.5, hist_max + 0.5)
     h.SetDirectory(0)  # <-- ADD THIS: Tells ROOT C++ not to own this object
-    
+
     # Fill the ROOT histogram with the numpy data
     for val in data:
         h.Fill(val)
@@ -215,9 +215,9 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     # Grab initial seeds directly from the histogram
     mu = h.GetMean()
     sg = h.GetRMS()
-    
+
     g = ROOT.TF1(fname, "gaus", mu - nsig * sg, mu + nsig * sg)
-    
+
     fit_success = False
     sigma_err = 0.0
 
@@ -226,11 +226,11 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
         g.SetRange(mu - nsig * sg, mu + nsig * sg)
         # R = Range, Q = Quiet, L = Log-Likelihood, 0 = Don't draw
         h.Fit(g, "RQL0")
-        
+
         mu = g.GetParameter(1)
         sg = g.GetParameter(2)
         sigma_err = g.GetParError(2)
-        
+
         if sg <= 0:
             break
 
@@ -238,7 +238,7 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     # Check if the fit relative error on sigma exceeds 25% (exactly as in robustRes)
     fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
 
-   
+
     # --- 5. RETURN RESULT ---
     if fit_ok:
         res = 100.0 * sg / mu
@@ -329,7 +329,7 @@ def extract_numerical_energy(label: str) -> float:
         return float(''.join(c for c in label if c.isdigit() or c == '.'))
     except ValueError:
         return 0.0
-    
+
 def calculate_empirical_fwhm(data, bins=100):
     """
     Calculates the Full-Width at Half-Maximum (FWHM) empirically from data 
@@ -341,17 +341,17 @@ def calculate_empirical_fwhm(data, bins=100):
 
     med = float(np.median(data))
     std = float(np.std(data))
-    
+
     # Restrict to a reasonable window to avoid extreme outliers stretching the bins
     hist_lo, hist_hi = med - 4 * std, med + 4 * std
-    
+
     counts, edges = np.histogram(data, bins=bins, range=(hist_lo, hist_hi))
     centers = (edges[:-1] + edges[1:]) / 2.0
-    
+
     max_idx = np.argmax(counts)
     max_val = counts[max_idx]
     half_max = max_val / 2.0
-    
+
     # 1. Find Left Crossing
     left_slice = counts[:max_idx]
     if len(left_slice) == 0 or not np.any(left_slice < half_max):
@@ -361,7 +361,7 @@ def calculate_empirical_fwhm(data, bins=100):
         x0, y0 = centers[l_idx], counts[l_idx]
         x1, y1 = centers[l_idx + 1], counts[l_idx + 1]
         x_left = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
-        
+
     # 2. Find Right Crossing
     right_slice = counts[max_idx:]
     if len(right_slice) == 0 or not np.any(right_slice < half_max):
@@ -372,7 +372,7 @@ def calculate_empirical_fwhm(data, bins=100):
         x0, y0 = centers[r_idx - 1], counts[r_idx - 1]
         x1, y1 = centers[r_idx], counts[r_idx]
         x_right = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
-        
+
     return float(x_right - x_left)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -445,7 +445,7 @@ def print_channel_diagnostics(label, mod, ekey, totals, mu_fit, sigma_fit):
     print(f"    [DIAG:{label}] {mod} {ekey}: N={n}, raw mean={raw_mean:.2f}, raw std={raw_std:.2f}, "
           f"raw res={raw_res*100:.1f}%, range=[{lo:.0f},{hi:.0f}], zero-frac={frac_zero*100:.1f}%, "
           f"fit mu={mu_fit:.3f}, fit sigma={sigma_fit:.3f}, fit res={fit_res*100:.1f}%{flag_str}")
-    
+
     import numpy as np
 
 def compute_event_reconstructed_energy(prompt_counts_per_event, lyso_bounds, detected_z_sensor, lambda_eff=30.0):
@@ -489,7 +489,7 @@ def compute_event_reconstructed_energy(prompt_counts_per_event, lyso_bounds, det
     # 5. Compute Event Center of Gravity (z_COG) in layer index space (1 to 29)
     layer_indices = np.arange(1, len(lyso_bounds) + 1)
     raw_totals = np.sum(prompt_counts_per_event, axis=1)
-    
+
     # Avoid division by zero for empty events
     valid_mask = raw_totals > 0
     z_cog_events = np.zeros(len(prompt_counts_per_event))
@@ -507,40 +507,40 @@ def plot_energy_resolution(energy_points, raw_resolutions, raw_resolution_errors
     for the reduced number of SiPMs.
     """
     plt.figure(figsize=(10, 6))
-    
+
     # 1. Plot the raw data (from the reduced SiPM configuration)
     plt.errorbar(energy_points, raw_resolutions, yerr=raw_resolution_errors, 
                  fmt='o', label=f'Simulated Data ({active_sipms} SiPMs)', color='blue')
-    
+
     # -------------------------------------------------------------------
     # NEW: Calculate and plot the corrected baseline resolution line
     # -------------------------------------------------------------------
     # Coverage fraction determines the loss in photon statistics.
     # We multiply the resolution by sqrt(active / baseline) to project 
     # what the resolution would recover to if fully instrumented.
-    
+
     coverage_ratio = active_sipms / baseline_sipms
     correction_factor = np.sqrt(coverage_ratio)
-    
+
     corrected_resolutions = [res * correction_factor for res in raw_resolutions]
     corrected_errors = [err * correction_factor for err in raw_resolution_errors]
-    
+
     # Plot the projected fully-instrumented line
     plt.errorbar(energy_points, corrected_resolutions, yerr=corrected_errors,
                  fmt='s--', label=f'Corrected Projection (Full {baseline_sipms} SiPMs)', 
                  color='orange', alpha=0.8)
-    
+
     # Optional: If you use a fit function (e.g., stochastic term a/sqrt(E) + const b)
     # You can also scale the 'a' parameter of your curve_fit and plot that theoretical curve here.
     # -------------------------------------------------------------------
-    
+
     # Formatting the plot
     plt.title('RADiCAL Energy Resolution vs. Energy', fontsize=14)
     plt.xlabel('Reconstructed Energy [GeV]', fontsize=12)
     plt.ylabel(r'Energy Resolution ($\sigma / E$)', fontsize=12)
     plt.grid(True, which='both', linestyle='--', alpha=0.6)
     plt.legend(loc='upper right', fontsize=11)
-    
+
     plt.tight_layout()
     plt.show()   
 
@@ -609,11 +609,11 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     # --- Chunk Initializations ---
     up_first_chunks, down_first_chunks = [], []
     up_q_chunks, dw_q_chunks = [], []
-    
+
     # Track BOTH faces for E and T energy counting
     up_e_hit_chunks, dw_e_hit_chunks = [], []
     up_t_hit_chunks, dw_t_hit_chunks = [], []
-    
+
     down_first_t_chunks = []
     run_dirs = set()
 
@@ -668,13 +668,13 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         if c is not None: 
             up_first_chunks.append(c)
             up_e_hit_chunks.append(c)   # Save upstream E-hits
-            
+
         c = _chunk_series(m_e_dw, gt, ev, run_tag)
         if c is not None:
             down_first_chunks.append(c)
             dw_e_hit_chunks.append(c)   # Save downstream E-hits
 
-        
+
         # 2. T-Type Channel Processing
     # 2. T-Type Channel Processing
         is_t = np.isin(channels, t_indices)
@@ -702,15 +702,15 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
     up_first = _grouped(up_first_chunks, "min")
     down_first = _grouped(down_first_chunks, "min")
     down_first_t = _grouped(down_first_t_chunks, "min")
-    
-        
+
+
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
     dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
-        
+
     # Hits per event dictionary groupings
     up_e_hits_per_ev = _grouped(up_e_hit_chunks, "count")
     dw_e_hits_per_ev = _grouped(dw_e_hit_chunks, "count")
-        
+
     up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
     dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
 
@@ -756,7 +756,7 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
 
     for k in master_e_events:
         raw_counts = dw_e_hits_per_ev.get(k, 0) + up_e_hits_per_ev.get(k, 0)
-        
+
         if k in common_e_keys:
             # Reconstruct longitudinal shower z-depth from time difference
             z_est = v_eff * (down_first[k] - up_first[k]) / 2.0
@@ -775,15 +775,15 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         "pitch_mm": gap_thick_mm + _W_THICK_MM,
         "n_t_coincidences": len(common_t_evs),
         "n_e_coincidences": len(common_e_keys),
-        
+
         # Aligned primary time measurements
         "dw_first_times": np.array([down_first[k] for k in master_e_events]),
-        
+
         # Combined dual-ended yields
         "dw_e_total": np.array([dw_e_hits_per_ev.get(k, 0) + up_e_hits_per_ev.get(k, 0) for k in master_e_events]),
         "dw_e_total_corr": np.array(dw_e_total_corr),  # <-- Depth-corrected yield
         "dw_t_total": np.array([dw_t_hits_per_ev.get(k, 0) + up_t_hits_per_ev.get(k, 0) for k in master_t_events]),
-        
+
         "run_dirs": sorted(run_dirs),
     }
 
@@ -846,7 +846,7 @@ def main():
 
             sweeps = list(mod_path.glob("sweep_*"))
             if not sweeps: continue
-            
+
             # Extract all digits from the folder name to compare them numerically
             def extract_timestamp_key(path):
                 digits = "".join(re.findall(r"\d+", path.name))
@@ -949,7 +949,7 @@ def main():
         nrows = int(np.ceil(n_energies / ncols))
 
         # ─────────────────────────────────────────────────────────────────────
-       
+
         # 1. TIMING HIERARCHY — STABLE FIT WITH DYNAMIC FREEDMAN-DIACONIS BINNING
         # ─────────────────────────────────────────────────────────────────────
         # Ensure the directory physically exists before saving
@@ -995,7 +995,7 @@ def main():
                         fd_width = 2.0 * iqr / (n_points ** (1.0 / 3.0))
                     else:
                         fd_width = 3.5 * std_robust / (n_points ** (1.0 / 3.0))
-                    
+
                     # Prevent bins from being ridiculously small or large
                     fd_width = max(2.5, min(fd_width, 15.0)) 
                     plot_bins = max(10, int(np.ceil((hist_hi - hist_lo) / fd_width)))
@@ -1009,14 +1009,14 @@ def main():
                                             color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black", label="Data")
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
-                
+
                 # -----------------------------------------------------------------
                 # NEW: EMPIRICAL FWHM CALCULATION & VISUAL MARKER
                 # -----------------------------------------------------------------
                 max_idx = np.argmax(counts)
                 max_val = counts[max_idx]
                 half_max = max_val / 2.0
-                
+
                 # Find left crossing
                 left_slice = counts[:max_idx]
                 if len(left_slice) > 0 and np.any(left_slice < half_max):
@@ -1026,7 +1026,7 @@ def main():
                     x_left = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
                 else:
                     x_left = bin_centers[0]
-                    
+
                 # Find right crossing
                 right_slice = counts[max_idx:]
                 if len(right_slice) > 0 and np.any(right_slice < half_max):
@@ -1037,9 +1037,9 @@ def main():
                     x_right = x0 + (half_max - y0) * (x1 - x0) / (y1 - y0) if y1 != y0 else x0
                 else:
                     x_right = bin_centers[-1]
-                    
+
                 emp_fwhm = x_right - x_left
-                
+
                 # Draw Empirical FWHM Dimension Line (Blue)
                 ax.annotate('', xy=(x_left, half_max), xytext=(x_right, half_max),
                             arrowprops=dict(arrowstyle='<|-|>', color='#004488', lw=1.5, shrinkA=0, shrinkB=0))
@@ -1063,7 +1063,7 @@ def main():
                 try:
                     # 1. Create a mask to isolate bins >= 50% of the peak maximum
                     fit_mask = counts >= threshold_val
-                    
+
                     if np.sum(fit_mask) < 10.0:
                         raise ValueError("Not enough bins in the top-half window for a stable curve_fit")
 
@@ -1087,14 +1087,14 @@ def main():
                     y_fit = straight_gaussian(x_fit, amp_f, mu_f, sigma_f)
 
                     label_text = f"Gaussian (Top Half Fit)\n$\\sigma_t$ = {sigma_f:.1f} ps"
-                    
+
                     # Draw Fit FWHM Dimension Line (Black, dashed) slightly lower to prevent overlap
                     fit_half_max = amp_f / 2.0
                     ax.annotate('', xy=(x_min, fit_half_max * 0.95), xytext=(x_max, fit_half_max * 0.95),
                                 arrowprops=dict(arrowstyle='<|-|>', color='black', lw=1.2, linestyle='--', shrinkA=0, shrinkB=0))
                     ax.text(mu_f, fit_half_max * 0.95 - max_val * 0.05, f"Fit FWHM: {(2.355*sigma_f):.1f} ps", 
                             ha='center', va='top', color='black', fontsize=8)
-                    
+
                 except Exception as e:
                     print(f"  [WARNING] Fit failed for {ekey} ({mod}): {e}. Using fallback.")
                     fit_mask = counts >= threshold_val
@@ -1165,8 +1165,8 @@ def main():
             # spread much wider than the prompt peak. We multiply the kernel to match reality.
             # (Try values between 3.0 and 6.0; 4.0 is a solid starting point for LYSO/W)
             HEURISTIC_DISPERSION_FACTOR = 1.0
-             
-            
+
+
             sigma_layer = base_sigma_layer * HEURISTIC_DISPERSION_FACTOR
 
             if utils is not None and hasattr(utils, 'rl_unfold'):
@@ -1280,10 +1280,10 @@ def main():
         # ─────────────────────────────────────────────────────────────────────
         # Sum photon counts across all T-type capillaries for each individual event
         # to replicate multi-channel SiPM array readout in test beam.
-        
+
         for ekey in energy_keys:
             event_dict = master_summary[mod][ekey]
-            
+
             # Find all T-type channel keys (e.g. 'dw_t1', 'dw_t2', or multi-channel arrays)
             # Exclude pre-existing aggregated keys if re-running
             t_channel_keys = [
@@ -1296,24 +1296,30 @@ def main():
             if t_channel_keys:
                 # Convert all channel lists/arrays to 2D matrix: shape = (n_channels, n_events)
                 channel_data_list = [np.array(event_dict[k]) for k in t_channel_keys]
-                
+
                 # Handle potential length mismatches cleanly
                 min_events = min(len(arr) for arr in channel_data_list)
-                
+
                 if min_events > 0:
                     # Stack and sum across channels (axis 0) for each event
                     stacked_channels = np.vstack([arr[:min_events] for arr in channel_data_list])
                     summed_t_events = np.sum(stacked_channels, axis=0)
-                    
+
                     # Store transverse sum back into master_summary
                     master_summary[mod][ekey]["dw_t_total_summed"] = summed_t_events
                     print(f"[{mod} @ {ekey}] Summed {len(t_channel_keys)} T-channels across {min_events} events.")
-# ──────# ─────────────────────────────────────────────────────────────────────
-        # 3. E-TYPE CHANNELS INPUT & PLOTTING
+# ─────# ─────────────────────────────────────────────────────────────────────
+        # 3-pre INITIALIZE DATA CONTAINERS (At start of module loop)
         # ─────────────────────────────────────────────────────────────────────
         energies_gev, mu_e_list, res_e_list, res_e_corr_list = [], [], [], []
         res_e_err, res_e_corr_err, mu_e_err = [], [], []
 
+        energies_gev_t, mu_t_list, res_t_list = [], [], []
+        res_t_err, mu_t_err = [], []
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 3-A. E-TYPE CHANNELS INPUT & PLOTTING
+        # ─────────────────────────────────────────────────────────────────────
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
             if E_val <= 0: continue
@@ -1322,12 +1328,10 @@ def main():
             e_totals_corr = master_summary[mod][ekey].get("dw_e_total_corr", np.array([]))
             if len(e_totals) < 5: continue
 
-            # Evaluate Raw Resolution
             res_val_pct, res_err_val_pct = robust_resolution(e_totals, nsig=2.0, max_iters=4)
             res_val = res_val_pct / 100.0
             res_err_val = res_err_val_pct / 100.0
 
-            # Evaluate Depth-Corrected Resolution
             res_corr_pct, res_corr_err_pct = robust_resolution(e_totals_corr, nsig=2.0, max_iters=4)
             res_corr_val = res_corr_pct / 100.0
             res_corr_err_val = res_corr_err_pct / 100.0
@@ -1343,10 +1347,7 @@ def main():
                     mu_e_err.append(mu_val * res_val / np.sqrt(len(e_totals)))
                     res_e_err.append(res_err_val)
                     res_e_corr_err.append(res_corr_err_val)
-                else:
-                    print(f"  [FILTERED] E-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_val*100:.1f}%)")
 
-        # Define 2-parameter resolution function (C, S)
         def resolution_func(E, c, s):
             return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2)
 
@@ -1359,7 +1360,6 @@ def main():
 
             fig_er, (ax_lin, ax_res) = plt.subplots(1, 2, figsize=(14, 6))
 
-            # --- ROBUST LINEAR FIT GUARD ---
             def linear_func(x, m, b): return m * x + b
             popt_lin = None
             if len(energies_gev) >= 2:
@@ -1368,12 +1368,10 @@ def main():
                 except Exception as e:
                     print(f"  [WARNING] Linearity fit failed for {mod}: {e}")
 
-            # Uncorrected Raw Resolution
             ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
                             color="gray", alpha=0.7, label="Sim Raw (Uncorrected E-type)")
 
-            # Depth-Corrected Resolution
-            if 'res_e_corr_list' in locals() and len(res_e_corr_list) == len(energies_gev):
+            if len(res_e_corr_list) == len(energies_gev):
                 ax_res.errorbar(energies_gev, res_e_corr_list, yerr=res_e_corr_err, fmt=mod_markers.get(mod, 's'),
                                 color=mod_colors.get(mod, 'black'), label="Sim Corrected (Depth-Weighted LCE)")
 
@@ -1388,39 +1386,30 @@ def main():
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
 
-            # --- SIPM CORRECTION MATH ---
             n_active = 6 if "rc_hex" in mod else 4
             n_baseline = 8
             correction_factor = np.sqrt(n_active / n_baseline)
 
-            base_target_res = np.array(res_e_corr_list) if ('res_e_corr_list' in locals() and len(res_e_corr_list) == len(energies_gev)) else res_e_list
-            base_target_err = np.array(res_e_corr_err) if ('res_e_corr_err' in locals() and len(res_e_corr_err) == len(energies_gev)) else res_e_err_arr
+            base_target_res = np.array(res_e_corr_list) if len(res_e_corr_list) == len(energies_gev) else res_e_list
+            base_target_err = np.array(res_e_corr_err) if len(res_e_corr_err) == len(energies_gev) else res_e_err_arr
             
             proj_res = base_target_res * correction_factor
             proj_err = base_target_err * correction_factor
 
-            # --- ROBUST RESOLUTION FIT GUARD ---
             popt_res = None
-            fit_label = "Fit failed (Not enough data points)"
+            fit_label = "Fit failed"
             if len(energies_gev) >= 3:
                 try:
                     popt_res, _ = curve_fit(
-                        resolution_func, 
-                        energies_gev, 
-                        proj_res,
-                        p0=[0.08, 0.50], 
-                        bounds=([0.0, 0.0], [1.0, 5.0])
+                        resolution_func, energies_gev, proj_res,
+                        p0=[0.08, 0.50], bounds=([0.0, 0.0], [1.0, 5.0])
                     )
                     c_f, s_f = popt_res
                     fit_label = f"Proj Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$"
-
                 except Exception as e:
                     print(f"[FIT ERROR] E-type curve fit crashed with: {e}")
                     fit_label = "Proj Fit: Fit Failed"
-            else:
-                fit_label = f"Fit skipped (Requires 3 points; have {len(energies_gev)})"
 
-            # Plot the projected corrected data points
             ax_res.errorbar(energies_gev, proj_res, yerr=proj_err, fmt='D',
                             color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
 
@@ -1428,18 +1417,6 @@ def main():
                 x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
                 ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
                             color="darkorange", linestyle="--", linewidth=2.0, label=fit_label)
-                
-                # External reference overlays
-                if 'ENERGY_REF_CURVES' in globals():
-                    for ref_name, ref_p in ENERGY_REF_CURVES.items():
-                        y_ref = energy_ref_curve(x_res_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
-                        ax_res.plot(x_res_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5,
-                                    label=f"{ref_name}: {ref_p['c']*100:.2f}%$\\oplus${ref_p['s']*100:.2f}%/$\\sqrt{{E}}$"
-                                          f"$\\oplus${ref_p['n']*100:.2f}%/E")
-            
-            if 'ENERGY_DATA_BAND_FRAC' in globals():
-                ax_res.axhspan(ENERGY_DATA_BAND_FRAC[0], ENERGY_DATA_BAND_FRAC[1], color="lightgray", alpha=0.4,
-                               label=f"DATA sum$_{{lg}}$: {ENERGY_DATA_BAND_FRAC[0]*100:.0f}-{ENERGY_DATA_BAND_FRAC[1]*100:.0f}%")
 
             ax_res.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_res.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
@@ -1451,13 +1428,49 @@ def main():
             fig_er.tight_layout()
             fig_er.savefig(mod_dir / f"{mod}_energy_performance.png", dpi=200)
             plt.close(fig_er)
-        else:
-            print(f"  [WARNING] Not enough E-type energy points for {mod} energy_performance plot.")
-       # ─────────────────────────────────────────────────────────────────────
-        # 3-EXTRA. EXPORT MEAN PHOTON COUNTS & GENERATE HISTOGRAM FIT PANELS
+
         # ─────────────────────────────────────────────────────────────────────
-        
-        # 1. Write Mean Photon Counts (Denominators) to .txt file
+        # 3-B. SHOWER-MAX RESOLUTION INPUT (T-type channels)
+        # ─────────────────────────────────────────────────────────────────────
+        for ekey in energy_keys:
+            E_val = extract_numerical_energy(ekey)
+            if E_val <= 0: continue
+
+            t_matrix = master_summary[mod][ekey].get("dw_t_layer_matrix", 
+                       master_summary[mod][ekey].get("t_layer_matrix", None))
+            
+            t_totals = master_summary[mod][ekey].get("dw_t_total_summed", np.array([]))
+            t_totals = np.array(t_totals)
+
+            if t_matrix is not None and len(t_matrix) > 0 and np.ndim(t_matrix) == 2:
+                t_matrix = np.array(t_matrix)
+                t_eval_data, _ = compute_event_reconstructed_energy(
+                    prompt_counts_per_event=t_matrix,
+                    lambda_eff=30.0
+                )
+            else:
+                t_eval_data = t_totals
+
+            t_eval_data = t_eval_data[t_eval_data > 0]
+            if len(t_eval_data) < 5: continue
+
+            res_t_val_pct, res_t_err_val_pct = robust_resolution(t_eval_data, nsig=2.0, max_iters=4)
+            res_t_val = res_t_val_pct / 100.0
+            res_t_err_val = res_t_err_val_pct / 100.0
+
+            mu_val = float(np.mean(t_eval_data))
+
+            if mu_val > 0.1 and res_t_val > 0:
+                if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
+                    energies_gev_t.append(E_val)
+                    mu_t_list.append(mu_val)
+                    res_t_list.append(res_t_val)
+                    mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_eval_data)))
+                    res_t_err.append(res_t_err_val)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 3-C. EXPORT REPORT & HISTOGRAM PANELS (Runs AFTER data is collected)
+        # ─────────────────────────────────────────────────────────────────────
         mean_txt_path = mod_dir / f"{mod}_mean_photon_counts.txt"
         with open(mean_txt_path, "w") as f_out:
             f_out.write(f"{'='*70}\n")
@@ -1470,6 +1483,41 @@ def main():
                 std_v = mu_v * res_v
                 f_out.write(f"{float(E_v):<12.1f} | {'E-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
             
+            f_out.write(f"{'-'*70}\n")
+
+            for E_v, mu_v, res_v in zip(energies_gev_t, mu_t_list, res_t_list):
+                std_v = mu_v * res_v
+                f_out.write(f"{float(E_v):<12.1f} | {'T-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
+
+        print(f"[SUCCESS] Saved mean photon count report to: {mean_txt_path.resolve()}")
+
+        # Execute histogram plotting helpers
+        if len(energies_gev) > 0:
+            e_key = "dw_e_total_summed" if "dw_e_total_summed" in master_summary[mod][energy_keys[0]] else "dw_e_total"
+            plot_photon_histograms("E", energies_gev, e_key, mu_e_list, res_e_list)
+
+        if len(energies_gev_t) > 0:
+            t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
+            plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
+
+        
+       # ─────────────────────────────────────────────────────────────────────
+        # 3-D. EXPORT MEAN PHOTON COUNTS & GENERATE HISTOGRAM FIT PANELS
+        # ─────────────────────────────────────────────────────────────────────
+
+        # 1. Write Mean Photon Counts (Denominators) to .txt file
+        mean_txt_path = mod_dir / f"{mod}_mean_photon_counts.txt"
+        with open(mean_txt_path, "w") as f_out:
+            f_out.write(f"{'='*70}\n")
+            f_out.write(f" MEAN PHOTON COUNTS & RESOLUTION DENOMINATORS — {mod}\n")
+            f_out.write(f"{'='*70}\n")
+            f_out.write(f"{'Energy (GeV)':<12} | {'Channel':<10} | {'Mean (mu)':<14} | {'Std (sigma)':<14} | {'sigma/mu (%)':<12}\n")
+            f_out.write(f"{'-'*70}\n")
+
+            for E_v, mu_v, res_v in zip(energies_gev, mu_e_list, res_e_list):
+                std_v = mu_v * res_v
+                f_out.write(f"{float(E_v):<12.1f} | {'E-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
+
             f_out.write(f"{'-'*70}\n")
 
             for E_v, mu_v, res_v in zip(energies_gev_t, mu_t_list, res_t_list):
@@ -1628,7 +1676,7 @@ def main():
             if plotted_count > 0:
                 fig_h.suptitle(f"{channel_type}-Type Photon Distributions & Gaussian Fits — {mod}", fontsize=13, fontweight="bold")
                 fig_h.tight_layout()
-                
+
                 save_file = mod_dir / f"{mod}_{channel_type.lower()}_type_histograms.png"
                 fig_h.savefig(save_file, dpi=100)
                 print(f"[SUCCESS] Saved {channel_type}-type histogram panel to: {save_file.resolve()}")
@@ -1644,69 +1692,14 @@ def main():
             t_key = "dw_t_total_summed" if "dw_t_total_summed" in master_summary[mod][energy_keys[0]] else "dw_t_total"
             plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
 
-        # ─────────────────────────────────────────────────────────────────────
-        # 3-T. SHOWER-MAX RESOLUTION INPUT (T-type channels)
-        # ─────────────────────────────────────────────────────────────────────
-        energies_gev_t, mu_t_list, res_t_list, mu_t_err, res_t_err = [], [], [], [], []
-
-        for ekey in energy_keys:
-            E_val = extract_numerical_energy(ekey)
-            if E_val <= 0: continue
-
-            # --- Z_COG DEPTH CORRECTION FOR T-CHANNELS ---
-            t_matrix = master_summary[mod][ekey].get("dw_t_layer_matrix", 
-                       master_summary[mod][ekey].get("t_layer_matrix", None))
-            
-            t_totals = master_summary[mod][ekey].get("dw_t_total_summed", np.array([]))
-            t_totals = np.array(t_totals)
-
-            if t_matrix is not None and len(t_matrix) > 0 and np.ndim(t_matrix) == 2:
-                t_matrix = np.array(t_matrix)
-                t_eval_data, _ = compute_event_reconstructed_energy(
-                    prompt_counts_per_event=t_matrix,
-                    lambda_eff=30.0  # WLS effective attenuation length (mm)
-                )
-            else:
-                t_eval_data = t_totals
-
-            if len(t_eval_data) > 0:
-                print(f"  [{mod} @ {ekey}] RAW  -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Max: {np.max(t_eval_data)}")
-            
-            # Cut out events that recorded exactly 0 or negative photons
-            t_eval_data = t_eval_data[t_eval_data > 0]
-            
-            if len(t_eval_data) > 0:
-                print(f"  [{mod} @ {ekey}] >0 CUT -> N: {len(t_eval_data)}, Mean: {np.mean(t_eval_data):.1f}, Median: {np.median(t_eval_data):.1f}")
-
-            if len(t_eval_data) < 5: continue
-
-            res_t_val_pct, res_t_err_val_pct = robust_resolution(t_eval_data, nsig=2.0, max_iters=4)
-            res_t_val = res_t_val_pct / 100.0
-            res_t_err_val = res_t_err_val_pct / 100.0
-
-            mu_val = float(np.mean(t_eval_data))
-
-            if mu_val > 0.1 and res_t_val > 0:
-                if not np.isnan(res_t_val) and not np.isinf(res_t_val) and res_t_val < 10.0:
-                    energies_gev_t.append(E_val)
-                    mu_t_list.append(mu_val)
-                    res_t_list.append(res_t_val)
-                    mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_eval_data)))
-                    res_t_err.append(res_t_err_val)
-                else:
-                    print(f"  [FILTERED] T-type {mod} @ {E_val} GeV rejected (Unphysical resolution: {res_t_val*100:.1f}%)")
-
-        # [Histogram generator section operates between here]
-
-        # ─────────────────────────────────────────────────────────────────────
-        # 3B. SHOWER-MAX ENERGY RESOLUTION (standalone, paper-style layout)
+    # ─────────────────────────────────────────────────────────────────────
+        # 3B. SHOWER-MAX ENERGY RESOLUTION PLOT
         # ─────────────────────────────────────────────────────────────────────
         if len(energies_gev_t) >= 1:
             energies_gev_t = np.array(energies_gev_t)
             res_t_list = np.array(res_t_list)
             res_t_err_arr = np.array(res_t_err)
 
-            # --- SIPM CORRECTION MATH (T-Type) ---
             n_active_t = 6 if "rc_hex" in mod else 4
             n_baseline = 8
             correction_factor_t = np.sqrt(n_active_t / n_baseline)
@@ -1718,60 +1711,33 @@ def main():
             c_ft, s_ft = 0.0, 0.0
             if len(energies_gev_t) >= 3:
                 try:
-                    # Fit against the PROJECTED T-type resolution
                     popt_res_t, _ = curve_fit(
-                        resolution_func, 
-                        energies_gev_t, 
-                        proj_res_t,
-                        p0=[0.08, 0.50], 
-                        bounds=([0.0, 0.0], [1.0, 5.0])
+                        resolution_func, energies_gev_t, proj_res_t,
+                        p0=[0.08, 0.50], bounds=([0.0, 0.0], [1.0, 5.0])
                     )
-                    c_ft, s_ft = popt_res_t  # Correctly unpacking 2 parameters
+                    c_ft, s_ft = popt_res_t
                 except Exception as e:
                     print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
 
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
-            # Original Raw Points
             ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
-                           fmt='s', color="gray", alpha=0.7,
-                           markersize=6, capsize=3, capthick=1.2,
-                           label="Sim Raw (Uncorrected T-type)")
+                           fmt='s', color="gray", alpha=0.7, label="Sim Raw (Uncorrected T-type)")
 
-            # Projected Points
             ax_sm.errorbar(energies_gev_t, proj_res_t, yerr=proj_err_t,
-                           fmt='D', color="darkorange",
-                           markersize=6, capsize=3, capthick=1.2,
-                           label=f"Projected ({n_baseline} SiPMs Baseline)")
+                           fmt='D', color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
 
             if popt_res_t is not None:
                 x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
                 ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t),
                            color="darkorange", linestyle='--', linewidth=2.0)
 
-                # Reference overlays
-                if 'ENERGY_REF_CURVES' in globals():
-                    for ref_name, ref_p in ENERGY_REF_CURVES.items():
-                        y_ref = energy_ref_curve(x_sm_smooth, ref_p["c"], ref_p["s"], ref_p["n"])
-                        ax_sm.plot(x_sm_smooth, y_ref, color=ref_p["color"], linestyle=ref_p["ls"], linewidth=1.5)
-
-            # Build the text box string for 2 parameters
             fit_text = ""
             if popt_res_t is not None:
-                fit_text += (
-                    f"Proj Fit: "
-                    f"{c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$\n"
-                )
+                fit_text += f"Proj Fit: {c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$\n"
             else:
                 fit_text += f"Proj Fit: skipped (< 3 points)\n"
                 
-            if 'ENERGY_REF_CURVES' in globals():
-                for ref_name, ref_p in ENERGY_REF_CURVES.items():
-                    fit_text += (
-                        f"{ref_name}: {ref_p['c']*100:.2f}% $\\oplus$ {ref_p['s']*100:.2f}%/$\\sqrt{{E}}$ "
-                        f"$\\oplus$ {ref_p['n']*100:.2f}%/E\n"
-                    )
-            
             ax_sm.text(0.98, 0.97, fit_text.strip(), transform=ax_sm.transAxes,
                        ha='right', va='top', fontsize=9, color="black", 
                        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="lightgray"))
@@ -1784,9 +1750,7 @@ def main():
 
             fig_sm.tight_layout()
             fig_sm.savefig(mod_dir / f"{mod}_showermax_energy_resolution.png", dpi=200)
-            plt.close(fig_sm)
-        else:
-            print(f"  [WARNING] Not enough T-type energy points for {mod} shower-max plot.")
+            plt.close(fig_sm)   
 
     # ─────────────────────────────────────────────────────────────────────
     # 4. UNIFIED OVERALL PERFORMANCE HORIZON COMPARISON GRAPH
@@ -1892,14 +1856,14 @@ def main():
         for ekey in energy_keys:
             raw_data = master_summary[mod][ekey].get("raw_bm_data", np.array([]))
             n_ev = master_summary[mod][ekey].get("n_t_coincidences", 0)
-            
+
             if n_ev < 8 or len(raw_data) < 10:
                 continue
-                
+
             # Clean outliers using your existing methodology
             clean_data = clean_around_mode(raw_data, window_ps=500.0)
             fwhm_val = calculate_empirical_fwhm(clean_data, bins=80)
-            
+
             if fwhm_val > 0:
                 x_energy_fwhm.append(extract_numerical_energy(ekey))
                 y_fwhm.append(fwhm_val)
@@ -1939,7 +1903,7 @@ def main():
         verticalalignment='bottom',
         bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', edgecolor='#d3d3d3', alpha=0.9)
     )
-    
+
     fwhm_save_path = summary_dir / "timing_fwhm_vs_energy.png"
     fig_fwhm.savefig(fwhm_save_path, dpi=220, bbox_inches="tight")
     plt.close(fig_fwhm)
@@ -2048,7 +2012,7 @@ def main():
         print(f"[SUCCESS] Saved transverse profile plot for {mod} to: {save_path.resolve()}")
 
 
-    
+
     # ─────────────────────────────────────────────────────────────────────
     # 6. EXPORT MASTER MATRIX TEXT REPORT
     # ─────────────────────────────────────────────────────────────────────
