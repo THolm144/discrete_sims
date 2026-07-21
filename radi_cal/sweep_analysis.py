@@ -286,6 +286,7 @@ def main():
     )
 
     energies_gev, mean_yields, res_percent, res_err_percent = [], [], [], []
+    photon_counts_by_energy = []  # keep raw per-event arrays for the calibrated-energy curve
 
     for edir in energy_dirs:
         e_val = extract_numerical_energy(edir.name)
@@ -304,6 +305,7 @@ def main():
         mean_yields.append(mean_N)
         res_percent.append(res)
         res_err_percent.append(err)
+        photon_counts_by_energy.append(photon_counts)
 
         print(f"     -> Events: {len(photon_counts)} | Mean Photons: {mean_N:.1f} | Resolution: {res:.2f}% ± {err:.2f}%")
 
@@ -330,12 +332,64 @@ def main():
     except Exception as e:
         print(f" [+] Fit Warning: curve_fit failed ({e}). Using default reference curves.")
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # CALIBRATED-ENERGY CURVE
+    # ─────────────────────────────────────────────────────────────────────────
+    # Raw photon-count resolution (pink) mixes real shot noise with whatever
+    # offset/pedestal sits in N_photons(E). The paper instead resolutions the
+    # RECONSTRUCTED ENERGY: calibrate <N_photons> vs E_beam with a straight
+    # line (N = a*E + b), invert it per event (E_reco = (N-b)/a), then take
+    # sigma/mean of E_reco at each beam energy. This does not change the
+    # underlying photostatistics, it just measures resolution on the same
+    # quantity (energy) that the paper's 9.31/52.04/31.62 fit is measuring,
+    # so the two become directly comparable.
+    mean_yields_arr = np.array(mean_yields)
+    calib_slope, calib_intercept = np.polyfit(energies_gev, mean_yields_arr, 1)
+    print(f" [+] Calibration: N_photons = {calib_slope:.3f} * E_GeV + {calib_intercept:.3f}")
+
+    res_calib_percent, res_calib_err_percent = [], []
+    for e_val, photon_counts in zip(energies_gev, photon_counts_by_energy):
+        e_reco = (np.asarray(photon_counts, dtype=float) - calib_intercept) / calib_slope
+        # guard against non-physical negative reconstructed energies from the
+        # pedestal subtraction at low photon count / low beam energy
+        e_reco = e_reco[e_reco > 0]
+        if len(e_reco) < 2:
+            res_calib_percent.append(np.nan)
+            res_calib_err_percent.append(np.nan)
+            continue
+        res_c, err_c = robust_resolution(e_reco)
+        res_calib_percent.append(res_c)
+        res_calib_err_percent.append(err_c)
+        print(f"     -> E={e_val:.1f} GeV | Calibrated E_reco mean={np.mean(e_reco):.2f} GeV "
+              f"| Resolution: {res_c:.2f}% ± {err_c:.2f}%")
+
+    res_calib_percent = np.array(res_calib_percent)
+    res_calib_err_percent = np.array(res_calib_err_percent)
+    calib_mask = np.isfinite(res_calib_percent)
+
+    popt_calib = None
+    if calib_mask.sum() >= 3:
+        try:
+            popt_calib, _ = curve_fit(
+                resolution_fit_func,
+                energies_gev[calib_mask],
+                res_calib_percent[calib_mask],
+                sigma=res_calib_err_percent[calib_mask],
+                p0=[10.0, 50.0, 30.0],
+                bounds=([0.0, 0.0, 0.0], [30.0, 150.0, 100.0])
+            )
+        except Exception as e:
+            print(f" [+] Calibrated fit warning: curve_fit failed ({e}). Not plotting a calibrated fit curve.")
+            popt_calib = None
+
     # Save summary dataframe
     df_summary = pd.DataFrame({
         "Energy_GeV": energies_gev,
         "Mean_Photons": mean_yields,
         "Energy_Resolution_Percent": res_percent,
         "Energy_Resolution_Err_Percent": res_err_percent,
+        "Calibrated_Energy_Resolution_Percent": res_calib_percent,
+        "Calibrated_Energy_Resolution_Err_Percent": res_calib_err_percent,
     })
     df_summary.to_csv(out_dir / "sweep_4T_summary.csv", index=False)
 
@@ -353,6 +407,24 @@ def main():
     e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
     sim_curve = resolution_fit_func(e_smooth, *popt_sim)
     plt.plot(e_smooth, sim_curve, 'm--', lw=1.8)
+
+    # 2b. Calibrated-Energy Data Points + Fit (Cyan Circles) — same photon
+    #     data as the pink curve, but resolutioned on reconstructed energy
+    #     (N_photons -> E_reco via linear calibration) instead of raw counts.
+    if calib_mask.sum() >= 1:
+        if popt_calib is not None:
+            calib_label = (f'sim (calibrated energy): {popt_calib[0]:.2f}% $\\oplus$ '
+                            f'{popt_calib[1]:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {popt_calib[2]:.1f}%/E')
+        else:
+            calib_label = 'sim (calibrated energy)'
+        plt.errorbar(
+            energies_gev[calib_mask], res_calib_percent[calib_mask], yerr=res_calib_err_percent[calib_mask],
+            fmt='o', color='c', ecolor='c', capsize=3, elinewidth=1.2,
+            label=calib_label
+        )
+        if popt_calib is not None:
+            calib_curve = resolution_fit_func(e_smooth, *popt_calib)
+            plt.plot(e_smooth, calib_curve, 'c--', lw=1.8)
 
     # 3. Continuous Reference Curves
     for label, params in ENERGY_REF_CURVES.items():
