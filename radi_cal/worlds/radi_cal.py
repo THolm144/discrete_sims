@@ -260,7 +260,7 @@ def build_world(sim, units):
         gap_vol  = _make_gap(f"gap_{i}", mm)
         gap_vol.name        = f"gap_{i}"
         gap_vol.mother      = TARGET_VOLUME_NAME
-        gap_vol.material    = "Tyvek"
+        gap_vol.material    = "G4_Air"
         gap_vol.translation = [0, 0, z_pos * mm]
         sim.add_volume(gap_vol)
 
