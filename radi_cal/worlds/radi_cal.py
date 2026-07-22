@@ -17,7 +17,7 @@ CAPABILITIES = {
     "optical":          True,
     "dose":             True,
     "sipm_hits":        True,
-    "optical_exits":    False,
+    "optical_exits":    True,
     "calorimeter_mode": True,
 }
 
@@ -49,7 +49,6 @@ _FILAMENT_R_MM   = 0.900 / 2              # 0.45 mm
 # ── Shower-max band (T-type bore region) ──────────────────────────────────────
 _SHOWER_FIRST    = 9                      
 _SHOWER_LAST     = 13                     
-                   
 _LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
 _FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
 _LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
@@ -182,7 +181,7 @@ def _build_capillaries(sim, mm):
 
             bore          = vol_module.TubsVolume(name=f"cap_{i}_bore")
             bore.rmin     = 0.0
-            bore.rmax     = (_CAP_INNER_MM + 0.05) * mm
+            bore.rmax     = _FILAMENT_R_MM * mm  # exact fit: filament fills the bore with no air gap
             bore.dz       = (_FILAMENT_LEN_MM / 2 + 0.01) * mm
 
             quartz_vol    = vol_module.subtract_volumes(
@@ -261,7 +260,7 @@ def build_world(sim, units):
         gap_vol  = _make_gap(f"gap_{i}", mm)
         gap_vol.name        = f"gap_{i}"
         gap_vol.mother      = TARGET_VOLUME_NAME
-        gap_vol.material    = "G4_AIR"
+        gap_vol.material    = "Tyvek"
         gap_vol.translation = [0, 0, z_pos * mm]
         sim.add_volume(gap_vol)
 
