@@ -296,7 +296,7 @@ def add_optical_surfaces(sim, units):
         if lyso_name in vols and gap_name in vols:
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
-
+    '''
     for cap_idx in _E_TYPE_INDICES:
         core_name   = f"cap_{cap_idx}_active_core"
         sleeve_name = f"cap_{cap_idx}_active_sleeve"
@@ -314,7 +314,7 @@ def add_optical_surfaces(sim, units):
         plug_name = f"cap_{cap_idx}_filament"
         if rod_name in vols and plug_name in vols:
             sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
-
+    '''
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS HOOKS
 # ─────────────────────────────────────────────────────────────────────────────
