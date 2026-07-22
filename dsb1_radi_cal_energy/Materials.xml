@@ -94,9 +94,9 @@
   
   <material name="LYSO">
     <propertiestable>
-      <property name="SCINTILLATIONYIELD"         value="32"/>
+      <property name="SCINTILLATIONYIELD"         value="33.2"/>
       <property name="RESOLUTIONSCALE"            value="1.0"/>
-      <property name="SCINTILLATIONTIMECONSTANT1" value="40" unit="ns"/>
+      <property name="SCINTILLATIONTIMECONSTANT1" value="36" unit="ns"/>
       <property name="SCINTILLATIONYIELD1"        value="1.0"/>
       <propertyvector name="SCINTILLATIONCOMPONENT1" energyunit="eV">
         <ve energy="2.5" value="0.10"/>
@@ -114,21 +114,21 @@
         <ve energy="3.3" value="1.82"/>
       </propertyvector>
       <propertyvector name="ABSLENGTH" unit="m" energyunit="eV">
-        <ve energy="1.771" value="0.0313"/>
-        <ve energy="1.907" value="0.0313"/>
-        <ve energy="2.066" value="0.0344"/>
-        <ve energy="2.254" value="0.0344"/>
-        <ve energy="2.480" value="0.0313"/>
-        <ve energy="2.755" value="0.0313"/>
-        <ve energy="2.883" value="0.0344"/>
-        <ve energy="2.952" value="0.0380"/>
-        <ve energy="3.024" value="0.0313"/>
-        <ve energy="3.061" value="0.0265"/>
-        <ve energy="3.100" value="0.0215"/>
-        <ve energy="3.139" value="0.0161"/>
-        <ve energy="3.179" value="0.0112"/>
-        <ve energy="3.221" value="0.0078"/>
-        <ve energy="3.263" value="0.0058"/>
+        <ve energy="1.771" value="0.3"/>
+        <ve energy="1.907" value="0.3"/>
+        <ve energy="2.066" value="0.3"/>
+        <ve energy="2.254" value="0.3"/>
+        <ve energy="2.480" value="0.3"/>
+        <ve energy="2.755" value="0.3"/>
+        <ve energy="2.883" value="0.3"/>
+        <ve energy="2.952" value="0.3"/>
+        <ve energy="3.024" value="0.3"/>
+        <ve energy="3.061" value="0.3"/>
+        <ve energy="3.100" value="0.3"/>
+        <ve energy="3.139" value="0.3"/>
+        <ve energy="3.179" value="0.3"/>
+        <ve energy="3.221" value="0.3"/>
+        <ve energy="3.263" value="0.3"/>
       </propertyvector>
     </propertiestable>
   </material>
@@ -250,7 +250,7 @@
            paper-matched production run used RADICAL_SCINT_YIELD=0.07, i.e.
            10000 times 0.07 = 700 ph/MeV. Using that tuned value here. See
            CLAUDE.md, "YIELD-SWEEP POSTMORTEM" section. -->
-      <property name="SCINTILLATIONYIELD"          value="10000"/>
+      <property name="SCINTILLATIONYIELD"          value="700"/>
       <property name="RESOLUTIONSCALE"              value="1.0"/>
       <property name="SCINTILLATIONTIMECONSTANT1"   value="3.5" unit="ns"/>
       <property name="SCINTILLATIONYIELD1"          value="1.0"/>
@@ -282,15 +282,16 @@
       </propertyvector>
 
       <!-- WLS Absorption Length: unchanged from your original -->
+      <!-- WLS Absorption Length: Matched to Walker's C++ setup -->
       <propertyvector name="WLSABSLENGTH" unit="m" energyunit="eV">
         <ve energy="1.55" value="1000.0"/>
         <ve energy="2.40" value="1000.0"/>
         <ve energy="2.48" value="5.000"/>
-        <ve energy="2.55" value="0.100"/>
-        <ve energy="2.70" value="0.001"/>
-        <ve energy="2.95" value="0.0001"/>
-        <ve energy="3.54" value="0.0001"/>
-        <ve energy="6.20" value="0.0001"/>
+        <ve energy="2.55" value="5.000"/>   <!-- Raised from 0.1m to 5m to eliminate self-absorption at 494 nm -->
+        <ve energy="2.70" value="0.002"/>   <!-- Matched to Walker's 2.0 mm (0.002 m) -->
+        <ve energy="2.95" value="0.002"/>   <!-- Matched to Walker's 2.0 mm at LYSO peak (~420 nm) -->
+        <ve energy="3.54" value="0.002"/>   <!-- Matched to Walker's 2.0 mm -->
+        <ve energy="6.20" value="1000.0"/>
       </propertyvector>
 
       <!-- WLS Re-emission Spectrum: unchanged from your original -->
