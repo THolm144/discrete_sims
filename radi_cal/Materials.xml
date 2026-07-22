@@ -250,7 +250,7 @@
            paper-matched production run used RADICAL_SCINT_YIELD=0.07, i.e.
            10000 times 0.07 = 700 ph/MeV. Using that tuned value here. See
            CLAUDE.md, "YIELD-SWEEP POSTMORTEM" section. -->
-      <property name="SCINTILLATIONYIELD"          value="10000"/>
+      <property name="SCINTILLATIONYIELD"          value="700"/>
       <property name="RESOLUTIONSCALE"              value="1.0"/>
       <property name="SCINTILLATIONTIMECONSTANT1"   value="3.5" unit="ns"/>
       <property name="SCINTILLATIONYIELD1"          value="1.0"/>
@@ -282,15 +282,16 @@
       </propertyvector>
 
       <!-- WLS Absorption Length: unchanged from your original -->
+      <!-- WLS Absorption Length: Matched to Walker's C++ setup -->
       <propertyvector name="WLSABSLENGTH" unit="m" energyunit="eV">
         <ve energy="1.55" value="1000.0"/>
         <ve energy="2.40" value="1000.0"/>
         <ve energy="2.48" value="5.000"/>
-        <ve energy="2.55" value="0.100"/>
-        <ve energy="2.70" value="0.001"/>
-        <ve energy="2.95" value="0.0001"/>
-        <ve energy="3.54" value="0.0001"/>
-        <ve energy="6.20" value="0.0001"/>
+        <ve energy="2.55" value="5.000"/>   <!-- Raised from 0.1m to 5m to eliminate self-absorption at 494 nm -->
+        <ve energy="2.70" value="0.002"/>   <!-- Matched to Walker's 2.0 mm (0.002 m) -->
+        <ve energy="2.95" value="0.002"/>   <!-- Matched to Walker's 2.0 mm at LYSO peak (~420 nm) -->
+        <ve energy="3.54" value="0.002"/>   <!-- Matched to Walker's 2.0 mm -->
+        <ve energy="6.20" value="1000.0"/>
       </propertyvector>
 
       <!-- WLS Re-emission Spectrum: unchanged from your original -->

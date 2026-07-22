@@ -37,17 +37,36 @@
     </propertiestable>
   </surface>
 
-  <surface name="Tyvek" model="unified" finish="groundfrontpainted" type="dielectric_dielectric">
-      <propertiestable>
-          <propertyvector name="REFLECTIVITY" energyunit="eV">
-              <ve energy="1.0" value="0.98"/>
-              <ve energy="4.5" value="0.98"/>
-          </propertyvector>
-          <propertyvector name="DIFFUSLOBCONSTANT" energyunit="eV">
-              <ve energy="1.0" value="1.0"/>
-              <ve energy="4.5" value="1.0"/>
-          </propertyvector>
-      </propertiestable>
+  <surface name="Tyvek" 
+           model="unified" 
+           type="dielectric_metal" 
+           finish="ground" 
+           sigmaalpha="0.1">
+    <propertiestable>
+      <!-- 98% Reflection / 2% Absorption across all energies -->
+      <propertyvector name="REFLECTIVITY" energyunit="eV">
+        <ve energy="1.0" value="0.98"/>
+        <ve energy="4.5" value="0.98"/>
+      </propertyvector>
+
+      <!-- 100% Diffuse (Lambertian) scattering distribution -->
+      <propertyvector name="DIFFUSLOBCONSTANT" energyunit="eV">
+        <ve energy="1.0" value="1.0"/>
+        <ve energy="4.5" value="1.0"/>
+      </propertyvector>
+      <propertyvector name="SPECULARLOBECONSTANT" energyunit="eV">
+        <ve energy="1.0" value="0.0"/>
+        <ve energy="4.5" value="0.0"/>
+      </propertyvector>
+      <propertyvector name="SPECULARSPIKECONSTANT" energyunit="eV">
+        <ve energy="1.0" value="0.0"/>
+        <ve energy="4.5" value="0.0"/>
+      </propertyvector>
+      <propertyvector name="BACKSPIKECONSTANT" energyunit="eV">
+        <ve energy="1.0" value="0.0"/>
+        <ve energy="4.5" value="0.0"/>
+      </propertyvector>
+    </propertiestable>
   </surface>
 
 </surfaces>
