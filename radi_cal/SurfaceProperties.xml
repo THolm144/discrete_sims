@@ -21,8 +21,8 @@
            finish="polished">
     <propertiestable>
       <propertyvector name="REFLECTIVITY" energyunit="eV">
-        <ve energy="1.38" value="0.0"/>
-        <ve energy="4.13" value="0.0"/>
+        <ve energy="1.38" value="0.95"/>
+        <ve energy="4.13" value="0.95"/>
       </propertyvector>
       <propertyvector name="EFFICIENCY" energyunit="eV">
         <ve energy="1.38" value="0.01"/>
