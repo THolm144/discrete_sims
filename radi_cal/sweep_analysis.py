@@ -251,25 +251,26 @@ def analyze_energy_batch(batch_dir: Path, module_name: str = "dsb1_radi_cal_ener
 def analyze_showermax_edep_batch(batch_dir: Path):
     """
     Per-event RAW dE/dx (no optical transport) summed over the shower-max
-    LYSO layers — the sim analog of Walker's H1[28]. Reads the
-    'showermax_edep.root' PhaseSpaceActor output (EventID, TotalEnergyDeposit
-    per step, opticalphoton already filtered out at the actor level) and
-    returns one total-energy-deposited value (MeV) per event.
+    LYSO layers — the sim analog of Walker's H1[28]. Reads the per-layer
+    'showermax_edep_{layer}.root' PhaseSpaceActor outputs (EventID,
+    TotalEnergyDeposit per step, opticalphoton already filtered out at the
+    actor level), sums across layers per event, and returns one
+    total-energy-deposited value (MeV) per event.
 
-    Requires the 'showermax_edep' PhaseSpaceActor added in simulator.py —
-    older run directories generated before that actor existed will simply
-    have no showermax_edep.root files and this returns None.
+    Requires the 'showermax_edep_{i}' PhaseSpaceActors added in
+    simulator.py — older run directories generated before those actors
+    existed will simply have no matching files and this returns None.
     """
-    edep_files = sorted(batch_dir.rglob("showermax_edep.root"))
+    edep_files = sorted(batch_dir.rglob("showermax_edep_*.root"))
     if not edep_files:
         return None
 
-    edep_sum_per_ev = {}  # (run_tag, EventID) -> summed TotalEnergyDeposit
+    edep_sum_per_ev = {}  # (run_tag, EventID) -> summed TotalEnergyDeposit across all layers
     for fpath in edep_files:
         run_tag = fpath.parent.name
         try:
             with uproot.open(fpath) as f:
-                tk = next((k for k in f.keys() if "showermax_edep" in k.split(";")[0]), None)
+                tk = next((k for k in f.keys() if k.split(";")[0].startswith("showermax_edep")), None)
                 if not tk:
                     continue
                 tree = f[tk]
@@ -360,7 +361,7 @@ def main():
         else:
             edep_res_percent.append(np.nan)
             edep_res_err_percent.append(np.nan)
-            print(f"     -> [dE/dx] No showermax_edep.root found for this energy point (older run?)")
+            print(f"     -> [dE/dx] No showermax_edep_*.root found for this energy point (older run?)")
 
         print(f"     -> Events: {len(photon_counts)} | Mean Photons: {mean_N:.1f} | Resolution: {res:.2f}% ± {err:.2f}%")
 
