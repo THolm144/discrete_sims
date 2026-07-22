@@ -239,14 +239,14 @@ def build_world(sim, units):
 
     world          = sim.world
     world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
-    world.material = "AIR"
+    world.material = "Air"
 
     calor_base      = vol_module.BoxVolume(name="calorimeter_box")
     calor_base.size = [(_CALOR_XY_MM + 0.020) * mm, (_CALOR_XY_MM + 0.020) * mm, (_CALOR_THICK_MM + 0.020) * mm]
     calor_vol       = _drill_holes(calor_base, "calorimeter", (_CALOR_THICK_MM + 0.020)/2, mm, clearance=0.010)
     calor_vol.name        = TARGET_VOLUME_NAME
     calor_vol.mother      = "world"
-    calor_vol.material    = "AIR"
+    calor_vol.material    = "Air"
     calor_vol.translation = [0, 0, 0]
     sim.add_volume(calor_vol)
 
