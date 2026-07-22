@@ -181,7 +181,7 @@ def _build_capillaries(sim, mm):
 
             bore          = vol_module.TubsVolume(name=f"cap_{i}_bore")
             bore.rmin     = 0.0
-            bore.rmax     = _FILAMENT_R_MM * mm    # FIX: Set directly to 0.450 mm (was (_CAP_INNER_MM + 0.05))
+            bore.rmax     = (_CAP_INNER_MM + 0.05) * mm
             bore.dz       = (_FILAMENT_LEN_MM / 2 + 0.01) * mm
 
             quartz_vol    = vol_module.subtract_volumes(
@@ -239,14 +239,14 @@ def build_world(sim, units):
 
     world          = sim.world
     world.size     = [_WORLD_XY_MM * mm, _WORLD_XY_MM * mm, _WORLD_Z_MM * mm]
-    world.material = "Air"
+    world.material = "G4_AIR"
 
     calor_base      = vol_module.BoxVolume(name="calorimeter_box")
     calor_base.size = [(_CALOR_XY_MM + 0.020) * mm, (_CALOR_XY_MM + 0.020) * mm, (_CALOR_THICK_MM + 0.020) * mm]
     calor_vol       = _drill_holes(calor_base, "calorimeter", (_CALOR_THICK_MM + 0.020)/2, mm, clearance=0.010)
     calor_vol.name        = TARGET_VOLUME_NAME
     calor_vol.mother      = "world"
-    calor_vol.material    = "Air"
+    calor_vol.material    = "G4_AIR"
     calor_vol.translation = [0, 0, 0]
     sim.add_volume(calor_vol)
 
@@ -260,7 +260,7 @@ def build_world(sim, units):
         gap_vol  = _make_gap(f"gap_{i}", mm)
         gap_vol.name        = f"gap_{i}"
         gap_vol.mother      = TARGET_VOLUME_NAME
-        gap_vol.material    = "Air"
+        gap_vol.material    = "G4_AIR"
         gap_vol.translation = [0, 0, z_pos * mm]
         sim.add_volume(gap_vol)
 
