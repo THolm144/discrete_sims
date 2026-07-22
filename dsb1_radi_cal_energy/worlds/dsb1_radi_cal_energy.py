@@ -3,8 +3,8 @@ worlds/dsb1_radi_cal_energy.py
 =========================
 RADiCAL Shashlik calorimeter — energy-measurement variant.
 
-FIXED VERSION: Synchronized to the verified flat-sibling hierarchy and 
-staggered clearance architecture of rc_hex.py.
+FIXED VERSION: Corrected T-type capillary bore sizing and optical surfaces
+to allow natural Fresnel transmission into quartz.
 """
 
 import numpy as np
@@ -182,7 +182,7 @@ def _build_capillaries(sim, mm):
 
             bore          = vol_module.TubsVolume(name=f"cap_{i}_bore")
             bore.rmin     = 0.0
-            bore.rmax     = (_CAP_INNER_MM + 0.05) * mm
+            bore.rmax     = _FILAMENT_R_MM * mm  # FIXED: Matches filament radius to close air gap
             bore.dz       = (_FILAMENT_LEN_MM / 2 + 0.01) * mm
 
             quartz_vol    = vol_module.subtract_volumes(
@@ -210,7 +210,6 @@ def _build_sipms(sim, mm):
         z_card = sgn * _CARD_Z_MM * mm
 
         card_box       = vol_module.BoxVolume(name=f"card_{end_name}_box")
-        # Change this line in radi_cal_energy.py to use half-thickness:
         card_box.size  = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, (_CARD_THICK_MM / 2) * mm]
         card_hole      = vol_module.TubsVolume(name=f"card_{end_name}_hole")
         card_hole.rmin = 0.0
@@ -288,7 +287,7 @@ def build_world(sim, units):
     return sim
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OPTICAL SURFACES (UNCHANGED)
+# OPTICAL SURFACES
 # ─────────────────────────────────────────────────────────────────────────────
 def add_optical_surfaces(sim, units):
     vols = sim.volume_manager.volumes
@@ -311,14 +310,10 @@ def add_optical_surfaces(sim, units):
         if core_name in vols and tail_f_name in vols:
             sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
 
-    for cap_idx in _T_TYPE_INDICES:
-        rod_name  = f"cap_{cap_idx}"
-        plug_name = f"cap_{cap_idx}_filament"
-        if rod_name in vols and plug_name in vols:
-            sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
+    # FIXED: T-Type optical surface definition removed to enable natural Fresnel transmission.
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS HOOKS (UNCHANGED)
+# ANALYSIS HOOKS
 # ─────────────────────────────────────────────────────────────────────────────
 def analyze(batch_dir, run_dirs, meta, utils):
     import matplotlib.pyplot as plt

@@ -115,7 +115,7 @@ def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
         bore.rmin = 0.0
-        bore.rmax = (_CAP_OUTER_MM + clearance) * mm  # 🌟 Matched staggered clearance!
+        bore.rmax = (_CAP_OUTER_MM + clearance) * mm  # 🌟 Matched staggered clearance! 
         bore.dz   = bore_dz
         result    = vol_module.subtract_volumes(
             result, bore,
@@ -195,7 +195,7 @@ def _build_capillaries(sim, mm):
 
             bore          = vol_module.TubsVolume(name=f"cap_{i}_bore")
             bore.rmin     = 0.0
-            bore.rmax     = (_CAP_INNER_MM + 0.05) * mm
+            bore.rmax     =  _FILAMENT_R_MM * mm
             bore.dz       = (_FILAMENT_LEN_MM / 2 + 0.01) * mm
 
             quartz_vol    = vol_module.subtract_volumes(

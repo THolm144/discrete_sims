@@ -182,7 +182,7 @@ def _build_capillaries(sim, mm):
 
             bore          = vol_module.TubsVolume(name=f"cap_{i}_bore")
             bore.rmin     = 0.0
-            bore.rmax     = (_CAP_INNER_MM + 0.05) * mm
+            bore.rmax     =  _FILAMENT_R_MM * mm
             bore.dz       = (_FILAMENT_LEN_MM / 2 + 0.01) * mm
 
             quartz_vol    = vol_module.subtract_volumes(
@@ -299,23 +299,7 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
 
-    for cap_idx in _E_TYPE_INDICES:
-        core_name   = f"cap_{cap_idx}_active_core"
-        sleeve_name = f"cap_{cap_idx}_active_sleeve"
-        tail_b_name = f"cap_{cap_idx}_tail_back"
-        tail_f_name = f"cap_{cap_idx}_tail_front"
-        if core_name in vols and sleeve_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, sleeve_name, "Polished")
-        if core_name in vols and tail_b_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, tail_b_name, "Polished")
-        if core_name in vols and tail_f_name in vols:
-            sim.physics_manager.add_optical_surface(core_name, tail_f_name, "Polished")
-
-    for cap_idx in _T_TYPE_INDICES:
-        rod_name  = f"cap_{cap_idx}"
-        plug_name = f"cap_{cap_idx}_filament"
-        if rod_name in vols and plug_name in vols:
-            sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
+    
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS HOOKS (UNCHANGED)
