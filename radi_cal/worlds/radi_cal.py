@@ -117,17 +117,17 @@ def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
 def _make_gap(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _GAP_THICK_MM * mm]
-    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.012)
+    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.010)  # Uniform clearance
 
 def _make_lyso(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, _LYSO_THICK_MM * mm]
-    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.014)
+    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.010)  # Uniform clearance
 
 def _make_abso(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _W_THICK_MM * mm]
-    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.012)
+    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.010)  # Uniform clearance
 
 def _build_capillaries(sim, mm):
     half_cap   = _CAP_LENGTH_MM / 2 * mm
