@@ -1,5 +1,5 @@
 """
-worlds/radi_cal.py
+worlds/dsb1_radi_cal_energy.py
 =========================
 RADiCAL Shashlik calorimeter — energy-measurement variant.
 
@@ -47,6 +47,8 @@ _HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM
 _FILAMENT_R_MM   = 0.900 / 2              # 0.45 mm
 
 # ── Shower-max band (T-type bore region) ──────────────────────────────────────
+_SHOWER_FIRST    = 9                      
+_SHOWER_LAST     = 13                     
 _SHOWER_FIRST    = 5                    
 _SHOWER_LAST     = 9                     
 _LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
@@ -117,17 +119,17 @@ def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
 def _make_gap(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _GAP_THICK_MM * mm]
-    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.010)  # Uniform clearance
+    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.012)
 
 def _make_lyso(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, _LYSO_THICK_MM * mm]
-    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.010)  # Uniform clearance
+    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.014)
 
 def _make_abso(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _W_THICK_MM * mm]
-    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.010)  # Uniform clearance
+    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.012)
 
 def _build_capillaries(sim, mm):
     half_cap   = _CAP_LENGTH_MM / 2 * mm
@@ -198,7 +200,7 @@ def _build_capillaries(sim, mm):
             filament             = sim.add_volume("Tubs", f"cap_{i}_filament")
             filament.mother      = "world"
             filament.rmin        = 0.0
-            filament.rmax        = _FILAMENT_R_MM * mm    # 0.450 mm
+            filament.rmax        = _FILAMENT_R_MM * mm
             filament.dz          = (_FILAMENT_LEN_MM / 2) * mm
             filament.translation = [cx * mm, cy * mm, _FILAMENT_Z_MM * mm]
             filament.material    = "DSB1"
@@ -290,8 +292,6 @@ def build_world(sim, units):
 # ─────────────────────────────────────────────────────────────────────────────
 def add_optical_surfaces(sim, units):
     vols = sim.volume_manager.volumes
-
-    # 1. LYSO <-> Tyvek Gap Surfaces
     for i in range(_N_LYSO):
         lyso_name = f"lyso_{i}"
         gap_name  = f"gap_{i}"
@@ -299,7 +299,6 @@ def add_optical_surfaces(sim, units):
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
 
-    # 2. Capillary Internal Interfaces (Core <-> Sleeve / Core <-> Rod)
     for cap_idx in _E_TYPE_INDICES:
         core_name   = f"cap_{cap_idx}_active_core"
         sleeve_name = f"cap_{cap_idx}_active_sleeve"
@@ -317,28 +316,6 @@ def add_optical_surfaces(sim, units):
         plug_name = f"cap_{cap_idx}_filament"
         if rod_name in vols and plug_name in vols:
             sim.physics_manager.add_optical_surface(plug_name, rod_name, "Polished")
-
-    # 3. Capillary <-> SiPM Optical Coupling (Grease / Direct Polished Contact)
-    for i in range(len(_CAP_POSITIONS_MM)):
-        sipm_f = f"sipm_front_{i}"
-        sipm_b = f"sipm_back_{i}"
-
-        # T-Type Channels
-        if i in _T_TYPE_INDICES:
-            cap_vol = f"cap_{i}"
-            if cap_vol in vols and sipm_f in vols:
-                sim.physics_manager.add_optical_surface(cap_vol, sipm_f, "Polished")
-            if cap_vol in vols and sipm_b in vols:
-                sim.physics_manager.add_optical_surface(cap_vol, sipm_b, "Polished")
-
-        # E-Type Channels
-        elif i in _E_TYPE_INDICES:
-            tail_f = f"cap_{i}_tail_front"
-            tail_b = f"cap_{i}_tail_back"
-            if tail_f in vols and sipm_f in vols:
-                sim.physics_manager.add_optical_surface(tail_f, sipm_f, "Polished")
-            if tail_b in vols and sipm_b in vols:
-                sim.physics_manager.add_optical_surface(tail_b, sipm_b, "Polished")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS HOOKS
