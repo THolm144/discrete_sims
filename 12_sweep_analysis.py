@@ -525,10 +525,7 @@ def plot_energy_resolution(energy_points, raw_resolutions, raw_resolution_errors
     corrected_resolutions = [res * correction_factor for res in raw_resolutions]
     corrected_errors = [err * correction_factor for err in raw_resolution_errors]
 
-    # Plot the projected fully-instrumented line
-    plt.errorbar(energy_points, corrected_resolutions, yerr=corrected_errors,
-                 fmt='s--', label=f'Corrected Projection (Full {baseline_sipms} SiPMs)', 
-                 color='orange', alpha=0.8)
+   
 
     # Optional: If you use a fit function (e.g., stochastic term a/sqrt(E) + const b)
     # You can also scale the 'a' parameter of your curve_fit and plot that theoretical curve here.
