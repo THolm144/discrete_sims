@@ -425,48 +425,50 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION (Real-World Hardware Mimic) ──
         
         # 1. TDC (Time-to-Digital Converter) Trigger
-        # Hardware discriminators trigger on the leading edge (e.g., 10th percentile to avoid dark noise)
-        df_up = pd.DataFrame({'EventID': ev[m_t_up], 'LT': lt[m_t_up]})
+        # MUST use absolute Global Time (GT) so shower timing sync isn't lost
+        df_up = pd.DataFrame({'EventID': ev[m_t_up], 'GT': gt[m_t_up]})
         if df_up.empty:
             continue
-        tdc_up_times = df_up.groupby('EventID')['LT'].quantile(ARRIVAL_QUANTILE)
+        tdc_up_times = df_up.groupby('EventID')['GT'].quantile(ARRIVAL_QUANTILE)
         
         # 2. Coincidence Logic Unit (CLU)
-        # The hardware cross-references downstream photon strikes with upstream triggers by Event
         t_up_matched = tdc_up_times.reindex(ev[m_dw_opt]).values
         coincidence_mask = ~np.isnan(t_up_matched)
         
-        # 3. DSP (Digital Signal Processing) Time-Difference Position Reconstruction
-        # Delta-T cleanly drops bounced photons because their delayed path breaks the Z-origin math
-        t_dw_coinc = lt_downstream_opt[coincidence_mask]
+        # 3. DSP Time-Difference Position Reconstruction
+        # Delta-GT naturally extracts the spatial Z-origin using the speed of light in the fiber
+        t_dw_coinc = gt_downstream_opt[coincidence_mask]
         t_up_coinc = t_up_matched[coincidence_mask]
         
-        # Z_recon = v_eff * (t_up - t_dw) / 2.0
         z_recon = (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
         
         # 4. Bin into physical LYSO layers
         recon_layer_idx = np.full(len(z_recon), -1, dtype=int)
         for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
-            # Allow minor electronic jitter tolerance on spatial boundaries
-            t_jitter_ns = 0.04
+            t_jitter_ns = 0.08  # Relaxed slightly to account for realistic shower spread
             z_jitter = (t_jitter_ns * v_eff) / 2.0
             in_layer = (z_recon >= (z_lo - z_jitter)) & (z_recon <= (z_hi + z_jitter))
             recon_layer_idx[in_layer] = lyr_idx
             
         # 5. Hardware LCE Calibration & Scoring
-        valid_recon = recon_layer_idx != -1
-        final_recon = recon_layer_idx[valid_recon]
+        # The x-axis of the plot is "LYSO Layer Number" (Physical True Origin), so we MUST
+        # bin by final_truth. If we bin by recon_layer, bounced photons are dropped from the graph!
+        true_origin = true_layer_idx[coincidence_mask]
         
-        # Extract truth for graphing categorization (Target vs. Bounced accuracy)
-        final_truth = true_layer_idx[coincidence_mask][valid_recon]
+        valid_truth = true_origin != -1
+        final_truth = true_origin[valid_truth]
+        final_recon_eval = recon_layer_idx[valid_truth]
         
-        # Apply LCE amplification strictly based on the *reconstructed* layer position
-        calibrated_weights = 1.0 / lce[final_recon]
+        # Apply LCE amplification mapping to the physical true layer
+        calibrated_weights = 1.0 / lce[final_truth]
         
-        is_target = (final_recon == final_truth)
-        np.add.at(prompt_counts, final_recon, calibrated_weights)
-        np.add.at(prompt_counts_target, final_recon[is_target], calibrated_weights[is_target])
-        np.add.at(prompt_counts_bounced, final_recon[~is_target], calibrated_weights[~is_target])
+        # Target = Hardware cleanly reconstructed the correct layer
+        # Bounced = Hardware reconstruction failed (delayed TOF pushed Z out of bounds)
+        is_target = (final_recon_eval == final_truth)
+        
+        np.add.at(prompt_counts, final_truth, calibrated_weights)
+        np.add.at(prompt_counts_target, final_truth[is_target], calibrated_weights[is_target])
+        np.add.at(prompt_counts_bounced, final_truth[~is_target], calibrated_weights[~is_target])
 
     # Two-ended timing calculations
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
