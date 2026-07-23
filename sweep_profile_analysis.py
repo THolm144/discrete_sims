@@ -276,7 +276,7 @@ def get_bar_colors(ekey, idx):
     return base_col, light_col
 
 def get_layer_idx_from_z(z_vals, lyso_bounds):
-    """Map z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
+    """Map absolute z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
     layer_idx = np.full(len(z_vals), -1, dtype=int)
     for i, (z_lo, z_hi) in enumerate(lyso_bounds):
         in_layer = (z_vals >= (z_lo - 0.5)) & (z_vals <= (z_hi + 0.5))
@@ -289,8 +289,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     if not hit_files:
         return None
 
-    # Detect active SiPM position
-    detected_z_sensor = None
+    # Detect sensor z boundaries
+    detected_z_min, detected_z_max = None, None
     for fpath in hit_files:
         try:
             with uproot.open(fpath) as f:
@@ -298,70 +298,55 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                 if not tk: continue
                 z_arr = f[tk]["Position_Z"].array(library="np")
                 if len(z_arr) > 0:
-                    abs_z = np.abs(z_arr)
-                    detected_z_sensor = float(np.median(abs_z[abs_z > (np.max(abs_z) - 5.0)]))
+                    detected_z_min = float(np.min(z_arr))
+                    detected_z_max = float(np.max(z_arr))
                     break
         except Exception:
             continue
 
-    if detected_z_sensor is None:
+    if detected_z_min is None or detected_z_max is None:
         return None
 
-    # 1. Physical dimensions and boundaries
+    # 1. Module Geometry & Bounds
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
-    v_eff = v_eff_for_module(module_name)
+    v_eff = v_eff_for_module(module_name)  # mm/ns (~140 - 160 mm/ns)
 
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
-    
-    z_min_calor, z_max_calor = lyso_bounds[0][0], lyso_bounds[-1][1]
-    z_center_calor = (z_min_calor + z_max_calor) / 2.0
+
+    z_min_calor = lyso_bounds[0][0]
+    z_max_calor = lyso_bounds[-1][1]
 
     cap_xy_map = HEX_CAP_XY if is_hex else SQUARE_CAP_XY
     t_indices = list({1, 3, 5} if is_hex else {0, 1})
     e_indices = list({0, 2, 4} if is_hex else {2, 3})
 
-    up_q_chunks, dw_q_chunks = [], []
     run_dirs = set(fpath.parent for fpath in hit_files)
 
     # 2. Extract DoseActor Truth Data (.mhd/.raw files)
     truth_profiles = []
     for rdir in run_dirs:
-        mhd_files = list(rdir.glob("run_Dose_edep.mhd"))
-        if not mhd_files:
-            mhd_files = list(rdir.glob("*Dose_edep.mhd"))
-
+        mhd_files = list(rdir.glob("run_Dose_edep.mhd")) or list(rdir.glob("*Dose_edep.mhd"))
         if mhd_files:
             fine_profile = load_mhd_z_profile(mhd_files[0])
             if fine_profile is not None:
                 rebinned = rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm)
                 truth_profiles.append(rebinned)
 
-    # 3. Timing profile histograms
-    gt_bins = np.linspace(0.0, 100.0, 501)
-    lt_bins = np.linspace(0.0, 25.0, 501)
-    gt_counts = np.zeros(500)
-    lt_counts = np.zeros(500)
-
-    # 4. Realistic LCE Matrix
-    lambda_eff = 120.0  # Effective optical attenuation length (mm)
-    distances = np.array([
-        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
-        for z_lo, z_hi in lyso_bounds
-    ])
-    lce = np.exp(-distances / lambda_eff)
-
-    # 5. Pre-allocate accumulation arrays
-    prompt_counts = np.zeros(_N_LYSO)
-    prompt_counts_target = np.zeros(_N_LYSO)
-    prompt_counts_bounced = np.zeros(_N_LYSO)
+    # 3. Accumulation Arrays for 4-Panel Subplots
+    profile_up_recon = np.zeros(_N_LYSO)
+    profile_dw_recon = np.zeros(_N_LYSO)
     total_events_processed = 0
 
-    # 6. Begin reading hits
-    for fpath in hit_files:
-        run_tag = fpath.parent.name
+    # 4. Conversion Constants for ToF Equations
+    denom_up = (1.0 / C_LIGHT_MM_NS) + (1.0 / v_eff)
+    denom_dw = (1.0 / v_eff) - (1.0 / C_LIGHT_MM_NS)
+    t_max_dw = calor_thick_mm / v_eff
+    lambda_eff = 120.0  # mm (Optical attenuation length)
 
+    # 5. Process Hits File-by-File
+    for fpath in hit_files:
         try:
             with uproot.open(fpath) as f:
                 tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
@@ -373,128 +358,89 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             continue
 
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
-        gt_raw, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
+        gt_raw, ev, pn = arrs["GlobalTime"], arrs["EventID"], arrs["ParticleName"]
 
-        total_events_processed += len(np.unique(ev))
+        unique_evs = np.unique(ev)
+        total_events_processed += len(unique_evs)
 
+        # Channel Mapping
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
 
-        z_min_val, z_max_val = np.min(z), np.max(z)
-        near_up = np.abs(z - z_min_val) < 5.0
-        near_dw = np.abs(z - z_max_val) < 5.0
+        near_up = np.abs(z - detected_z_min) < 5.0
+        near_dw = np.abs(z - detected_z_max) < 5.0
 
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
+        is_readout_channel = np.isin(channels, t_indices + e_indices)
 
-        is_t = np.isin(channels, t_indices)
-        m_t_up = is_t & is_optical & near_up
-        m_t_dw = is_t & is_optical & near_dw
+        m_up = near_up & is_optical & is_readout_channel
+        m_dw = near_dw & is_optical & is_readout_channel
 
-        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
-        if c is not None: up_q_chunks.append(c)
-        c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
-        if c is not None: dw_q_chunks.append(c)
+        # --- A. UPSTREAM SINGLE-ENDED READOUT ---
+        if np.any(m_up):
+            gt_up = gt_raw[m_up]
+            ev_up = ev[m_up]
 
-        is_e = np.isin(channels, e_indices)
-        m_dw_opt = near_dw & is_optical & (is_e | is_t)
-        
-        gt_downstream_opt = gt_raw[m_dw_opt]
-        lt_downstream_opt = lt[m_dw_opt]
+            # Compute t0 per event (earliest hit arrival time)
+            t0_map_up = pd.DataFrame({'ev': ev_up, 'gt': gt_up}).groupby('ev')['gt'].min().to_dict()
+            t0_up = np.array([t0_map_up[e] for e in ev_up])
 
-        hist_gt, _ = np.histogram(gt_downstream_opt, bins=gt_bins)
-        gt_counts += hist_gt
+            dt_up = gt_up - t0_up
+            z_local_up = dt_up / denom_up
+            z_abs_up = z_min_calor + z_local_up
 
-        hist_lt, _ = np.histogram(lt_downstream_opt, bins=lt_bins)
-        lt_counts += hist_lt
+            layers_up = get_layer_idx_from_z(z_abs_up, lyso_bounds)
+            valid_up = (layers_up != -1) & (z_local_up >= 0) & (z_local_up <= calor_thick_mm)
 
-        if len(lt_downstream_opt) == 0:
-            continue
+            if np.any(valid_up):
+                v_layers = layers_up[valid_up]
+                v_z_local = z_local_up[valid_up]
+                weights_up = np.exp(v_z_local / lambda_eff)  # Inverse LCE correction
+                np.add.at(profile_up_recon, v_layers, weights_up)
 
-        # IDENTIFY TRUE BIRTH LAYER (IF BRANCH EXISTS)
-        true_layer_idx = None
-        for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]:
-            if branch_name in tree:
-                try:
-                    bz = tree[branch_name].array(library="np")[m_dw_opt]
-                    true_layer_idx = get_layer_idx_from_z(bz, lyso_bounds)
-                    if np.any(true_layer_idx != -1):
-                        break
-                except Exception:
-                    continue
+        # --- B. DOWNSTREAM SINGLE-ENDED READOUT ---
+        if np.any(m_dw):
+            gt_dw = gt_raw[m_dw]
+            ev_dw = ev[m_dw]
 
-        # DUAL-ENDED COINCIDENCE RECONSTRUCTION
-        ev_up = ev[m_t_up].astype(np.int64)
-        gt_raw_up = gt_raw[m_t_up]
-        
-        ev_dw = ev[m_dw_opt].astype(np.int64)
-        gt_raw_dw = gt_raw[m_dw_opt]
+            # Compute t0 per event
+            t0_map_dw = pd.DataFrame({'ev': ev_dw, 'gt': gt_dw}).groupby('ev')['gt'].min().to_dict()
+            t0_dw = np.array([t0_map_dw[e] for e in ev_dw])
 
-        if len(ev_up) > 0 and len(ev_dw) > 0:
-            df_up = pd.DataFrame({'EventID': ev_up, 'GT': gt_raw_up})
-            tdc_dict = df_up.groupby('EventID')['GT'].quantile(ARRIVAL_QUANTILE).to_dict()
-            
-            t_up_matched = np.array([tdc_dict.get(e, np.nan) for e in ev_dw], dtype=float)
-            coincidence_mask = ~np.isnan(t_up_matched)
-        else:
-            coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
+            dt_dw = gt_dw - t0_dw
+            z_local_dw = (t_max_dw - dt_dw) / denom_dw
+            z_abs_dw = z_min_calor + z_local_dw
 
-        if np.any(coincidence_mask):
-            t_dw_coinc = gt_raw_dw[coincidence_mask]
-            t_up_coinc = t_up_matched[coincidence_mask]
-            lt_coinc = lt_downstream_opt[coincidence_mask]
-            
-            # Position Reconstruction: t_dw > t_up for hits near front (z_min)
-            z_recon = z_center_calor - (v_eff * (t_dw_coinc - t_up_coinc)) / 2.0
-            recon_layer_idx = get_layer_idx_from_z(z_recon, lyso_bounds)
-            
-            valid = (recon_layer_idx != -1)
-            
-            if np.any(valid):
-                v_recon = recon_layer_idx[valid]
-                v_weights = 1.0 / lce[v_recon]
-                
-                if true_layer_idx is not None:
-                    coinc_truth = true_layer_idx[coincidence_mask][valid]
-                    is_target = (v_recon == coinc_truth)
-                else:
-                    # Fallback cut: LocalTime < 1.0 ns corresponds to prompt direct-path optical photons
-                    is_target = (lt_coinc[valid] < 1.0)
-                
-                np.add.at(prompt_counts, v_recon, v_weights)
-                np.add.at(prompt_counts_target, v_recon[is_target], v_weights[is_target])
-                np.add.at(prompt_counts_bounced, v_recon[~is_target], v_weights[~is_target])
+            layers_dw = get_layer_idx_from_z(z_abs_dw, lyso_bounds)
+            valid_dw = (layers_dw != -1) & (z_local_dw >= 0) & (z_local_dw <= calor_thick_mm)
 
-    # Normalization
+            if np.any(valid_dw):
+                v_layers = layers_dw[valid_dw]
+                v_z_local = z_local_dw[valid_dw]
+                weights_dw = np.exp((calor_thick_mm - v_z_local) / lambda_eff)  # Inverse LCE correction
+                np.add.at(profile_dw_recon, v_layers, weights_dw)
+
+    # 6. Normalize per Event
     events_denom = max(1, total_events_processed)
-    if truth_profiles:
-        events_per_run = max(1, total_events_processed / len(run_dirs))
-        mean_truth_profile = np.mean(truth_profiles, axis=0) / events_per_run
-        active_edep_list = [np.sum(p) for p in truth_profiles]
-    else:
-        mean_truth_profile = np.zeros(_N_LYSO)
-        active_edep_list = []
+    norm_up = profile_up_recon / events_denom
+    norm_dw = profile_dw_recon / events_denom
+    combined_profile = norm_up + norm_dw
 
-    norm_prompt = prompt_counts / events_denom
-    norm_target = prompt_counts_target / events_denom
-    norm_bounced = prompt_counts_bounced / events_denom
+    mean_truth_profile = (
+        np.mean(truth_profiles, axis=0) / max(1, total_events_processed / len(run_dirs))
+        if truth_profiles else np.zeros(_N_LYSO)
+    )
 
     if verbose_label:
-        print(f"    [{verbose_label}] {len(run_dirs)} runs, DoseActor Truth Mean: "
-              f"{np.mean(active_edep_list) if active_edep_list else 0.0:.2f} MeV/run")
+        print(f"    [{verbose_label}] Processed {total_events_processed} events across {len(run_dirs)} runs.")
 
     return {
-        "active_edep_total": np.array(active_edep_list),
-        "truth_layer_profile": mean_truth_profile,
-        "gt_counts": gt_counts,
-        "gt_bins": gt_bins,
-        "lt_counts": lt_counts,
-        "lt_bins": lt_bins,
-        "prompt_profile": norm_prompt,
-        "prompt_profile_target": norm_target,
-        "prompt_profile_bounced": norm_bounced,
-        "t_two_end_raw": np.array([]),
-        "n_t_coincidences": 0,
+        "profile_up_recon": norm_up,              # Top-Left Subplot
+        "profile_dw_recon": norm_dw,              # Top-Right Subplot
+        "combined_profile": combined_profile,      # Bottom-Left Subplot
+        "truth_layer_profile": mean_truth_profile, # Bottom-Right Subplot
+        "total_events": total_events_processed,
         "run_dirs": sorted(run_dirs),
     }
 
