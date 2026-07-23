@@ -307,7 +307,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     if detected_z_sensor is None:
         return None
 
-    # 1. Define physical dimensions and boundaries
+    # 1. Physical dimensions and boundaries
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
     v_eff = v_eff_for_module(module_name)
 
@@ -442,9 +442,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if np.any(coincidence_mask):
             t_dw_coinc = gt_raw_dw[coincidence_mask]
             t_up_coinc = t_up_matched[coincidence_mask]
+            lt_coinc = lt_downstream_opt[coincidence_mask]
             
-            # Position Reconstruction: t_up is earlier for small z, so (t_dw - t_up) is positive
-            z_recon = z_center_calor - (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
+            # Position Reconstruction: t_dw > t_up for hits near front (z_min)
+            z_recon = z_center_calor - (v_eff * (t_dw_coinc - t_up_coinc)) / 2.0
             recon_layer_idx = get_layer_idx_from_z(z_recon, lyso_bounds)
             
             valid = (recon_layer_idx != -1)
@@ -457,10 +458,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                     coinc_truth = true_layer_idx[coincidence_mask][valid]
                     is_target = (v_recon == coinc_truth)
                 else:
-                    # Fallback timing check: photons arriving within prompt window (< 0.25 ns delay) are target
-                    t_expected_dw = (z_max_val - z_recon[valid]) / v_eff
-                    t_actual_dw = t_dw_coinc[valid] - np.min(gt_raw)
-                    is_target = np.abs(t_actual_dw - t_expected_dw) < 0.25
+                    # Fallback cut: LocalTime < 1.0 ns corresponds to prompt direct-path optical photons
+                    is_target = (lt_coinc[valid] < 1.0)
                 
                 np.add.at(prompt_counts, v_recon, v_weights)
                 np.add.at(prompt_counts_target, v_recon[is_target], v_weights[is_target])
@@ -491,9 +490,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        "prompt_profile": norm_prompt[::-1],
-        "prompt_profile_target": norm_target[::-1],
-        "prompt_profile_bounced": norm_bounced[::-1],
+        "prompt_profile": norm_prompt,
+        "prompt_profile_target": norm_target,
+        "prompt_profile_bounced": norm_bounced,
         "t_two_end_raw": np.array([]),
         "n_t_coincidences": 0,
         "run_dirs": sorted(run_dirs),
