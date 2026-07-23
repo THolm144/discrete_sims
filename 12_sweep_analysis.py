@@ -1415,10 +1415,7 @@ def main():
 
             x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 200)
 
-            # Plot simulation projected fit curve
-            if popt_res is not None:
-                ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
-                            color="darkorange", linestyle="--", linewidth=2.0, label=fit_label)
+            
 
             # ─────────────────────────────────────────────────────────────────
             # OVERLAY PAPER FIG 17 REFERENCE LINE
