@@ -1446,7 +1446,7 @@ def main():
         # ─────────────────────────────────────────────────────────────────────
         # SiPM PDE CONFIGURATION & HELPER
         # ─────────────────────────────────────────────────────────────────────
-        SIPM_PDE = 0.25  # 25% SiPM Photon Detection Efficiency (PDE)
+        SIPM_PDE = 0.40  # 25% SiPM Photon Detection Efficiency (PDE)
 
         def apply_sipm_pde(photon_counts, pde=0.25, use_binomial=True):
             """
