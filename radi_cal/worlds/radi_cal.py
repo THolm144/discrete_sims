@@ -41,8 +41,8 @@ _CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  # 125.2856 mm
 _CAP_OUTER_MM    = 1.150 / 2              # 0.575 mm
 _CAP_INNER_MM    = 0.950 / 2              # 0.475 mm
 _CAP_LENGTH_MM   = 183.0
-_HOLE_INSET_MM   = 3.5
-_HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM      
+_HOLE_OFFSET_MM   = 3.5
+
 
 _FILAMENT_R_MM   = 0.900 / 2              # 0.45 mm
 

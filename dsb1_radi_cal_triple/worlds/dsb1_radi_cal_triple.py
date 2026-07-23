@@ -47,8 +47,7 @@ _CAP_INNER_MM    = 0.950 / 2
 
 _CAP_LENGTH_MM   = _CALOR_THICK_MM + 57.7144
 
-_HOLE_INSET_MM   = 3.5
-_HOLE_OFFSET_MM  = _CALOR_XY_MM / 2 - _HOLE_INSET_MM      
+_HOLE_OFFSET_MM   = 3.5     
 
 _FILAMENT_R_MM   = 0.900 / 2             
 
