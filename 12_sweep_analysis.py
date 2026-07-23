@@ -1385,35 +1385,34 @@ def main():
             ax_lin.grid(True, linestyle=":", alpha=0.6)
             ax_lin.legend(fontsize=10)
 
-            # Projected 8 SiPM baseline calculations
-            n_active = 6 if "rc_hex" in mod else 4
-            n_baseline = 8
-            correction_factor = np.sqrt(n_active / n_baseline)
-
-            base_target_res = np.array(res_e_corr_list) if len(res_e_corr_list) == len(energies_gev) else res_e_list
-            base_target_err = np.array(res_e_corr_err) if len(res_e_corr_err) == len(energies_gev) else res_e_err_arr
-            
-            proj_res = base_target_res * correction_factor
-            proj_err = base_target_err * correction_factor
+            # Fit the resolution model directly to the actual simulated photon
+            # data (depth-corrected if available, else raw) — no SiPM-count
+            # projection/scaling of any kind.
+            fit_target_res = np.array(res_e_corr_list) if len(res_e_corr_list) == len(energies_gev) else res_e_list
+            fit_target_err = np.array(res_e_corr_err) if len(res_e_corr_err) == len(energies_gev) else res_e_err_arr
 
             popt_res = None
             fit_label = "Fit failed"
             if len(energies_gev) >= 3:
                 try:
                     popt_res, _ = curve_fit(
-                        resolution_func, energies_gev, proj_res,
+                        resolution_func, energies_gev, fit_target_res,
+                        sigma=fit_target_err, absolute_sigma=True,
                         p0=[0.08, 0.50], bounds=([0.0, 0.0], [1.0, 5.0])
                     )
                     c_f, s_f = popt_res
-                    fit_label = f"Proj Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$"
+                    fit_label = f"Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$"
                 except Exception as e:
                     print(f"[FIT ERROR] E-type curve fit crashed with: {e}")
-                    fit_label = "Proj Fit: Fit Failed"
-
-            ax_res.errorbar(energies_gev, proj_res, yerr=proj_err, fmt='D',
-                            color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
+                    fit_label = "Fit Failed"
 
             x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 200)
+
+            # Plot the fitted simulation curve
+            if popt_res is not None:
+                ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
+                            color=mod_colors.get(mod, 'darkorange'), linestyle="--", linewidth=2.0,
+                            label=fit_label)
 
             
 
