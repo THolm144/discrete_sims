@@ -1506,6 +1506,7 @@ def main():
 
         # 1. Write Mean Photon Counts (.txt report)
         mean_txt_path = mod_dir / f"{mod}_mean_photon_counts.txt"
+        SIPM_PDE = 0.4
         with open(mean_txt_path, "w") as f_out:
             f_out.write(f"{'='*70}\n")
             f_out.write(f" MEAN DETECTED PHOTO-ELECTRONS (PDE={SIPM_PDE*100:.0f}%, RAW DATA) — {mod}\n")
@@ -2055,6 +2056,7 @@ def main():
     # ─────────────────────────────────────────────────────────────────────
     sheet_path = analysis_out / "timing_vs_energy_report.txt"
     with open(sheet_path, "w") as f:
+        SIPM_PDE = 0.4
         f.write(f"{'=' * 80}\n")
         f.write(" RADiCAL SIMULATION UNIFIED RUN SUMMARY SHEET\n")
         f.write(f" Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
