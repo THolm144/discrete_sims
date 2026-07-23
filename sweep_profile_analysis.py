@@ -404,7 +404,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         #    t_jitter: Tolerates sensor/electronic jitter on the early side
         #    t_gate  : Cuts off delayed modal-dispersion light on the late side
         t_jitter_ns = 2.0 * SIGMA_NS   # e.g., 0.04 ns (40 ps)
-        t_gate_ns   = 0.08             # Tight 80 ps prompt gate
+        t_gate_ns   = 0.01             # Tight 80 ps prompt gate
 
         # 3. Create leading-edge mask: keep only hits where -t_jitter <= diff <= +t_gate
         leading_edge_mask = (diff >= -t_jitter_ns) & (diff <= t_gate_ns)
