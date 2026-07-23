@@ -805,9 +805,9 @@ def main():
 
     base_dir = Path(__file__).resolve().parent
     modules = [
-        #"radi_cal_energy", "radi_cal_triple", "rc_hex", "rc_hex_triple",
+        "radi_cal_energy", "radi_cal_triple", "rc_hex", "rc_hex_triple",
         "dsb1_radi_cal_energy", #"dsb1_radi_cal_triple", "dsb1_rc_hex", "dsb1_rc_hex_triple",
-        #"luagce_radi_cal_energy", "luagce_radi_cal_triple", "luagce_rc_hex", "luagce_rc_hex_triple"
+        "luagce_radi_cal_energy", "luagce_radi_cal_triple", "luagce_rc_hex", "luagce_rc_hex_triple"
     ]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
