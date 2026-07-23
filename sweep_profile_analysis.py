@@ -275,6 +275,16 @@ def get_bar_colors(ekey, idx):
     light_col = tuple(0.4 * c + 0.6 for c in rgb) # blend with white
     return base_col, light_col
 
+def get_layer_idx_from_z(z_vals, lyso_bounds):
+    """Map z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
+    layer_idx = np.full(len(z_vals), -1, dtype=int)
+    for i, (z_lo, z_hi) in enumerate(lyso_bounds):
+        # Allow 0.5mm tolerance for float precision
+        in_layer = (z_vals >= (z_lo - 0.5)) & (z_vals <= (z_hi + 0.5))
+        layer_idx[in_layer] = i
+    return layer_idx
+
+
 def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbose_label: str = ""):
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"), key=get_natural_sort_key)
     if not hit_files:
@@ -306,8 +316,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
     
-    # Midpoints of each physical LYSO layer (0 to 29)
-    layer_centers = np.array([(z_lo + z_hi) / 2.0 for z_lo, z_hi in lyso_bounds])
     z_min_calor, z_max_calor = lyso_bounds[0][0], lyso_bounds[-1][1]
     z_center_calor = (z_min_calor + z_max_calor) / 2.0
 
@@ -374,7 +382,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
 
-        # Robust coordinate detection
+        # Coordinate-agnostic boundary detection
         z_min_val, z_max_val = np.min(z), np.max(z)
         near_up = np.abs(z - z_min_val) < 5.0
         near_dw = np.abs(z - z_max_val) < 5.0
@@ -414,18 +422,17 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             if branch_name in tree:
                 try:
                     bz = tree[branch_name].array(library="np")[m_dw_opt]
-                    t_idx = np.argmin(np.abs(bz[:, None] - layer_centers[None, :]), axis=1)
-                    true_layer_idx = t_idx
-                    break
+                    true_layer_idx = get_layer_idx_from_z(bz, lyso_bounds)
+                    if np.any(true_layer_idx != -1):
+                        break
                 except Exception:
                     continue
 
         if true_layer_idx is None:
-            # Fallback: estimate birth layer from global time arrival delay
-            # (earlier arrivals = born closer to downstream sensor)
+            # Fallback estimation based on downstream arrival delay
             t_delay = gt_downstream_opt - np.min(gt_downstream_opt)
             z_est = z_max_val - (t_delay * v_eff)
-            true_layer_idx = np.argmin(np.abs(z_est[:, None] - layer_centers[None, :]), axis=1)
+            true_layer_idx = get_layer_idx_from_z(z_est, lyso_bounds)
 
         # ── DUAL-ENDED COINCIDENCE RECONSTRUCTION ──
         ev_up = ev[m_t_up].astype(np.int64)
@@ -443,30 +450,38 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         else:
             coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
 
-        final_truth = np.clip(true_layer_idx, 0, _N_LYSO - 1)
-        calibrated_weights = 1.0 / lce[final_truth]
-
         if np.any(coincidence_mask):
             t_dw_coinc = gt_raw_dw[coincidence_mask]
             t_up_coinc = t_up_matched[coincidence_mask]
             
             # Pure time-difference position reconstruction (in mm)
             z_recon = z_center_calor + (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
-            z_recon = np.clip(z_recon, z_min_calor, z_max_calor)
             
-            # Map physical Z directly to nearest layer center (0 to 29)
-            recon_layer_idx = np.argmin(np.abs(z_recon[:, None] - layer_centers[None, :]), axis=1)
+            # Map physical Z directly to layer index (-1 if out of bounds)
+            recon_layer_idx = get_layer_idx_from_z(z_recon, lyso_bounds)
+            coinc_truth = true_layer_idx[coincidence_mask]
             
-            coinc_truth = final_truth[coincidence_mask]
-            coinc_weights = calibrated_weights[coincidence_mask]
-            is_target = (recon_layer_idx == coinc_truth)
+            # Only accumulate hits that originated inside a physical LYSO layer
+            valid_truth = coinc_truth != -1
             
-            np.add.at(prompt_counts, coinc_truth, coinc_weights)
-            np.add.at(prompt_counts_target, coinc_truth[is_target], coinc_weights[is_target])
-            np.add.at(prompt_counts_bounced, coinc_truth[~is_target], coinc_weights[~is_target])
+            if np.any(valid_truth):
+                valid_truth_layers = coinc_truth[valid_truth]
+                valid_recon_layers = recon_layer_idx[valid_truth]
+                valid_weights = (1.0 / lce[valid_truth_layers])
+                
+                # Target = cleanly reconstructed in the true physical origin layer
+                is_target = (valid_recon_layers == valid_truth_layers)
+                
+                np.add.at(prompt_counts, valid_truth_layers, valid_weights)
+                np.add.at(prompt_counts_target, valid_truth_layers[is_target], valid_weights[is_target])
+                np.add.at(prompt_counts_bounced, valid_truth_layers[~is_target], valid_weights[~is_target])
         else:
-            np.add.at(prompt_counts, final_truth, calibrated_weights)
-            np.add.at(prompt_counts_target, final_truth, calibrated_weights)
+            valid_truth = true_layer_idx != -1
+            if np.any(valid_truth):
+                valid_truth_layers = true_layer_idx[valid_truth]
+                valid_weights = 1.0 / lce[valid_truth_layers]
+                np.add.at(prompt_counts, valid_truth_layers, valid_weights)
+                np.add.at(prompt_counts_target, valid_truth_layers, valid_weights)
 
     # Two-ended timing calculations
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
@@ -499,7 +514,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        # Preserve natural order (Layer 1 = Index 0, Layer 30 = Index 29)
         "prompt_profile": norm_prompt,
         "prompt_profile_target": norm_target,
         "prompt_profile_bounced": norm_bounced,
