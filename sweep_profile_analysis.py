@@ -307,7 +307,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     if detected_z_sensor is None:
         return None
 
-    # 1. Define physical dimensions and boundaries FIRST
+    # 1. Define physical dimensions and boundaries
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
     v_eff = v_eff_for_module(module_name)
 
@@ -338,21 +338,21 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                 rebinned = rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm)
                 truth_profiles.append(rebinned)
 
-    # 3. Pre-allocate raw timing profile histograms
+    # 3. Timing profile histograms
     gt_bins = np.linspace(0.0, 100.0, 501)
     lt_bins = np.linspace(0.0, 25.0, 501)
     gt_counts = np.zeros(500)
     lt_counts = np.zeros(500)
 
-    # 4. Realistic LCE Matrix (accounts for geometry + absorption along crystal stack)
-    lambda_eff = 120.0  # Realistic effective attenuation length in mm for wrapped stack
+    # 4. Realistic LCE Matrix
+    lambda_eff = 120.0  # Effective optical attenuation length (mm)
     distances = np.array([
         np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
         for z_lo, z_hi in lyso_bounds
     ])
     lce = np.exp(-distances / lambda_eff)
 
-    # 5. Pre-allocate accumulation arrays OUTSIDE the file loop
+    # 5. Pre-allocate accumulation arrays
     prompt_counts = np.zeros(_N_LYSO)
     prompt_counts_target = np.zeros(_N_LYSO)
     prompt_counts_bounced = np.zeros(_N_LYSO)
@@ -411,7 +411,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if len(lt_downstream_opt) == 0:
             continue
 
-        # IDENTIFY TRUE BIRTH LAYER
+        # IDENTIFY TRUE BIRTH LAYER (IF BRANCH EXISTS)
         true_layer_idx = None
         for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]:
             if branch_name in tree:
@@ -443,36 +443,30 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             t_dw_coinc = gt_raw_dw[coincidence_mask]
             t_up_coinc = t_up_matched[coincidence_mask]
             
-            # Position reconstruction (mm)
-            z_recon = z_center_calor + (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
+            # Position Reconstruction: t_up is earlier for small z, so (t_dw - t_up) is positive
+            z_recon = z_center_calor - (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
             recon_layer_idx = get_layer_idx_from_z(z_recon, lyso_bounds)
             
-            if true_layer_idx is None:
-                coinc_truth = recon_layer_idx
-            else:
-                coinc_truth = true_layer_idx[coincidence_mask]
-            
-            valid = (recon_layer_idx != -1) & (coinc_truth != -1)
+            valid = (recon_layer_idx != -1)
             
             if np.any(valid):
                 v_recon = recon_layer_idx[valid]
-                v_truth = coinc_truth[valid]
                 v_weights = 1.0 / lce[v_recon]
                 
-                is_target = (v_recon == v_truth)
+                if true_layer_idx is not None:
+                    coinc_truth = true_layer_idx[coincidence_mask][valid]
+                    is_target = (v_recon == coinc_truth)
+                else:
+                    # Fallback timing check: photons arriving within prompt window (< 0.25 ns delay) are target
+                    t_expected_dw = (z_max_val - z_recon[valid]) / v_eff
+                    t_actual_dw = t_dw_coinc[valid] - np.min(gt_raw)
+                    is_target = np.abs(t_actual_dw - t_expected_dw) < 0.25
                 
-                # Bin by reconstructed layer position (v_recon)
                 np.add.at(prompt_counts, v_recon, v_weights)
                 np.add.at(prompt_counts_target, v_recon[is_target], v_weights[is_target])
                 np.add.at(prompt_counts_bounced, v_recon[~is_target], v_weights[~is_target])
 
-    # Two-ended timing calculations
-    up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
-    dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
-
-    common_t_evs = set(up_q) & set(dw_q)
-    t_two_end_list = [(dw_q[e] + up_q[e]) / 2.0 for e in common_t_evs]
-
+    # Normalization
     events_denom = max(1, total_events_processed)
     if truth_profiles:
         events_per_run = max(1, total_events_processed / len(run_dirs))
@@ -487,8 +481,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     norm_bounced = prompt_counts_bounced / events_denom
 
     if verbose_label:
-        print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
-              f"DoseActor Truth Mean: {np.mean(active_edep_list) if active_edep_list else 0.0:.2f} MeV/run")
+        print(f"    [{verbose_label}] {len(run_dirs)} runs, DoseActor Truth Mean: "
+              f"{np.mean(active_edep_list) if active_edep_list else 0.0:.2f} MeV/run")
 
     return {
         "active_edep_total": np.array(active_edep_list),
@@ -500,8 +494,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "prompt_profile": norm_prompt,
         "prompt_profile_target": norm_target,
         "prompt_profile_bounced": norm_bounced,
-        "t_two_end_raw": np.array(t_two_end_list),
-        "n_t_coincidences": len(common_t_evs),
+        "t_two_end_raw": np.array([]),
+        "n_t_coincidences": 0,
         "run_dirs": sorted(run_dirs),
     }
 
