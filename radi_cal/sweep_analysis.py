@@ -230,9 +230,17 @@ def analyze_energy_batch(batch_dir: Path, module_name: str = "dsb1_radi_cal_ener
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
 
+        # --- APPLY FLAT SiPM PDE ---
+        # 0.40 (40%) is a standard PDE for Hamamatsu SiPMs at ~490-530nm.
+        # Adjust this number to match your specific SiPM datasheet!
+        FLAT_PDE = 0.40 
+        is_detected = np.random.rand(len(gt)) < FLAT_PDE
+
         is_t = np.isin(channels, t_indices)
-        m_t_up_prompt = is_t & is_optical & near_up & is_prompt
-        m_t_dw_prompt = is_t & is_optical & near_dw & is_prompt
+        
+        # Add `is_detected` to the logical masks
+        m_t_up_prompt = is_t & is_optical & near_up & is_prompt & is_detected
+        m_t_dw_prompt = is_t & is_optical & near_dw & is_prompt & is_detected
 
         c = _chunk_series(m_t_up_prompt, gt, ev, run_tag)
         if c is not None: up_t_hit_chunks.append(c)
