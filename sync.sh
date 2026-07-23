@@ -29,6 +29,8 @@ rsync -avz --delete \
     --exclude='**/response_matrices/' \
     --exclude='12_sweep_analysis/' \
     --exclude='**/12_sweep_analysis/' \
+    --exclude='analysis_output/' \
+    --exclude='**/analysis_output/' \
     --exclude='*.root' \
     --exclude='*.json' \
     --exclude='*.mhd' \
