@@ -281,7 +281,23 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         return None
 
     # Detect active SiPM position
+    
     detected_z_sensor = None
+    # Pre-calculate hardware LCE matrix
+    lambda_eff = EFFECTIVE_ATT_LENGTH.get(module_name, 2428.38)
+    distances = np.array([
+        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
+        for z_lo, z_hi in lyso_bounds
+    ])
+    lce = np.exp(-distances / lambda_eff)
+
+    # Pre-allocate accumulation arrays OUTSIDE the file loop
+    prompt_counts = np.zeros(_N_LYSO)
+    prompt_counts_target = np.zeros(_N_LYSO)
+    prompt_counts_bounced = np.zeros(_N_LYSO)
+    total_events_processed = 0
+
+    expected_times_arr = np.array(expected_times)
     for fpath in hit_files:
         try:
             with uproot.open(fpath) as f:
@@ -396,27 +412,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         hist_lt, _ = np.histogram(lt_downstream_opt, bins=lt_bins)
         lt_counts += hist_lt
 
-        # ── GRAPH 4: Asymmetric Leading-Edge Prompt Reconstruction ────────────
-        # 1. Compute time difference between measured arrival and straight-line expectation
-        diff = lt_downstream_opt[:, None] - expected_times_arr[None, :]   # (n_hits, n_layers)
-
-        # 2. Define asymmetric leading-edge gates (in nanoseconds)
-        #    t_jitter: Tolerates sensor/electronic jitter on the early side
-        #    t_gate  : Cuts off delayed modal-dispersion light on the late side
-        t_jitter_ns = 2.0 * SIGMA_NS   # e.g., 0.04 ns (40 ps)
-        t_gate_ns   = 0.01             # Tight 80 ps prompt gate
-
-        # 3. Create leading-edge mask: keep only hits where -t_jitter <= diff <= +t_gate
-        leading_edge_mask = (diff >= -t_jitter_ns) & (diff <= t_gate_ns)
-
-        # 4. Calculate Gaussian weights strictly within the leading-edge window
-        weights = np.exp(-0.5 * (diff / SIGMA_NS) ** 2)
-        weights[~leading_edge_mask] = 0.0
-
         # ─────────────────────────────────────────────────────────────────
         # IDENTIFY TRUE ORIGIN LAYER (for stacked histogram)
         # ─────────────────────────────────────────────────────────────────
-        # We find where each photon was generated. This works with standard GATE branches:
         birth_z = None
         for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth"]:
             if branch_name in tree:
@@ -432,23 +430,61 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
                 true_layer_idx[(birth_z >= z_lo) & (birth_z <= z_hi)] = lyr_idx
         else:
-            # Alternate fallback: check for standard volumeID branch (e.g. volumeID[1] for layers)
+            # Alternate fallback: check for standard volumeID branch
             try:
                 vol_array = tree["volumeID"].array(library="np")
                 true_layer_idx = (vol_array[:, 1][m_dw_opt] if vol_array.ndim > 1 else vol_array[m_dw_opt])
             except Exception:
-                # Fallback: if no tracking info exists, estimate using closest temporal match
-                true_layer_idx = np.argmin(np.abs(lt_downstream_opt[:, None] - expected_times_arr[None, :]), axis=1)
+                # Fallback if no tracking info exists
+                true_layer_idx = np.zeros(len(lt_downstream_opt), dtype=int)
 
-        # Compare true birth index against each target reconstructed index (1-to-1 broadcasting)
-        is_target_layer = (true_layer_idx[:, None] == np.arange(_N_LYSO)[None, :])
+        # ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION (Real-World Hardware Mimic) ──
 
-        # Accumulate target and bounced counts separately
-       
-       
-        prompt_counts_target += (weights * is_target_layer).sum(axis=0)
-        prompt_counts_bounced += (weights * (~is_target_layer)).sum(axis=0)
-        prompt_counts += weights.sum(axis=0)
+# ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION (Real-World Hardware Mimic) ──
+        
+        # 1. TDC (Time-to-Digital Converter) Trigger
+        # Hardware discriminators trigger on the leading edge (e.g., 10th percentile to avoid dark noise)
+        df_up = pd.DataFrame({'EventID': ev[m_t_up], 'LT': lt[m_t_up]})
+        if df_up.empty:
+            continue
+        tdc_up_times = df_up.groupby('EventID')['LT'].quantile(ARRIVAL_QUANTILE)
+        
+        # 2. Coincidence Logic Unit (CLU)
+        # The hardware cross-references downstream photon strikes with upstream triggers by Event
+        t_up_matched = tdc_up_times.reindex(ev[m_dw_opt]).values
+        coincidence_mask = ~np.isnan(t_up_matched)
+        
+        # 3. DSP (Digital Signal Processing) Time-Difference Position Reconstruction
+        # Delta-T cleanly drops bounced photons because their delayed path breaks the Z-origin math
+        t_dw_coinc = lt_downstream_opt[coincidence_mask]
+        t_up_coinc = t_up_matched[coincidence_mask]
+        
+        # Z_recon = v_eff * (t_up - t_dw) / 2.0
+        z_recon = (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
+        
+        # 4. Bin into physical LYSO layers
+        recon_layer_idx = np.full(len(z_recon), -1, dtype=int)
+        for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
+            # Allow minor electronic jitter tolerance on spatial boundaries
+            t_jitter_ns = 0.04
+            z_jitter = (t_jitter_ns * v_eff) / 2.0
+            in_layer = (z_recon >= (z_lo - z_jitter)) & (z_recon <= (z_hi + z_jitter))
+            recon_layer_idx[in_layer] = lyr_idx
+            
+        # 5. Hardware LCE Calibration & Scoring
+        valid_recon = recon_layer_idx != -1
+        final_recon = recon_layer_idx[valid_recon]
+        
+        # Extract truth for graphing categorization (Target vs. Bounced accuracy)
+        final_truth = true_layer_idx[coincidence_mask][valid_recon]
+        
+        # Apply LCE amplification strictly based on the *reconstructed* layer position
+        calibrated_weights = 1.0 / lce[final_recon]
+        
+        is_target = (final_recon == final_truth)
+        np.add.at(prompt_counts, final_recon, calibrated_weights)
+        np.add.at(prompt_counts_target, final_recon[is_target], calibrated_weights[is_target])
+        np.add.at(prompt_counts_bounced, final_recon[~is_target], calibrated_weights[~is_target])
 
     # Two-ended timing calculations
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
@@ -516,9 +552,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     lce = np.exp(-distances / lambda_eff)
 
     # 3. Correct for attenuation by dividing raw prompt counts by LCE
-    corrected_prompt_profile = prompt_counts #/ lce
-    corrected_prompt_target = prompt_counts_target #/ lce
-    corrected_prompt_bounced = prompt_counts_bounced #/ lce
+    # (Removed: LCE calibration is now handled internally by the hardware DSP logic)
+    corrected_prompt_profile = prompt_counts 
+    corrected_prompt_target = prompt_counts_target 
+    corrected_prompt_bounced = prompt_counts_bounced
 
     
     # ─────────────────────────────────────────────────────────────────────────
