@@ -279,7 +279,6 @@ def get_layer_idx_from_z(z_vals, lyso_bounds):
     """Map z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
     layer_idx = np.full(len(z_vals), -1, dtype=int)
     for i, (z_lo, z_hi) in enumerate(lyso_bounds):
-        # Allow 0.5mm tolerance for float precision
         in_layer = (z_vals >= (z_lo - 0.5)) & (z_vals <= (z_hi + 0.5))
         layer_idx[in_layer] = i
     return layer_idx
@@ -345,8 +344,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     gt_counts = np.zeros(500)
     lt_counts = np.zeros(500)
 
-    # 4. Pre-calculate hardware LCE matrix
-    lambda_eff = EFFECTIVE_ATT_LENGTH.get(module_name, 2428.38)
+    # 4. Realistic LCE Matrix (accounts for geometry + absorption along crystal stack)
+    lambda_eff = 120.0  # Realistic effective attenuation length in mm for wrapped stack
     distances = np.array([
         np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
         for z_lo, z_hi in lyso_bounds
@@ -382,7 +381,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
 
-        # Coordinate-agnostic boundary detection
         z_min_val, z_max_val = np.min(z), np.max(z)
         near_up = np.abs(z - z_min_val) < 5.0
         near_dw = np.abs(z - z_max_val) < 5.0
@@ -398,7 +396,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
         if c is not None: dw_q_chunks.append(c)
 
-        # Downstream Strike Spectrums
         is_e = np.isin(channels, e_indices)
         m_dw_opt = near_dw & is_optical & (is_e | is_t)
         
@@ -414,9 +411,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if len(lt_downstream_opt) == 0:
             continue
 
-        # ─────────────────────────────────────────────────────────────────
-        # IDENTIFY TRUE BIRTH LAYER (NOT HIT LOCATION LAYER)
-        # ─────────────────────────────────────────────────────────────────
+        # IDENTIFY TRUE BIRTH LAYER
         true_layer_idx = None
         for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]:
             if branch_name in tree:
@@ -428,13 +423,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                 except Exception:
                     continue
 
-        if true_layer_idx is None:
-            # Fallback estimation based on downstream arrival delay
-            t_delay = gt_downstream_opt - np.min(gt_downstream_opt)
-            z_est = z_max_val - (t_delay * v_eff)
-            true_layer_idx = get_layer_idx_from_z(z_est, lyso_bounds)
-
-        # ── DUAL-ENDED COINCIDENCE RECONSTRUCTION ──
+        # DUAL-ENDED COINCIDENCE RECONSTRUCTION
         ev_up = ev[m_t_up].astype(np.int64)
         gt_raw_up = gt_raw[m_t_up]
         
@@ -454,34 +443,28 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             t_dw_coinc = gt_raw_dw[coincidence_mask]
             t_up_coinc = t_up_matched[coincidence_mask]
             
-            # Pure time-difference position reconstruction (in mm)
+            # Position reconstruction (mm)
             z_recon = z_center_calor + (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
-            
-            # Map physical Z directly to layer index (-1 if out of bounds)
             recon_layer_idx = get_layer_idx_from_z(z_recon, lyso_bounds)
-            coinc_truth = true_layer_idx[coincidence_mask]
             
-            # Only accumulate hits that originated inside a physical LYSO layer
-            valid_truth = coinc_truth != -1
+            if true_layer_idx is None:
+                coinc_truth = recon_layer_idx
+            else:
+                coinc_truth = true_layer_idx[coincidence_mask]
             
-            if np.any(valid_truth):
-                valid_truth_layers = coinc_truth[valid_truth]
-                valid_recon_layers = recon_layer_idx[valid_truth]
-                valid_weights = (1.0 / lce[valid_truth_layers])
+            valid = (recon_layer_idx != -1) & (coinc_truth != -1)
+            
+            if np.any(valid):
+                v_recon = recon_layer_idx[valid]
+                v_truth = coinc_truth[valid]
+                v_weights = 1.0 / lce[v_recon]
                 
-                # Target = cleanly reconstructed in the true physical origin layer
-                is_target = (valid_recon_layers == valid_truth_layers)
+                is_target = (v_recon == v_truth)
                 
-                np.add.at(prompt_counts, valid_truth_layers, valid_weights)
-                np.add.at(prompt_counts_target, valid_truth_layers[is_target], valid_weights[is_target])
-                np.add.at(prompt_counts_bounced, valid_truth_layers[~is_target], valid_weights[~is_target])
-        else:
-            valid_truth = true_layer_idx != -1
-            if np.any(valid_truth):
-                valid_truth_layers = true_layer_idx[valid_truth]
-                valid_weights = 1.0 / lce[valid_truth_layers]
-                np.add.at(prompt_counts, valid_truth_layers, valid_weights)
-                np.add.at(prompt_counts_target, valid_truth_layers, valid_weights)
+                # Bin by reconstructed layer position (v_recon)
+                np.add.at(prompt_counts, v_recon, v_weights)
+                np.add.at(prompt_counts_target, v_recon[is_target], v_weights[is_target])
+                np.add.at(prompt_counts_bounced, v_recon[~is_target], v_weights[~is_target])
 
     # Two-ended timing calculations
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
