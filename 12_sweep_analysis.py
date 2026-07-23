@@ -1447,27 +1447,49 @@ def main():
             plt.close(fig_er)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 3b. SHOWER-MAX DATA COLLECTION (T-type channels)
+        # SiPM PDE CONFIGURATION & HELPER
+        # ─────────────────────────────────────────────────────────────────────
+        SIPM_PDE = 0.25  # 25% SiPM Photon Detection Efficiency (PDE)
+
+        def apply_sipm_pde(photon_counts, pde=0.25, use_binomial=True):
+            """
+            Applies SiPM Photon Detection Efficiency (PDE) to raw simulated photon counts.
+            Uses binomial random sampling to preserve realistic photo-electron statistics and fluctuations.
+            """
+            if pde >= 1.0 or pde <= 0.0:
+                return photon_counts
+
+            photon_counts_arr = np.asanyarray(photon_counts)
+            if use_binomial:
+                int_counts = np.maximum(0, np.round(photon_counts_arr)).astype(int)
+                return np.random.binomial(n=int_counts, p=pde).astype(float)
+            else:
+                return photon_counts_arr * pde
+
+        # ─────────────────────────────────────────────────────────────────────
+        # 3b. SHOWER-MAX DATA COLLECTION (T-type channels, Raw Uncorrected Data)
         # ─────────────────────────────────────────────────────────────────────
         for ekey in energy_keys:
             E_val = extract_numerical_energy(ekey)
             if E_val <= 0: continue
 
-            t_matrix = master_summary[mod][ekey].get("dw_t_layer_matrix", 
-                       master_summary[mod][ekey].get("t_layer_matrix", None))
-            
-            t_totals = master_summary[mod][ekey].get("dw_t_total_summed", np.array([]))
-            t_totals = np.array(t_totals)
+            # Extract raw uncorrected T-type totals
+            t_totals = master_summary[mod][ekey].get("dw_t_total_summed", 
+                       master_summary[mod][ekey].get("dw_t_total", np.array([])))
+            t_eval_data = np.array(t_totals)
 
-            if t_matrix is not None and len(t_matrix) > 0 and np.ndim(t_matrix) == 2:
-                t_matrix = np.array(t_matrix)
-                t_eval_data, _ = compute_event_reconstructed_energy(
-                    prompt_counts_per_event=t_matrix,
-                    lambda_eff=30.0
-                )
-            else:
-                t_eval_data = t_totals
+            # Fallback to summing layer matrix directly if total array is missing
+            if len(t_eval_data) == 0:
+                t_matrix = master_summary[mod][ekey].get("dw_t_layer_matrix", 
+                           master_summary[mod][ekey].get("t_layer_matrix", None))
+                if t_matrix is not None and len(t_matrix) > 0:
+                    t_eval_data = np.sum(np.array(t_matrix), axis=1)
 
+            t_eval_data = t_eval_data[t_eval_data > 0]
+            if len(t_eval_data) < 5: continue
+
+            # Apply SiPM PDE Binomial Downsampling
+            t_eval_data = apply_sipm_pde(t_eval_data, pde=SIPM_PDE)
             t_eval_data = t_eval_data[t_eval_data > 0]
             if len(t_eval_data) < 5: continue
 
@@ -1493,7 +1515,7 @@ def main():
         mean_txt_path = mod_dir / f"{mod}_mean_photon_counts.txt"
         with open(mean_txt_path, "w") as f_out:
             f_out.write(f"{'='*70}\n")
-            f_out.write(f" MEAN PHOTON COUNTS & RESOLUTION DENOMINATORS — {mod}\n")
+            f_out.write(f" MEAN DETECTED PHOTO-ELECTRONS (PDE={SIPM_PDE*100:.0f}%, RAW DATA) — {mod}\n")
             f_out.write(f"{'='*70}\n")
             f_out.write(f"{'Energy (GeV)':<12} | {'Channel':<10} | {'Mean (mu)':<14} | {'Std (sigma)':<14} | {'sigma/mu (%)':<12}\n")
             f_out.write(f"{'-'*70}\n")
@@ -1508,13 +1530,17 @@ def main():
                 std_v = mu_v * res_v
                 f_out.write(f"{float(E_v):<12.1f} | {'T-Type':<10} | {float(mu_v):<14.2f} | {float(std_v):<14.2f} | {float(res_v)*100.0:<12.2f}\n")
 
-        print(f"[SUCCESS] Saved mean photon count report to: {mean_txt_path.resolve()}")
+        print(f"[SUCCESS] Saved mean detected photo-electron report to: {mean_txt_path.resolve()}")
 
         # 2. Gaussian Fit Function Definition
         def gaussian_fit_func(x, amp, mu, sig):
             return amp * np.exp(-0.5 * ((x - mu) / sig) ** 2)
 
-        # 3. Histogram Subplot Panel Generator Function Definition
+        # 3. 3-Parameter Resolution Model Function Definition (c ⊕ s/√E ⊕ n/E)
+        def resolution_func_3param(E, c, s, n):
+            return np.sqrt(c**2 + (s / np.sqrt(E))**2 + (n / E)**2)
+
+        # 4. Histogram Subplot Panel Generator Function Definition
         def plot_photon_histograms(channel_type, target_energies, summary_key, mu_list, res_list):
             target_energies_list = [float(e) for e in list(target_energies)]
             if len(target_energies_list) == 0:
@@ -1545,6 +1571,11 @@ def main():
                 data = np.array(data)
                 data = data[data > 0]  # Filter zero-photon events
 
+                # Apply SiPM PDE Binomial Sampling
+                if len(data) > 0:
+                    data = apply_sipm_pde(data, pde=SIPM_PDE)
+                    data = data[data > 0]
+
                 if len(data) < 5:
                     ax.text(0.5, 0.5, f"Insufficient Data (N={len(data)})", ha="center", va="center", transform=ax.transAxes)
                     continue
@@ -1570,7 +1601,7 @@ def main():
 
                 counts, edges, _ = ax.hist(
                     clean_data, bins=n_bins, color=mod_colors.get(mod, "#004488"),
-                    alpha=0.55, edgecolor="black", label=f"Sim Data ({channel_type})"
+                    alpha=0.55, edgecolor="black", label=f"Sim Data (PDE={SIPM_PDE*100:.0f}%)"
                 )
 
                 bin_centers = (edges[:-1] + edges[1:]) / 2.0
@@ -1619,7 +1650,7 @@ def main():
                     ax.plot([mu_f - sig_f, mu_f + sig_f], [y_1sig, y_1sig], "|", color="crimson", markersize=8, markeredgewidth=2, zorder=5)
 
                     res_val = (sig_f / mu_f) * 100.0
-                    info_text = f"$\mu = {mu_f:.1f}$ hits\n$\sigma = {sig_f:.1f}$ hits\n$\sigma/\mu = {res_val:.2f}\%$"
+                    info_text = f"$\mu = {mu_f:.1f}$ p.e.\n$\sigma = {sig_f:.1f}$ p.e.\n$\sigma/\mu = {res_val:.2f}\%$"
                     ax.text(
                         0.95, 0.65, info_text, transform=ax.transAxes, ha="right", va="top",
                         bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85, edgecolor="gray"),
@@ -1633,7 +1664,7 @@ def main():
                     )
 
                 ax.set_title(f"{channel_type} Channel — {E_val:g} GeV", fontsize=11, fontweight="bold")
-                ax.set_xlabel("Detected Photon Count (Hits)", fontsize=10)
+                ax.set_xlabel("Detected Photo-electrons (p.e.)", fontsize=10)
                 ax.set_ylabel("Events", fontsize=10)
                 ax.grid(True, linestyle=":", alpha=0.6)
                 ax.legend(loc="upper right", fontsize=8)
@@ -1642,7 +1673,7 @@ def main():
                 fig_h.delaxes(axs_h[idx])
 
             if plotted_count > 0:
-                fig_h.suptitle(f"{channel_type}-Type Photon Distributions & Gaussian Fits — {mod}", fontsize=13, fontweight="bold")
+                fig_h.suptitle(f"{channel_type}-Type Photo-Electron Distributions (PDE={SIPM_PDE*100:.0f}%, Raw) — {mod}", fontsize=13, fontweight="bold")
                 fig_h.tight_layout()
 
                 save_file = mod_dir / f"{mod}_{channel_type.lower()}_type_histograms.png"
@@ -1651,7 +1682,7 @@ def main():
 
             plt.close(fig_h)
 
-        # 4. NOW Safely Execute Helpers
+        # 5. Execute Histogram Helpers
         if len(energies_gev) > 0:
             e_key = "dw_e_total_summed" if "dw_e_total_summed" in master_summary[mod][energy_keys[0]] else "dw_e_total"
             plot_photon_histograms("E", energies_gev, e_key, mu_e_list, res_e_list)
@@ -1661,48 +1692,49 @@ def main():
             plot_photon_histograms("T", energies_gev_t, t_key, mu_t_list, res_t_list)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 3d. T-TYPE SHOWER-MAX RESOLUTION PLOT
+        # 3d. T-TYPE SHOWER-MAX RESOLUTION PLOT (RAW DATA FIT WITH PDE)
         # ─────────────────────────────────────────────────────────────────────
         if len(energies_gev_t) >= 1:
             energies_gev_t = np.array(energies_gev_t)
             res_t_list = np.array(res_t_list)
             res_t_err_arr = np.array(res_t_err)
 
-            n_active_t = 6 if "rc_hex" in mod else 4
-            n_baseline = 8
-            correction_factor_t = np.sqrt(n_active_t / n_baseline)
-
-            proj_res_t = res_t_list * correction_factor_t
-            proj_err_t = res_t_err_arr * correction_factor_t
+            target_res_t = res_t_list
+            target_err_t = res_t_err_arr
 
             popt_res_t = None
-            c_ft, s_ft = 0.0, 0.0
+            c_ft, s_ft, n_ft = 0.0, 0.0, 0.0
+            fit_label_t = "Fit failed"
+
             if len(energies_gev_t) >= 3:
                 try:
                     popt_res_t, _ = curve_fit(
-                        resolution_func, energies_gev_t, proj_res_t,
-                        p0=[0.08, 0.50], bounds=([0.0, 0.0], [1.0, 5.0])
+                        resolution_func_3param, energies_gev_t, target_res_t,
+                        sigma=target_err_t, absolute_sigma=True,
+                        p0=[0.08, 0.50, 0.10], bounds=([0.0, 0.0, 0.0], [1.0, 5.0, 5.0])
                     )
-                    c_ft, s_ft = popt_res_t
+                    c_ft, s_ft, n_ft = popt_res_t
+                    fit_label_t = f"Fit: {c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$ $\\oplus$ {n_ft*100:.2f}%/E"
                 except Exception as e:
                     print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
+                    fit_label_t = "Fit failed"
 
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
-            # 1. Plot Simulation Data
-            ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
-                           fmt='s', color="gray", alpha=0.7, label="Sim Raw (Uncorrected T-type)")
+            # 1. Plot Actual Raw Simulation Data (T-type with PDE applied)
+            ax_sm.errorbar(energies_gev_t, target_res_t, yerr=target_err_t,
+                           fmt=mod_markers.get(mod, 's'), color=mod_colors.get(mod, 'black'),
+                           markersize=6, capsize=3, elinewidth=1.2,
+                           label=f"Sim Data (T-type, PDE={SIPM_PDE*100:.0f}%)")
 
-            ax_sm.errorbar(energies_gev_t, proj_res_t, yerr=proj_err_t,
-                           fmt='D', color="darkorange", label=f"Projected ({n_baseline} SiPMs Baseline)")
-
-            # 2. Plot Simulation Fit
+            # 2. Plot Fitted Resolution Curve
             x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
             if popt_res_t is not None:
-                ax_sm.plot(x_sm_smooth, resolution_func(x_sm_smooth, *popt_res_t),
-                           color="darkorange", linestyle='--', linewidth=2.0)
+                ax_sm.plot(x_sm_smooth, resolution_func_3param(x_sm_smooth, *popt_res_t),
+                           color=mod_colors.get(mod, 'black'), linestyle='--', linewidth=2.0,
+                           label=fit_label_t)
 
-            # 3. OVERLAY PAPER FIG 17 REFERENCE LINE
+            # 3. Paper Fig 17 Reference Curve Overlay
             c_paper, s_paper, n_paper = 0.0931, 0.5204, 0.3162
             y_paper = np.sqrt(c_paper**2 + (s_paper / np.sqrt(x_sm_smooth))**2 + (n_paper / x_sm_smooth)**2)
             
@@ -1712,22 +1744,11 @@ def main():
                 label=r"Paper Fig 17 ($9.31\% \oplus 52.04\%/\sqrt{E} \oplus 31.62\%/E$)"
             )
 
-            # Text box details
-            fit_text = ""
-            if popt_res_t is not None:
-                fit_text += f"Proj Fit: {c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$\n"
-            else:
-                fit_text += f"Proj Fit: skipped (< 3 points)\n"
-                
-            ax_sm.text(0.98, 0.97, fit_text.strip(), transform=ax_sm.transAxes,
-                       ha='right', va='top', fontsize=9, color="black", 
-                       bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="lightgray"))
-
             ax_sm.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_sm.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
-            ax_sm.set_title(f"Shower-max Energy Resolution (T-type) — {mod}", fontsize=13, fontweight="bold")
+            ax_sm.set_title(f"Shower-max Energy Resolution (T-type, Raw, PDE={SIPM_PDE*100:.0f}%) — {mod}", fontsize=13, fontweight="bold")
             ax_sm.grid(True, linestyle=":", alpha=0.6)
-            ax_sm.legend(fontsize=9, loc='lower left') 
+            ax_sm.legend(fontsize=9, loc='upper right')
 
             fig_sm.tight_layout()
             fig_sm.savefig(mod_dir / f"{mod}_showermax_energy_resolution.png", dpi=200)
@@ -1841,7 +1862,6 @@ def main():
             if n_ev < 8 or len(raw_data) < 10:
                 continue
 
-            # Clean outliers using your existing methodology
             clean_data = clean_around_mode(raw_data, window_ps=500.0)
             fwhm_val = calculate_empirical_fwhm(clean_data, bins=80)
 
@@ -1876,7 +1896,6 @@ def main():
 
     fig_fwhm.tight_layout()
 
-    # Re-use the existing visual encoding key text
     fig_fwhm.text(
         1.02, 0.15, key_text, 
         fontsize=9, 
@@ -1948,9 +1967,9 @@ def main():
     print(f"[SUCCESS] Saved Energy Resolution vs Energy plot to: {eres_save_path.resolve()}")
 
     # ─────────────────────────────────────────────────────────────────────
-    # 4D. NEW OPTIMIZED ENERGY RESOLUTION PLOT (DEPTH-CORRECTED)
+    # 4D. OPTIMIZED ENERGY RESOLUTION PLOT (RAW UNCORRECTED DATA WITH PDE)
     # ─────────────────────────────────────────────────────────────────────
-    print("\n--- Generating New Depth-Corrected Energy Resolution Plots ---")
+    print("\n--- Generating Raw Energy Resolution Plots ---")
     for mod in modules:
         if mod not in master_summary or not master_summary[mod]:
             continue
@@ -1959,57 +1978,47 @@ def main():
         raw_resolutions = []
         raw_resolution_errors = []
 
-        # Sort energies numerically
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
         
         for ekey in energy_keys:
             data = master_summary[mod][ekey]
             
-            # Use the new depth-corrected array you added to analyze_energy_batch!
-            if "dw_e_total_corr" in data:
-                corrected_yields = data["dw_e_total_corr"]
+            # Extract raw uncorrected photon yields directly
+            raw_yields = data.get("dw_e_total_summed", data.get("dw_e_total", np.array([])))
+            raw_yields = np.array(raw_yields)
+            raw_yields = raw_yields[raw_yields > 0]
+            
+            # Apply SiPM PDE Binomial Downsampling
+            if len(raw_yields) > 0:
+                raw_yields = apply_sipm_pde(raw_yields, pde=SIPM_PDE)
+                raw_yields = raw_yields[raw_yields > 0]
+
+            if len(raw_yields) >= 5:
+                res_val, res_err = robust_resolution(raw_yields)
                 
-                # Calculate resolution using your robust Gaussian fitter
-                res_val, res_err = robust_resolution(corrected_yields)
-                
-                # If fit was successful (returns > 0)
                 if res_val > 0:
                     energy_points.append(extract_numerical_energy(ekey))
-                    # Convert from percentage (robust_resolution output) back to fraction
                     raw_resolutions.append(res_val / 100.0)
                     raw_resolution_errors.append(res_err / 100.0)
         
         if energy_points:
-            print(f"[SUCCESS] Generating optimized resolution plot for {mod} with {len(energy_points)} points...")
-            
-            # Determine geometry for scaling
-            is_hex = "hex" in mod.lower()
-            active_channels = 3 if is_hex else 2  # E-channels: 3 for hex, 2 for square
-            baseline_channels = 64 # Adjust this to your assumed full containment baseline
-            
-            # Call your new plotting function
+            print(f"[SUCCESS] Generating resolution plot for {mod} with {len(energy_points)} points...")
             try:
-                # Assuming plot_energy_resolution saves the plot internally or returns a fig.
-                # If it doesn't save internally, you can wrap plt.savefig() around this call.
                 plot_energy_resolution(
                     energy_points=energy_points,
                     raw_resolutions=raw_resolutions,
-                    raw_resolution_errors=raw_resolution_errors,
-                    active_sipms=active_channels,
-                    baseline_sipms=baseline_channels,
-                    # If your function accepts a title or save path, pass them here:
-                    # title=f"Optimized Energy Resolution - {mod}",
-                    # save_path=summary_dir / f"{mod}_optimized_energy_resolution.png"
+                    raw_resolution_errors=raw_resolution_errors
                 )
             except Exception as e:
-                print(f"[ERROR] Failed to generate optimized plot for {mod}: {e}")
+                print(f"[ERROR] Failed to generate plot for {mod}: {e}")
+
     # ─────────────────────────────────────────────────────────────────────
     # 5. Plot Transverse Shower Profiles for Each Module and Energy
     # ─────────────────────────────────────────────────────────────────────
     def plot_transverse_profile(transverse_data, module_name):
         from matplotlib.colors import LogNorm
         fig, ax = plt.subplots(figsize=(6, 5))
-        im = ax.imshow(transverse_data, cmap='inferno', norm = LogNorm(), origin='lower', interpolation='nearest')
+        im = ax.imshow(transverse_data, cmap='inferno', norm=LogNorm(), origin='lower', interpolation='nearest')
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label("Energy Deposited / Dose", rotation=270, labelpad=15)
         ax.set_title(f"Transverse Shower Profile — {module_name}", fontweight='bold')
@@ -2048,8 +2057,6 @@ def main():
         plt.close()
         print(f"[SUCCESS] Saved transverse profile plot for {mod} to: {save_path.resolve()}")
 
-
-
     # ─────────────────────────────────────────────────────────────────────
     # 6. EXPORT MASTER MATRIX TEXT REPORT
     # ─────────────────────────────────────────────────────────────────────
@@ -2058,6 +2065,7 @@ def main():
         f.write(f"{'=' * 80}\n")
         f.write(" RADiCAL SIMULATION UNIFIED RUN SUMMARY SHEET\n")
         f.write(f" Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f" Configured SiPM PDE: {SIPM_PDE*100:.1f}%\n")
         f.write(f"{'=' * 80}\n\n")
 
         for mod in modules:
