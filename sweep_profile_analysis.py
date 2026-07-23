@@ -281,23 +281,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         return None
 
     # Detect active SiPM position
-    
     detected_z_sensor = None
-    # Pre-calculate hardware LCE matrix
-    lambda_eff = EFFECTIVE_ATT_LENGTH.get(module_name, 2428.38)
-    distances = np.array([
-        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
-        for z_lo, z_hi in lyso_bounds
-    ])
-    lce = np.exp(-distances / lambda_eff)
-
-    # Pre-allocate accumulation arrays OUTSIDE the file loop
-    prompt_counts = np.zeros(_N_LYSO)
-    prompt_counts_target = np.zeros(_N_LYSO)
-    prompt_counts_bounced = np.zeros(_N_LYSO)
-    total_events_processed = 0
-
-    expected_times_arr = np.array(expected_times)
     for fpath in hit_files:
         try:
             with uproot.open(fpath) as f:
@@ -314,6 +298,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     if detected_z_sensor is None:
         return None
 
+    # 1. Define physical dimensions and boundaries FIRST
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
     v_eff = v_eff_for_module(module_name)
     t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
@@ -329,7 +314,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     up_q_chunks, dw_q_chunks = [], []
     run_dirs = set(fpath.parent for fpath in hit_files)
 
-    # Extract DoseActor Truth Data (.mhd/.raw files)
+    # 2. Extract DoseActor Truth Data (.mhd/.raw files)
     truth_profiles = []
     for rdir in run_dirs:
         mhd_files = list(rdir.glob("run_Dose_edep.mhd"))
@@ -342,29 +327,28 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                 rebinned = rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm)
                 truth_profiles.append(rebinned)
 
-    # Pre-allocate histograms for raw timing profiles
+    # 3. Pre-allocate raw timing profile histograms
     gt_bins = np.linspace(0.0, 100.0, 501)
     lt_bins = np.linspace(0.0, 25.0, 501)
     gt_counts = np.zeros(500)
     lt_counts = np.zeros(500)
 
-    # Pre-calculate expected downstream flight times per layer (distance / v_eff)
-   
-    expected_times = []
-    for z_lo, z_hi in lyso_bounds:
-        z_center = (z_lo + z_hi) / 2.0
-        t_travel = np.abs(detected_z_sensor - z_center) / v_eff
-        expected_times.append(t_travel)
+    # 4. Pre-calculate hardware LCE matrix
+    lambda_eff = EFFECTIVE_ATT_LENGTH.get(module_name, 2428.38)
+    distances = np.array([
+        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
+        for z_lo, z_hi in lyso_bounds
+    ])
+    lce = np.exp(-distances / lambda_eff)
 
-    # Pre-allocate accumulation arrays OUTSIDE the file loop
+    # 5. Pre-allocate accumulation arrays OUTSIDE the file loop
     prompt_counts = np.zeros(_N_LYSO)
     prompt_counts_target = np.zeros(_N_LYSO)
     prompt_counts_bounced = np.zeros(_N_LYSO)
     total_events_processed = 0
 
-    expected_times_arr = np.array(expected_times)
+    # 6. Begin reading hits
     for fpath in hit_files:
-        run_tag = fpath.parent.name
         run_tag = fpath.parent.name
 
         try:
@@ -439,8 +423,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                 true_layer_idx = np.zeros(len(lt_downstream_opt), dtype=int)
 
         # ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION (Real-World Hardware Mimic) ──
-
-# ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION (Real-World Hardware Mimic) ──
         
         # 1. TDC (Time-to-Digital Converter) Trigger
         # Hardware discriminators trigger on the leading edge (e.g., 10th percentile to avoid dark noise)
@@ -502,68 +484,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         mean_truth_profile = np.zeros(_N_LYSO)
         active_edep_list = []
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # NEW: PHYSICAL LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
-    # ─────────────────────────────────────────────────────────────────────────
-    # Map the effective attenuation lengths (in mm) based on your bulk material XML specs
-    # ─────────────────────────────────────────────────────────────────────────
-    # ANALYTICAL LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
-    # ─────────────────────────────────────────────────────────────────────────
-    # 1. Fetch bulk properties
-    bulk_att_lengths = {
-        "radi_cal_energy":        3500.0,
-        "radi_cal_triple":        3500.0,
-        "rc_hex":                 3500.0,
-        "rc_hex_triple":          3500.0,
-        "dsb1_radi_cal_energy":   10000.0,
-        "dsb1_radi_cal_triple":   10000.0,
-        "dsb1_rc_hex":            10000.0,
-        "dsb1_rc_hex_triple":     10000.0,
-        "luagce_radi_cal_energy": 5000.0,
-        "luagce_radi_cal_triple": 5000.0,
-        "luagce_rc_hex":          5000.0,
-        "luagce_rc_hex_triple":   5000.0,
-    }
-
-    lambda_bulk = bulk_att_lengths.get(module_name, 3500.0)
-
-    # 2. Define physics parameters
-    c_speed = 299.792 # mm/ns
-    n_index = REFRACTIVE_INDEX.get(module_name, 1.60)
-    v_medium = c_speed / n_index
-
-    timing_window_ns = 0.50  # Must match your SIGMA_NS or absolute timing cut
-    characteristic_z = calor_thick_mm / 2.0  # Evaluate at the center of the detector
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # LIGHT COLLECTION EFFICIENCY (LCE) CALIBRATION
-    # ─────────────────────────────────────────────────────────────────────────
-    # We now use the exact simulated waveguide effective attenuation lengths (lambda_eff)
-    # we measured and verified from our capillary sweeps!
-    lambda_eff = EFFECTIVE_ATT_LENGTH.get(module_name, 2428.38)
-
-    # 1. Distances from each layer center to the active downstream sensor (in mm)
-    distances = np.array([
-        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) 
-        for z_lo, z_hi in lyso_bounds
-    ])
-
-  # 2. Compute the LCE profile (geometric exponential decay along the capillary)
-    lce = np.exp(-distances / lambda_eff)
-
-    # 3. Correct for attenuation by dividing raw prompt counts by LCE
-    # (Removed: LCE calibration is now handled internally by the hardware DSP logic)
-    corrected_prompt_profile = prompt_counts 
-    corrected_prompt_target = prompt_counts_target 
-    corrected_prompt_bounced = prompt_counts_bounced
-
-    
-    # ─────────────────────────────────────────────────────────────────────────
-
-
-
-
-
     if verbose_label:
         print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
               f"DoseActor Truth Mean: {np.mean(active_edep_list) if active_edep_list else 0.0:.2f} MeV/run")
@@ -575,10 +495,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        # Physical LCE corrected prompt profiles (with your requested [::-1] reversal!)
-        "prompt_profile": corrected_prompt_profile[::-1],  # Legacy key
-        "prompt_profile_target": corrected_prompt_target[::-1],
-        "prompt_profile_bounced": corrected_prompt_bounced[::-1],
+        # Physical LCE corrected prompt profiles
+        "prompt_profile": prompt_counts[::-1],
+        "prompt_profile_target": prompt_counts_target[::-1],
+        "prompt_profile_bounced": prompt_counts_bounced[::-1],
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 sweep_analysis_4T.py
 =====================================
