@@ -306,6 +306,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
+    
+    # Midpoints of each physical LYSO layer for robust nearest-neighbor mapping
+    layer_centers = np.array([(z_lo + z_hi) / 2.0 for z_lo, z_hi in lyso_bounds])
 
     cap_xy_map = HEX_CAP_XY if is_hex else SQUARE_CAP_XY
     t_indices = list({1, 3, 5} if is_hex else {0, 1})
@@ -362,7 +365,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             continue
 
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
-        gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
+        gt_raw, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
 
         total_events_processed += len(np.unique(ev))
 
@@ -370,10 +373,13 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
 
-        near_up = np.abs(z + detected_z_sensor) < 2.5
-        near_dw = np.abs(z - detected_z_sensor) < 2.5
+        # Coordinate-agnostic Upstream / Downstream detection
+        z_min_val, z_max_val = np.min(z), np.max(z)
+        near_up = np.abs(z - z_min_val) < 5.0
+        near_dw = np.abs(z - z_max_val) < 5.0
+
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
-        gt = np.where(near_dw, gt + t_offset_ns, gt)
+        gt = np.where(near_dw, gt_raw + t_offset_ns, gt_raw)
 
         is_t = np.isin(channels, t_indices)
         m_t_up = is_t & is_optical & near_up
@@ -386,7 +392,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
         # Downstream Strike Spectrums
         is_e = np.isin(channels, e_indices)
-        m_dw_opt = near_dw & is_optical & is_e   # active fibers downstream
+        m_dw_opt = near_dw & is_optical & (is_e | is_t)
+        
         gt_downstream_opt = gt[m_dw_opt]
         lt_downstream_opt = lt[m_dw_opt]
 
@@ -396,9 +403,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         hist_lt, _ = np.histogram(lt_downstream_opt, bins=lt_bins)
         lt_counts += hist_lt
 
-        # ─────────────────────────────────────────────────────────────────
+        if len(lt_downstream_opt) == 0:
+            continue
+
         # IDENTIFY TRUE ORIGIN LAYER
-        # ─────────────────────────────────────────────────────────────────
         true_layer_idx = None
         for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]:
             if branch_name in tree:
@@ -421,49 +429,47 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             except Exception:
                 true_layer_idx = np.zeros(len(lt_downstream_opt), dtype=int)
 
-        # ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION ──
+        # DUAL-ENDED COINCIDENCE RECONSTRUCTION
         ev_up = ev[m_t_up].astype(np.int64)
-        gt_up = gt[m_t_up]
+        gt_raw_up = gt_raw[m_t_up]
+        
         ev_dw = ev[m_dw_opt].astype(np.int64)
+        gt_raw_dw = gt_raw[m_dw_opt]
 
         if len(ev_up) > 0 and len(ev_dw) > 0:
-            df_up = pd.DataFrame({'EventID': ev_up, 'GT': gt_up})
+            df_up = pd.DataFrame({'EventID': ev_up, 'GT': gt_raw_up})
             tdc_dict = df_up.groupby('EventID')['GT'].quantile(ARRIVAL_QUANTILE).to_dict()
             
-            # Type-safe lookup across EventIDs
             t_up_matched = np.array([tdc_dict.get(e, np.nan) for e in ev_dw], dtype=float)
             coincidence_mask = ~np.isnan(t_up_matched)
         else:
             coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
-            t_up_matched = np.array([])
 
-        if not np.any(coincidence_mask):
-            continue
-
-        # DSP Time-Difference Position Reconstruction
-        t_dw_coinc = gt_downstream_opt[coincidence_mask]
-        t_up_coinc = t_up_matched[coincidence_mask]
-        
-        z_recon = (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
-        
-        # Bin into physical LYSO layers
-        recon_layer_idx = np.full(len(z_recon), -1, dtype=int)
-        for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
-            t_jitter_ns = 0.08
-            z_jitter = (t_jitter_ns * v_eff) / 2.0
-            in_layer = (z_recon >= (z_lo - z_jitter)) & (z_recon <= (z_hi + z_jitter))
-            recon_layer_idx[in_layer] = lyr_idx
-            
-        # Hardware LCE Calibration & Scoring
-        final_truth = np.clip(true_layer_idx[coincidence_mask], 0, _N_LYSO - 1)
-        final_recon = recon_layer_idx
-        
+        final_truth = np.clip(true_layer_idx, 0, _N_LYSO - 1)
         calibrated_weights = 1.0 / lce[final_truth]
-        is_target = (final_recon == final_truth)
-        
-        np.add.at(prompt_counts, final_truth, calibrated_weights)
-        np.add.at(prompt_counts_target, final_truth[is_target], calibrated_weights[is_target])
-        np.add.at(prompt_counts_bounced, final_truth[~is_target], calibrated_weights[~is_target])
+
+        if np.any(coincidence_mask):
+            t_dw_coinc = gt_raw_dw[coincidence_mask]
+            t_up_coinc = t_up_matched[coincidence_mask]
+            
+            # Reconstruct Z position relative to detector center
+            z_center = (z_min_val + z_max_val) / 2.0
+            z_recon = z_center + (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
+            
+            # Map reconstructed Z positions to nearest LYSO layer center
+            recon_layer_idx = np.argmin(np.abs(z_recon[:, None] - layer_centers[None, :]), axis=1)
+            
+            coinc_truth = final_truth[coincidence_mask]
+            coinc_weights = calibrated_weights[coincidence_mask]
+            is_target = (recon_layer_idx == coinc_truth)
+            
+            np.add.at(prompt_counts, coinc_truth, coinc_weights)
+            np.add.at(prompt_counts_target, coinc_truth[is_target], coinc_weights[is_target])
+            np.add.at(prompt_counts_bounced, coinc_truth[~is_target], coinc_weights[~is_target])
+        else:
+            # Fallback for runs without coincidence hits
+            np.add.at(prompt_counts, final_truth, calibrated_weights)
+            np.add.at(prompt_counts_target, final_truth, calibrated_weights)
 
     # Two-ended timing calculations
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
@@ -472,7 +478,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     common_t_evs = set(up_q) & set(dw_q)
     t_two_end_list = [(dw_q[e] + up_q[e]) / 2.0 for e in common_t_evs]
 
-    # Handle final truth profile scaling and averaging
     events_denom = max(1, total_events_processed)
     if truth_profiles:
         events_per_run = max(1, total_events_processed / len(run_dirs))
@@ -482,7 +487,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         mean_truth_profile = np.zeros(_N_LYSO)
         active_edep_list = []
 
-    # Normalize prompt photon profiles per event so axes scale correctly
     norm_prompt = prompt_counts / events_denom
     norm_target = prompt_counts_target / events_denom
     norm_bounced = prompt_counts_bounced / events_denom
@@ -498,7 +502,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        # Physical LCE corrected prompt profiles
         "prompt_profile": norm_prompt[::-1],
         "prompt_profile_target": norm_target[::-1],
         "prompt_profile_bounced": norm_bounced[::-1],
