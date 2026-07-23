@@ -386,7 +386,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
         # Downstream Strike Spectrums
         is_e = np.isin(channels, e_indices)
-        m_dw_opt = near_dw & is_optical & is_e   # only channels with full-depth active fiber
+        m_dw_opt = near_dw & is_optical & is_e   # active fibers downstream
         gt_downstream_opt = gt[m_dw_opt]
         lt_downstream_opt = lt[m_dw_opt]
 
@@ -397,74 +397,69 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         lt_counts += hist_lt
 
         # ─────────────────────────────────────────────────────────────────
-        # IDENTIFY TRUE ORIGIN LAYER (for stacked histogram)
+        # IDENTIFY TRUE ORIGIN LAYER
         # ─────────────────────────────────────────────────────────────────
-        birth_z = None
-        for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth"]:
+        true_layer_idx = None
+        for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]:
             if branch_name in tree:
                 try:
-                    birth_z = tree[branch_name].array(library="np")[m_dw_opt]
-                    break
+                    bz = tree[branch_name].array(library="np")[m_dw_opt]
+                    t_idx = np.full(len(bz), -1, dtype=int)
+                    for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
+                        t_idx[(bz >= z_lo) & (bz <= z_hi)] = lyr_idx
+                    if np.any(t_idx != -1):
+                        true_layer_idx = t_idx
+                        break
                 except Exception:
                     continue
 
-        if birth_z is not None:
-            # Map birth coordinates directly to physical LYSO layer boundaries
-            true_layer_idx = np.full(len(lt_downstream_opt), -1, dtype=int)
-            for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
-                true_layer_idx[(birth_z >= z_lo) & (birth_z <= z_hi)] = lyr_idx
-        else:
-            # Alternate fallback: check for standard volumeID branch
+        if true_layer_idx is None:
             try:
                 vol_array = tree["volumeID"].array(library="np")
-                true_layer_idx = (vol_array[:, 1][m_dw_opt] if vol_array.ndim > 1 else vol_array[m_dw_opt])
+                lyr_ids = vol_array[:, 1][m_dw_opt] if (vol_array.ndim > 1 and vol_array.shape[1] > 1) else vol_array[m_dw_opt]
+                true_layer_idx = np.clip(lyr_ids, 0, _N_LYSO - 1).astype(int)
             except Exception:
-                # Fallback if no tracking info exists
                 true_layer_idx = np.zeros(len(lt_downstream_opt), dtype=int)
 
-        # ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION (Real-World Hardware Mimic) ──
-        
-        # 1. TDC (Time-to-Digital Converter) Trigger
-        # MUST use absolute Global Time (GT) so shower timing sync isn't lost
-        df_up = pd.DataFrame({'EventID': ev[m_t_up], 'GT': gt[m_t_up]})
-        if df_up.empty:
+        # ── GRAPH 4: DUAL-ENDED COINCIDENCE RECONSTRUCTION ──
+        ev_up = ev[m_t_up].astype(np.int64)
+        gt_up = gt[m_t_up]
+        ev_dw = ev[m_dw_opt].astype(np.int64)
+
+        if len(ev_up) > 0 and len(ev_dw) > 0:
+            df_up = pd.DataFrame({'EventID': ev_up, 'GT': gt_up})
+            tdc_dict = df_up.groupby('EventID')['GT'].quantile(ARRIVAL_QUANTILE).to_dict()
+            
+            # Type-safe lookup across EventIDs
+            t_up_matched = np.array([tdc_dict.get(e, np.nan) for e in ev_dw], dtype=float)
+            coincidence_mask = ~np.isnan(t_up_matched)
+        else:
+            coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
+            t_up_matched = np.array([])
+
+        if not np.any(coincidence_mask):
             continue
-        tdc_up_times = df_up.groupby('EventID')['GT'].quantile(ARRIVAL_QUANTILE)
-        
-        # 2. Coincidence Logic Unit (CLU)
-        t_up_matched = tdc_up_times.reindex(ev[m_dw_opt]).values
-        coincidence_mask = ~np.isnan(t_up_matched)
-        
-        # 3. DSP Time-Difference Position Reconstruction
-        # Delta-GT naturally extracts the spatial Z-origin using the speed of light in the fiber
+
+        # DSP Time-Difference Position Reconstruction
         t_dw_coinc = gt_downstream_opt[coincidence_mask]
         t_up_coinc = t_up_matched[coincidence_mask]
         
         z_recon = (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
         
-        # 4. Bin into physical LYSO layers
+        # Bin into physical LYSO layers
         recon_layer_idx = np.full(len(z_recon), -1, dtype=int)
         for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
-            t_jitter_ns = 0.08  # Relaxed slightly to account for realistic shower spread
+            t_jitter_ns = 0.08
             z_jitter = (t_jitter_ns * v_eff) / 2.0
             in_layer = (z_recon >= (z_lo - z_jitter)) & (z_recon <= (z_hi + z_jitter))
             recon_layer_idx[in_layer] = lyr_idx
             
-        # 5. Hardware LCE Calibration & Scoring
-        # The x-axis of the plot is "LYSO Layer Number" (Physical True Origin), so we MUST
-        # bin by final_truth. If we bin by recon_layer, bounced photons are dropped from the graph!
-        true_origin = true_layer_idx[coincidence_mask]
+        # Hardware LCE Calibration & Scoring
+        final_truth = np.clip(true_layer_idx[coincidence_mask], 0, _N_LYSO - 1)
+        final_recon = recon_layer_idx
         
-        valid_truth = true_origin != -1
-        final_truth = true_origin[valid_truth]
-        final_recon_eval = recon_layer_idx[valid_truth]
-        
-        # Apply LCE amplification mapping to the physical true layer
         calibrated_weights = 1.0 / lce[final_truth]
-        
-        # Target = Hardware cleanly reconstructed the correct layer
-        # Bounced = Hardware reconstruction failed (delayed TOF pushed Z out of bounds)
-        is_target = (final_recon_eval == final_truth)
+        is_target = (final_recon == final_truth)
         
         np.add.at(prompt_counts, final_truth, calibrated_weights)
         np.add.at(prompt_counts_target, final_truth[is_target], calibrated_weights[is_target])
@@ -478,6 +473,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     t_two_end_list = [(dw_q[e] + up_q[e]) / 2.0 for e in common_t_evs]
 
     # Handle final truth profile scaling and averaging
+    events_denom = max(1, total_events_processed)
     if truth_profiles:
         events_per_run = max(1, total_events_processed / len(run_dirs))
         mean_truth_profile = np.mean(truth_profiles, axis=0) / events_per_run
@@ -485,6 +481,11 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     else:
         mean_truth_profile = np.zeros(_N_LYSO)
         active_edep_list = []
+
+    # Normalize prompt photon profiles per event so axes scale correctly
+    norm_prompt = prompt_counts / events_denom
+    norm_target = prompt_counts_target / events_denom
+    norm_bounced = prompt_counts_bounced / events_denom
 
     if verbose_label:
         print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
@@ -498,9 +499,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
         # Physical LCE corrected prompt profiles
-        "prompt_profile": prompt_counts[::-1],
-        "prompt_profile_target": prompt_counts_target[::-1],
-        "prompt_profile_bounced": prompt_counts_bounced[::-1],
+        "prompt_profile": norm_prompt[::-1],
+        "prompt_profile_target": norm_target[::-1],
+        "prompt_profile_bounced": norm_bounced[::-1],
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
