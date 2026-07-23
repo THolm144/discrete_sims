@@ -301,14 +301,15 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     # 1. Define physical dimensions and boundaries FIRST
     lyso_thick = _KNOWN_MODULE_LYSO_THICK[module_name]
     v_eff = v_eff_for_module(module_name)
-    t_offset_ns = T_OFFSET_NS.get(module_name, 0.0)
 
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
     
-    # Midpoints of each physical LYSO layer for robust nearest-neighbor mapping
+    # Midpoints of each physical LYSO layer (0 to 29)
     layer_centers = np.array([(z_lo + z_hi) / 2.0 for z_lo, z_hi in lyso_bounds])
+    z_min_calor, z_max_calor = lyso_bounds[0][0], lyso_bounds[-1][1]
+    z_center_calor = (z_min_calor + z_max_calor) / 2.0
 
     cap_xy_map = HEX_CAP_XY if is_hex else SQUARE_CAP_XY
     t_indices = list({1, 3, 5} if is_hex else {0, 1})
@@ -373,13 +374,12 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
         channels = np.argmin(np.hypot(dx, dy), axis=1)
 
-        # Coordinate-agnostic Upstream / Downstream detection
+        # Robust coordinate detection
         z_min_val, z_max_val = np.min(z), np.max(z)
         near_up = np.abs(z - z_min_val) < 5.0
         near_dw = np.abs(z - z_max_val) < 5.0
 
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
-        gt = np.where(near_dw, gt_raw + t_offset_ns, gt_raw)
 
         is_t = np.isin(channels, t_indices)
         m_t_up = is_t & is_optical & near_up
@@ -394,7 +394,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         is_e = np.isin(channels, e_indices)
         m_dw_opt = near_dw & is_optical & (is_e | is_t)
         
-        gt_downstream_opt = gt[m_dw_opt]
+        gt_downstream_opt = gt_raw[m_dw_opt]
         lt_downstream_opt = lt[m_dw_opt]
 
         hist_gt, _ = np.histogram(gt_downstream_opt, bins=gt_bins)
@@ -406,30 +406,28 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if len(lt_downstream_opt) == 0:
             continue
 
-        # IDENTIFY TRUE ORIGIN LAYER
+        # ─────────────────────────────────────────────────────────────────
+        # IDENTIFY TRUE BIRTH LAYER (NOT HIT LOCATION LAYER)
+        # ─────────────────────────────────────────────────────────────────
         true_layer_idx = None
         for branch_name in ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]:
             if branch_name in tree:
                 try:
                     bz = tree[branch_name].array(library="np")[m_dw_opt]
-                    t_idx = np.full(len(bz), -1, dtype=int)
-                    for lyr_idx, (z_lo, z_hi) in enumerate(lyso_bounds):
-                        t_idx[(bz >= z_lo) & (bz <= z_hi)] = lyr_idx
-                    if np.any(t_idx != -1):
-                        true_layer_idx = t_idx
-                        break
+                    t_idx = np.argmin(np.abs(bz[:, None] - layer_centers[None, :]), axis=1)
+                    true_layer_idx = t_idx
+                    break
                 except Exception:
                     continue
 
         if true_layer_idx is None:
-            try:
-                vol_array = tree["volumeID"].array(library="np")
-                lyr_ids = vol_array[:, 1][m_dw_opt] if (vol_array.ndim > 1 and vol_array.shape[1] > 1) else vol_array[m_dw_opt]
-                true_layer_idx = np.clip(lyr_ids, 0, _N_LYSO - 1).astype(int)
-            except Exception:
-                true_layer_idx = np.zeros(len(lt_downstream_opt), dtype=int)
+            # Fallback: estimate birth layer from global time arrival delay
+            # (earlier arrivals = born closer to downstream sensor)
+            t_delay = gt_downstream_opt - np.min(gt_downstream_opt)
+            z_est = z_max_val - (t_delay * v_eff)
+            true_layer_idx = np.argmin(np.abs(z_est[:, None] - layer_centers[None, :]), axis=1)
 
-        # DUAL-ENDED COINCIDENCE RECONSTRUCTION
+        # ── DUAL-ENDED COINCIDENCE RECONSTRUCTION ──
         ev_up = ev[m_t_up].astype(np.int64)
         gt_raw_up = gt_raw[m_t_up]
         
@@ -452,11 +450,11 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             t_dw_coinc = gt_raw_dw[coincidence_mask]
             t_up_coinc = t_up_matched[coincidence_mask]
             
-            # Reconstruct Z position relative to detector center
-            z_center = (z_min_val + z_max_val) / 2.0
-            z_recon = z_center + (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
+            # Pure time-difference position reconstruction (in mm)
+            z_recon = z_center_calor + (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
+            z_recon = np.clip(z_recon, z_min_calor, z_max_calor)
             
-            # Map reconstructed Z positions to nearest LYSO layer center
+            # Map physical Z directly to nearest layer center (0 to 29)
             recon_layer_idx = np.argmin(np.abs(z_recon[:, None] - layer_centers[None, :]), axis=1)
             
             coinc_truth = final_truth[coincidence_mask]
@@ -467,7 +465,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             np.add.at(prompt_counts_target, coinc_truth[is_target], coinc_weights[is_target])
             np.add.at(prompt_counts_bounced, coinc_truth[~is_target], coinc_weights[~is_target])
         else:
-            # Fallback for runs without coincidence hits
             np.add.at(prompt_counts, final_truth, calibrated_weights)
             np.add.at(prompt_counts_target, final_truth, calibrated_weights)
 
@@ -502,9 +499,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        "prompt_profile": norm_prompt[::-1],
-        "prompt_profile_target": norm_target[::-1],
-        "prompt_profile_bounced": norm_bounced[::-1],
+        # Preserve natural order (Layer 1 = Index 0, Layer 30 = Index 29)
+        "prompt_profile": norm_prompt,
+        "prompt_profile_target": norm_target,
+        "prompt_profile_bounced": norm_bounced,
         "t_two_end_raw": np.array(t_two_end_list),
         "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
