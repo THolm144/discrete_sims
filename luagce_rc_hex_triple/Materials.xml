@@ -27,12 +27,10 @@
            22000 ph/MeV (RADICAL_SCINT_YIELD default 1.0), scaled by decay
            60ns in his sim. Kept your 70ns Ce3+ decay here since it's the more
            carefully sourced number and his sim's 60ns is close enough to be
-           a rounding choice, not a physics disagreement. Note: unlike DSB1,
-           there's no paper-tuned scale factor documented for LuAG in his
-           notes, so 22000 is the raw untuned default. Treat it as a starting
-           point to calibrate against detected photon counts, not a
-           validated final value. -->
-      <property name="SCINTILLATIONYIELD"          value="22000"/>
+           a rounding choice, not a physics disagreement. Note: I ended up scaling the
+           yield by 15x less, just like DSB1 because the scintillator was behaving very 
+           badly in analysis-->
+      <property name="SCINTILLATIONYIELD"          value="1467"/>
       <property name="RESOLUTIONSCALE"              value="1.0"/>
       <property name="SCINTILLATIONTIMECONSTANT1"   value="70" unit="ns"/>
       <property name="SCINTILLATIONYIELD1"          value="1.0"/>
