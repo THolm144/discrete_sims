@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-unified_sweep_analysis_4T.py
+sweep_analysis_4T.py
 =====================================
 Optimized version for aggregating timing and energy resolution results 
 for 4-T fiber RADiCAL geometries, matching paper comparison curves.

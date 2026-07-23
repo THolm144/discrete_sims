@@ -1,5 +1,5 @@
 """
-unified_sweep_analysis_optimized.py
+12_sweep_analysis_optimized.py
 =====================================
 Optimized version for aggregating timing-resolution, ToF-reconstruction, 
 and energy linearity results across 12 RADiCAL geometry variants.
