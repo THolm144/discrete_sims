@@ -77,13 +77,7 @@ ENERGY_REF_CURVES = {
         "color": "gray", 
         "ls": "--"
     },
-    "New Reference": {
-        "c": 15.92, 
-        "s": 0.0, 
-        "n": 122.8, 
-        "color": "darkorange", 
-        "ls": "-."
-    },
+    
 }
 
 def resolution_fit_func(E, c, s, n):
