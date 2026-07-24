@@ -496,7 +496,67 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if np.any(valid_up):
             np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0 / 1)
 
-        # Now handle the dual-ended coincidences
+        # ─────────────────────────────────────────────────────────────────────
+        # DUAL-ENDED COINCIDENCE MAPPING
+        # ─────────────────────────────────────────────────────────────────────
+        ev_up = ev[m_t_up].astype(np.int64)
+        gt_raw_up = gt_raw[m_t_up]
+        ev_dw = ev[m_dw_opt].astype(np.int64)
+        gt_raw_dw = gt_raw[m_dw_opt]
+
+        if len(ev_up) > 0 and len(ev_dw) > 0:
+            # 1. Sort the upstream events to group them
+            sort_idx = np.argsort(ev_up)
+            ev_up_sorted, gt_up_sorted = ev_up[sort_idx], gt_raw_up[sort_idx]
+            
+            # 2. Find unique EventIDs and where they start/count
+            unique_ev, start_idx, counts = np.unique(ev_up_sorted, return_index=True, return_counts=True)
+            
+            # 3. Quickly approximate the quantile index for each group
+            quant_offsets = np.floor((counts - 1) * ARRIVAL_QUANTILE).astype(int)
+            tdc_vals = gt_up_sorted[start_idx + quant_offsets]
+            
+            # 4. Map upstream times to downstream events using fast binary search
+            match_idx = np.searchsorted(unique_ev, ev_dw)
+            
+            # Ensure the match is valid (since ev_dw might contain events not in unique_ev)
+            valid_match = (match_idx < len(unique_ev)) & (unique_ev[np.minimum(match_idx, len(unique_ev)-1)] == ev_dw)
+            
+            t_up_matched = np.full(len(ev_dw), np.nan)
+            t_up_matched[valid_match] = tdc_vals[match_idx[valid_match]]
+            coincidence_mask = valid_match
+        else:
+            coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # SINGLE-ENDED RECONSTRUCTION (Kinematically Corrected, No LCE)
+        # ─────────────────────────────────────────────────────────────────────
+        c_vac = 299.792
+        t0 = 0.0 
+
+        # 1. Upstream Kinematics (Particle & Light move opposite)
+        v_up_recon = (c_vac * v_eff) / (c_vac + v_eff)
+        z_recon_up_all = z_min_val + (gt_raw_up - t0) * v_up_recon
+
+        # 2. Downstream Kinematics (Particle & Light race parallel)
+        v_dw_recon = (c_vac * v_eff) / (c_vac - v_eff)
+        t_dw_max = (z_max_val - z_min_val) / v_eff
+        z_recon_dw_all = z_min_val + (t_dw_max - (gt_raw_dw - t0)) * v_dw_recon
+
+        layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
+        layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
+
+        valid_dw = (layer_idx_dw != -1)
+        valid_up = (layer_idx_up != -1)
+
+        if np.any(valid_dw):
+            np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0)
+        if np.any(valid_up):
+            np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # DUAL-ENDED RECONSTRUCTION (No LCE Weights)
+        # ─────────────────────────────────────────────────────────────────────
         if np.any(coincidence_mask):
             t_dw_coinc = gt_raw_dw[coincidence_mask]
             t_up_coinc = t_up_matched[coincidence_mask]
@@ -512,7 +572,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
             if np.any(valid):
                 v_recon = recon_layer_idx[valid]
-                v_weights = 1.0 
 
                 if true_layer_idx is not None:
                     v_truth = true_layer_idx[coincidence_mask][valid]
@@ -523,9 +582,10 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                     t_actual_dw = t_dw_coinc[valid] - np.min(gt_raw)
                     is_target = np.abs(t_actual_dw - t_expected_dw) < 0.25
 
-                np.add.at(prompt_counts, v_recon)
-                np.add.at(prompt_counts_target, v_recon[is_target])
-                np.add.at(prompt_counts_bounced, v_recon[~is_target])
+                # Raw unweighted additions
+                np.add.at(prompt_counts, v_recon, 1.0)
+                np.add.at(prompt_counts_target, v_recon[is_target], 1.0)
+                np.add.at(prompt_counts_bounced, v_recon[~is_target], 1.0)
 
     # --- Two-ended timing ---
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
