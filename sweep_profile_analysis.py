@@ -417,6 +417,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             is_optical = np.zeros(0, dtype=bool)
 
         is_t = np.isin(channels, t_indices)
+        is_e = np.isin(channels, e_indices)
         m_t_up = is_e & is_optical & near_up
         m_t_dw = is_e & is_optical & near_dw
 
