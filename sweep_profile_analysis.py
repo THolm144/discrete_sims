@@ -260,9 +260,14 @@ def _grouped(chunks, how):
 def get_bar_colors(ekey, idx):
     # Cohesive color families (Darker for target hits, lighter for bounced)
     energy_colors = {
-        "25GeV":  {"target": "#1f77b4", "bounced": "#aec7e8"}, # Blue
-        "50GeV":  {"target": "#ff7f0e", "bounced": "#ffbb78"}, # Orange
-        "100GeV": {"target": "#2ca02c", "bounced": "#98df8a"}  # Green
+        "10GeV":  {"target": "#1f77b4", "bounced": "#e73d1f"}, # Blue
+        "25GeV":  {"target": "#1f77b4", "bounced": "#e08113"}, # Blue
+        "30GeV":  {"target": "#1f77b4", "bounced": "#d1b01d"}, # Blue
+        "50GeV":  {"target": "#ff7f0e", "bounced": "#114e0c"}, # Orange
+        "70GeV":  {"target": "#1f77b4", "bounced": "#0cddcc"}, # Blue
+        "90GeV":  {"target": "#1f77b4", "bounced": "#500bbe"}, # Blue
+        "100GeV": {"target": "#2ca02c", "bounced": "#7808d4"},  # Green
+        "150GeV":  {"target": "#1f77b4", "bounced": "#b30ae6"} # Blue
     }
     if ekey in energy_colors:
         return energy_colors[ekey]["target"], energy_colors[ekey]["bounced"]
