@@ -1172,11 +1172,30 @@ def main():
                     except Exception as e:
                         print(f"  [WARNING] Timing-resolution fit failed for {mod} ({series_label}): {e}")
 
-            _fit_and_plot_timing(ax_cmb, energies_gauss, sigma_gauss_list, "#1f77b4", "o", "Gaussian $\\sigma_t$ (Best Estimator)")
+            # 1. Plot your simulation series using your helper function
+            _fit_and_plot_timing(ax_cmb, energies_gauss, sigma_gauss_list, "#1f77b4", "o", "Gaussian $\sigma_t$ (Best Estimator)")
             _fit_and_plot_timing(ax_cmb, energies_fwhm, fwhm_list, "#ff7f0e", "s", "Empirical FWHM")
-            paper_energies =[25, 50, 75, 100]
-            paper_reses = [20.3, 18.3, 17.8, 17.7]
-            _fit_and_plot_timing(ax_cmb, paper_energies, paper_reses, "#ff7f0e", "s", "Empirical FWHM")
+
+            # 2. Correct Paper Data Points & Error Bars
+            paper_energies = np.array([25.0, 50.0, 75.0, 100.0, 125.0, 150.0])
+            paper_reses    = np.array([53.0, 41.7, 35.3,  30.6,  28.7,  26.3])
+            paper_errors   = np.array([ 4.8,  2.6,  1.8,   1.6,   2.1,   1.5])
+
+            # Plot paper measurements with error bars
+            ax_cmb.errorbar(
+                paper_energies, paper_reses, yerr=paper_errors,
+                fmt="*", color="#30863e", ecolor="#30863e", markersize=8, capsize=3,
+                linestyle="None", label="Paper Measurements"
+            )
+
+            # 3. Plot the exact published Paper Fit Curve (17.52 (+) 255.58 / sqrt(E) ps)
+            x_smooth = np.linspace(20.0, 160.0, 200)
+            paper_fit_curve = np.sqrt(17.52**2 + (255.58 / np.sqrt(x_smooth))**2)
+
+            ax_cmb.plot(
+                x_smooth, paper_fit_curve, linestyle="-", linewidth=2.0, color="#30863e",
+                label=r"Paper Fit: $17.52 \oplus 255.58 / \sqrt{E}$ ps"
+            )
 
             ax_cmb.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_cmb.set_ylabel("Time Resolution (ps)", fontsize=11)
