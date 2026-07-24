@@ -1019,7 +1019,9 @@ def main():
 
             # Subplot 3: Dual-Ended Coincidence (Averaged)
             prof_dw_flipped = prof_dw[::-1]                      # mirror downstream into the upstream frame
-            prof_dual_empirical = (prof_dw_flipped + prof_up) / 2.0
+            prof_dw_norm = prof_dw / max(prof_dw.sum(), 1e-12)
+            prof_up_norm = prof_up / max(prof_up.sum(), 1e-12)
+            prof_dual_empirical = (prof_dw_norm[::-1] + prof_up_norm) / 2.0
 
             ax_dual.plot(layers_x, prof_dual_empirical, marker="o", linestyle="None", color=col,
              markersize=6, alpha=0.8, label=ekey)
