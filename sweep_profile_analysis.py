@@ -1004,15 +1004,31 @@ def main():
         for idx, ekey in enumerate(energy_keys):
             col, _ = get_bar_colors(ekey, idx)
 
-            # Fetch profiles (Make sure "prompt_profile_dual" is saved to master_summary earlier in your code!)
             prof_dw = master_summary[mod][ekey].get("prompt_profile_dw", np.zeros(_N_LYSO))
             prof_up = master_summary[mod][ekey].get("prompt_profile_up", np.zeros(_N_LYSO))
             prof_dual = master_summary[mod][ekey].get("prompt_profile_dual", np.zeros(_N_LYSO))
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
-            true_peak_layer = np.argmax(truth_prof) + 1   # +1 since layers_x starts at 1
-            upstream_peak_layer = layers_x[np.argmax(prof_up)]
-            offset = upstream_peak_layer - true_peak_layer
-            print(f"{ekey}: true={true_peak_layer}, upstream={upstream_peak_layer}, offset={offset}")
+
+            # ── DIAGNOSTIC: peak-offset check (upstream + downstream) ─────────
+            if np.any(truth_prof):
+                true_peak_layer = layers_x[np.argmax(truth_prof)]
+
+                if np.any(prof_up):
+                    upstream_peak_layer = layers_x[np.argmax(prof_up)]
+                    up_offset = upstream_peak_layer - true_peak_layer
+                else:
+                    upstream_peak_layer, up_offset = None, None
+
+                if np.any(prof_dw):
+                    downstream_peak_layer = layers_x[np.argmax(prof_dw)]
+                    dw_offset = downstream_peak_layer - true_peak_layer
+                else:
+                    downstream_peak_layer, dw_offset = None, None
+
+                print(f"    [{mod}:{ekey}] true={true_peak_layer}  "
+                    f"upstream={upstream_peak_layer} (offset={up_offset})  "
+                    f"downstream={downstream_peak_layer} (offset={dw_offset})")
+    # ────────────────────────────────────────────────────────────────
             # Subplot 1: Downstream Single-Ended
             ax_dw.plot(layers_x, prof_dw, marker="o", linestyle="None", color=col, 
                        markersize=6, alpha=0.8, label=ekey)
