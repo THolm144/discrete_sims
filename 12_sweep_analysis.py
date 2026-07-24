@@ -1174,6 +1174,9 @@ def main():
 
             _fit_and_plot_timing(ax_cmb, energies_gauss, sigma_gauss_list, "#1f77b4", "o", "Gaussian $\\sigma_t$ (Best Estimator)")
             _fit_and_plot_timing(ax_cmb, energies_fwhm, fwhm_list, "#ff7f0e", "s", "Empirical FWHM")
+            paper_energies =[25, 50, 75, 100]
+            paper_reses = [20.3, 18.3, 17.8, 17.7]
+            _fit_and_plot_timing(ax_cmb, paper_energies, paper_reses, "#ff7f0e", "s", "Empirical FWHM")
 
             ax_cmb.set_xlabel("Beam Energy (GeV)", fontsize=11)
             ax_cmb.set_ylabel("Time Resolution (ps)", fontsize=11)
