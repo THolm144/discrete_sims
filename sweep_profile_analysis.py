@@ -355,7 +355,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     distances = np.array([
         np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) for z_lo, z_hi in lyso_bounds
     ])
-    lce = 1
+   
 
     # --- Accumulators ---
     prompt_counts = np.zeros(_N_LYSO)
@@ -492,9 +492,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         valid_up = (layer_idx_up != -1)
 
         if np.any(valid_dw):
-            np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0 / lce[layer_idx_dw[valid_dw]])
+            np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0 / 1)
         if np.any(valid_up):
-            np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0 / lce[layer_idx_up[valid_up]])
+            np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0 / 1)
 
         # Now handle the dual-ended coincidences
         if np.any(coincidence_mask):
@@ -512,7 +512,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
             if np.any(valid):
                 v_recon = recon_layer_idx[valid]
-                v_weights = 1.0 / lce[v_recon]
+                v_weights = 1.0 
 
                 if true_layer_idx is not None:
                     v_truth = true_layer_idx[coincidence_mask][valid]
