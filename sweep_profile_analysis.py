@@ -1001,18 +1001,20 @@ def main():
             fig_tcurve.savefig(two_end_dir / f"{mod}_two_end_resolution_vs_energy.png", dpi=200)
             plt.close(fig_tcurve)
 
-        # ── GRAPH 6: SINGLE-ENDED RECONSTRUCTION VS TRUTH ─────────────────────────
-        fig_se, axs_se = plt.subplots(1, 3, figsize=(18, 5.5))
-        ax_dw, ax_up, ax_truth_se = axs_se
+        # ── GRAPH 6: SINGLE & DUAL-ENDED RECONSTRUCTION VS TRUTH ──────────────────
+        # Expanded to 1x4 to include the Coincidence Averaging
+        fig_se, axs_se = plt.subplots(1, 4, figsize=(24, 5.5))
+        ax_dw, ax_up, ax_dual, ax_truth_se = axs_se
 
         layers_x = np.arange(1, _N_LYSO + 1)
 
         for idx, ekey in enumerate(energy_keys):
             col, _ = get_bar_colors(ekey, idx)
 
-            # Fetch profiles (requires the dictionary updates from Step 1)
+            # Fetch profiles (Make sure "prompt_profile_dual" is saved to master_summary earlier in your code!)
             prof_dw = master_summary[mod][ekey].get("prompt_profile_dw", np.zeros(_N_LYSO))
             prof_up = master_summary[mod][ekey].get("prompt_profile_up", np.zeros(_N_LYSO))
+            prof_dual = master_summary[mod][ekey].get("prompt_profile_dual", np.zeros(_N_LYSO))
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
 
             # Subplot 1: Downstream Single-Ended
@@ -1023,13 +1025,27 @@ def main():
             ax_up.plot(layers_x, prof_up, marker="o", linestyle="None", color=col, 
                        markersize=6, alpha=0.8, label=ekey)
 
-            # Subplot 3: DoseActor Truth
+            # Subplot 3: Dual-Ended Coincidence (Averaged)
+            ax_dual.plot(layers_x, prof_dual, marker="o", linestyle="None", color=col, 
+                         markersize=6, alpha=0.8, label=ekey)
+
+            # Subplot 4: DoseActor Truth
             ax_truth_se.plot(layers_x, truth_prof, marker="s", linestyle="None", color=col, 
                              markersize=6, alpha=0.8, label=ekey)
 
-        # Standard formatting and layout for the 3 panels
-        titles = ["Downstream Single-Ended Recon", "Upstream Single-Ended Recon", "DoseActor Truth Profile"]
-        y_labels = ["Reconstructed Photon Strikes", "Reconstructed Photon Strikes", "Mean Active Energy (MeV)"]
+        # Standard formatting and layout for all 4 panels
+        titles = [
+            "Downstream Single-Ended Recon", 
+            "Upstream Single-Ended Recon", 
+            "Dual-Ended Recon (Coincidence Avg)",
+            "DoseActor Truth Profile"
+        ]
+        y_labels = [
+            "Reconstructed Photon Strikes", 
+            "Reconstructed Photon Strikes", 
+            "Reconstructed Photon Strikes",
+            "Mean Active Energy (MeV)"
+        ]
 
         for ax, title, ylab in zip(axs_se, titles, y_labels):
             ax.set_xlabel("LYSO Layer Number", fontweight="bold")
@@ -1039,11 +1055,11 @@ def main():
             ax.grid(True, linestyle=":", alpha=0.6)
             ax.legend(title="Beam Energy", fontsize=9)
 
-        fig_se.suptitle(f"Single-Ended Timing Reconstruction vs Truth — {mod}", fontsize=14, fontweight="bold")
+        fig_se.suptitle(f"Timing Reconstruction vs Truth — {mod}", fontsize=14, fontweight="bold")
         fig_se.tight_layout()
         
         # Save to the prompt photon reconstruction directory
-        fig_se.savefig(prompt_dir / f"{mod}_single_ended_reconstruction.png", dpi=200)
+        fig_se.savefig(prompt_dir / f"{mod}_timing_reconstruction.png", dpi=200)
         plt.close(fig_se)
 
     print(f"\nProcessing complete! Reports saved directly inside: {out_dir.resolve()}")
