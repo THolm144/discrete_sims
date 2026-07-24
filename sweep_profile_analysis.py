@@ -129,22 +129,7 @@ def get_lyso_layer_bounds(lyso_thick, calor_thick):
         bounds.append((z_start, z_end))
         current_z += gap_thick + (_W_THICK_MM if idx < _N_W else 0)
     return bounds
-def _quantile_per_event(ev_arr, val_arr, quantile):
-    """
-    For each event, return the `quantile`-th earliest value (e.g. LocalTime)
-    plus a parallel array of the corresponding event IDs.
-    """
-    if len(ev_arr) == 0:
-        return np.array([]), np.array([])
 
-    sort_idx = np.argsort(ev_arr)
-    ev_sorted, val_sorted = ev_arr[sort_idx], val_arr[sort_idx]
-
-    unique_ev, start_idx, counts = np.unique(ev_sorted, return_index=True, return_counts=True)
-    quant_offsets = np.floor((counts - 1) * quantile).astype(int)
-    picked_vals = val_sorted[start_idx + quant_offsets]
-
-    return unique_ev, picked_vals
 # ─────────────────────────────────────────────────────────────────────────────
 # DOSEACTOR MHD/RAW PARSER ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -286,7 +271,7 @@ def get_bar_colors(ekey, idx):
     }
     if ekey in energy_colors:
         return energy_colors[ekey]["target"], energy_colors[ekey]["bounced"]
-    
+
     # Fallback palette builder
     import matplotlib.colors as mcolors
     base_colors = list(mcolors.TABLEAU_COLORS.values())
@@ -298,12 +283,12 @@ def get_bar_colors(ekey, idx):
 def get_layer_idx_from_z(z_vals, lyso_bounds):
     """Map absolute z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
     layer_idx = np.full(len(z_vals), -1, dtype=int)
-    
+
     for i, (z_lo, z_hi) in enumerate(lyso_bounds):
         # We add a 0.5mm tolerance to catch edge-case precision errors
         in_layer = (z_vals >= (z_lo - 0.5)) & (z_vals <= (z_hi + 0.5))
         layer_idx[in_layer] = i
-        
+
     return layer_idx
 
 
@@ -370,7 +355,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     distances = np.array([
         np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) for z_lo, z_hi in lyso_bounds
     ])
-   
+
 
     # --- Accumulators ---
     prompt_counts = np.zeros(_N_LYSO)
@@ -475,20 +460,20 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             # 1. Sort the upstream events to group them
             sort_idx = np.argsort(ev_up)
             ev_up_sorted, gt_up_sorted = ev_up[sort_idx], gt_raw_up[sort_idx]
-            
+
             # 2. Find unique EventIDs and where they start/count
             unique_ev, start_idx, counts = np.unique(ev_up_sorted, return_index=True, return_counts=True)
-            
+
             # 3. Quickly approximate the quantile index for each group
             quant_offsets = np.floor((counts - 1) * ARRIVAL_QUANTILE).astype(int)
             tdc_vals = gt_up_sorted[start_idx + quant_offsets]
-            
+
             # 4. Map upstream times to downstream events using fast binary search
             match_idx = np.searchsorted(unique_ev, ev_dw)
-            
+
             # Ensure the match is valid (since ev_dw might contain events not in unique_ev)
             valid_match = (match_idx < len(unique_ev)) & (unique_ev[np.minimum(match_idx, len(unique_ev)-1)] == ev_dw)
-            
+
             t_up_matched = np.full(len(ev_dw), np.nan)
             t_up_matched[valid_match] = tdc_vals[match_idx[valid_match]]
             coincidence_mask = valid_match
@@ -496,25 +481,25 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             # CRITICAL FIX 1: Prevents variable bleed-over from the previous loop iteration
             coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
 
-       
-        # ─────────────────────────────────────────────────────────────────────
-        # SINGLE-ENDED RECONSTRUCTION (Earliest-arrival LocalTime per event)
-        # ─────────────────────────────────────────────────────────────────────
-        ev_up_raw = ev[m_t_up].astype(np.int64)
-        lt_up_raw = lt[m_t_up]
-        ev_dw_raw = ev[m_dw_opt].astype(np.int64)
-        lt_dw_raw = lt[m_dw_opt]
 
-        # Pick only the earliest ARRIVAL_QUANTILE fraction of hits, per event
-        _, lt_up_arr = _quantile_per_event(ev_up_raw, lt_up_raw, ARRIVAL_QUANTILE)
-        _, lt_dw_arr = _quantile_per_event(ev_dw_raw, lt_dw_raw, ARRIVAL_QUANTILE)
+        # ─────────────────────────────────────────────────────────────────────
+        # SINGLE-ENDED RECONSTRUCTION (Pure LocalTime, Raw Optical Mapping)
+        # ─────────────────────────────────────────────────────────────────────
+        lt_up_arr = lt[m_t_up]
+        lt_dw_arr = lt[m_dw_opt]
 
+        # 1. Upstream Mapping: Sensor is at z_min.
+        # The light traveled from Z back to z_min.
         z_recon_up_all = z_min_val + (lt_up_arr * v_eff)
+
+        # 2. Downstream Mapping: Sensor is at z_max.
+        # The light traveled from Z forward to z_max.
         z_recon_dw_all = z_max_val - (lt_dw_arr * v_eff)
 
         layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
         layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
 
+        # Keep any hit that naturally maps inside the 1-30 layers.
         valid_dw = (layer_idx_dw != -1)
         valid_up = (layer_idx_up != -1)
 
@@ -522,6 +507,44 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0)
         if np.any(valid_up):
             np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0)
+        # ─────────────────────────────────────────────────────────────────────
+        # DUAL-ENDED LOCALTIME COINCIDENCE (For 4-Panel Subplot)
+        # ─────────────────────────────────────────────────────────────────────
+        coincident_events_lt = np.intersect1d(ev_up, ev_dw)
+
+        if len(coincident_events_lt) > 0:
+            mask_up_c = np.isin(ev_up, coincident_events_lt)
+            mask_dw_c = np.isin(ev_dw, coincident_events_lt)
+
+            ev_up_c = ev_up[mask_up_c]
+            z_up_c = z_recon_up_all[mask_up_c]
+
+            ev_dw_c = ev_dw[mask_dw_c]
+            z_dw_c = z_recon_dw_all[mask_dw_c]
+
+            # Upstream Mean Z per event
+            unique_ev_up, inv_up, counts_up = np.unique(ev_up_c, return_inverse=True, return_counts=True)
+            z_up_mean = np.bincount(inv_up, weights=z_up_c) / counts_up
+
+            # Downstream Mean Z per event
+            unique_ev_dw, inv_dw, counts_dw = np.unique(ev_dw_c, return_inverse=True, return_counts=True)
+            z_dw_mean = np.bincount(inv_dw, weights=z_dw_c) / counts_dw
+
+            # Both arrays are sorted naturally by np.unique. Average them!
+            z_recon_dual_lt = (z_up_mean + z_dw_mean) / 2.0
+
+            layer_idx_dual_lt = get_layer_idx_from_z(z_recon_dual_lt, lyso_bounds)
+            valid_dual_lt = (layer_idx_dual_lt != -1)
+
+            if np.any(valid_dual_lt):
+                np.add.at(prompt_counts_dual, layer_idx_dual_lt[valid_dual_lt], 1.0)
+
+
+
+
+
+
+
         # ─────────────────────────────────────────────────────────────────────
         # DUAL-ENDED RECONSTRUCTION (No LCE Weights)
         # ─────────────────────────────────────────────────────────────────────
@@ -754,14 +777,14 @@ def main():
         for idx, ekey in enumerate(energy_keys):
             lt_counts = master_summary[mod][ekey]["lt_counts"]
             lt_bins = master_summary[mod][ekey]["lt_bins"]
-            
+
             # Convert bin edges to bin centers
             bin_centers = 0.5 * (lt_bins[:-1] + lt_bins[1:])
 
             # 1. Use scipy.signal.find_peaks to isolate prominent local peaks
             # We filter for peaks with a prominence of at least 10% of the maximum height
             peaks, _ = find_peaks(lt_counts, prominence=np.max(lt_counts) * 0.1)
-            
+
             if len(peaks) == 0:
                 # Fallback if the peak is incredibly sharp and misses prominence criteria
                 primary_peak_idx = np.argmax(lt_counts)
@@ -834,7 +857,7 @@ def main():
             target_profile = master_summary[mod][ekey].get("prompt_profile_target", np.zeros(_N_LYSO))
             bounced_profile = master_summary[mod][ekey].get("prompt_profile_bounced", np.zeros(_N_LYSO))
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
-            
+
             col_target, col_bounced = get_bar_colors(ekey, idx)
 
             # Panel 1: Target-Only Photons (Reconstructed) + Truth Overlay
@@ -995,6 +1018,8 @@ def main():
                        markersize=6, alpha=0.8, label=ekey)
 
             # Subplot 3: Dual-Ended Coincidence (Averaged)
+            ax_dual.plot(layers_x, prof_dual, marker="o", linestyle="None", color=col, 
+                         markersize=6, alpha=0.8, label=ekey)
             prof_dw_flipped = prof_dw[::-1]                      # mirror downstream into the upstream frame
             prof_dual_empirical = (prof_dw_flipped + prof_up) / 2.0
 
@@ -1006,6 +1031,9 @@ def main():
 
         # Standard formatting and layout for all 4 panels
         titles = [
+            "Downstream Single-Ended Recon", 
+            "Upstream Single-Ended Recon", 
+            "Dual-Ended Recon (Coincidence Avg)",
             "Downstream Single-Ended Recon",
             "Upstream Single-Ended Recon",
             "Dual-Ended Recon (Mirrored DW + UP Avg)",   # renamed for clarity
@@ -1028,7 +1056,7 @@ def main():
 
         fig_se.suptitle(f"Timing Reconstruction vs Truth — {mod}", fontsize=14, fontweight="bold")
         fig_se.tight_layout()
-        
+
         # Save to the prompt photon reconstruction directory
         fig_se.savefig(prompt_dir / f"{mod}_timing_reconstruction.png", dpi=200)
         plt.close(fig_se)
