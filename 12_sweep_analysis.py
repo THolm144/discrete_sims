@@ -1367,11 +1367,9 @@ def main():
 
             # Plot Uncorrected and Corrected simulation points
             ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
-                            color="gray", alpha=0.7, label="Sim Raw (Uncorrected E-type)")
+                            color="gray", alpha=0.7, label="Sim Raw (E-type)")
 
-            if len(res_e_corr_list) == len(energies_gev):
-                ax_res.errorbar(energies_gev, res_e_corr_list, yerr=res_e_corr_err, fmt=mod_markers.get(mod, 's'),
-                                color=mod_colors.get(mod, 'black'), label="Sim Corrected (Depth-Weighted LCE)")
+            
 
             # Linearity panel
             if popt_lin is not None:
@@ -1388,8 +1386,8 @@ def main():
             # Fit the resolution model directly to the actual simulated photon
             # data (depth-corrected if available, else raw) — no SiPM-count
             # projection/scaling of any kind.
-            fit_target_res = np.array(res_e_corr_list) if len(res_e_corr_list) == len(energies_gev) else res_e_list
-            fit_target_err = np.array(res_e_corr_err) if len(res_e_corr_err) == len(energies_gev) else res_e_err_arr
+            fit_target_res = np.array(res_e_list) if len(res_e_list) == len(energies_gev) else res_e_list
+            fit_target_err = np.array(res_e_err) if len(res_e_err) == len(energies_gev) else res_e_err_arr
 
             popt_res = None
             fit_label = "Fit failed"
