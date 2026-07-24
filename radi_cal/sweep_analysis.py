@@ -212,7 +212,7 @@ def analyze_timing_distribution(dt_data_ps, window_ps=500.0):
     sigma_fwhm_ps = fwhm_ps / 2.35482
     err_fwhm_ps = sigma_fwhm_ps / np.sqrt(2.0 * len(clean))
 
-    # 3. Gaussian Core Fit (Top 50% mask)
+    # 3. Gaussian Core Fit (Top 50% mask) with Poisson Weighting
     def straight_gaussian(x, amp, mu, sig):
         return amp * np.exp(-0.5 * ((x - mu) / sig) ** 2)
 
@@ -221,9 +221,19 @@ def analyze_timing_distribution(dt_data_ps, window_ps=500.0):
         p0 = [float(max_val), bin_centers[max_idx], std_rob]
         bounds = ([0.0, hist_lo, 0.1], [max_val * 2.0, hist_hi, std_rob * 5.0])
         try:
-            popt, pcov = curve_fit(straight_gaussian, bin_centers[mask_top], counts[mask_top], p0=p0, bounds=bounds)
+            y_data = counts[mask_top]
+            y_err = np.sqrt(np.maximum(y_data, 1.0))
+            popt, pcov = curve_fit(
+                straight_gaussian, 
+                bin_centers[mask_top], 
+                y_data, 
+                sigma=y_err, 
+                absolute_sigma=True, 
+                p0=p0, 
+                bounds=bounds
+            )
             sigma_gaus_ps = abs(popt[2])
-            err_gaus_ps = np.sqrt(pcov[2, 2]) if pcov is not None and pcov[2, 2] > 0 else sigma_gaus_ps / np.sqrt(2 * len(clean))
+            err_gaus_ps = np.sqrt(pcov[2, 2]) if (pcov is not None and pcov[2, 2] > 0) else sigma_gaus_ps / np.sqrt(2 * len(clean))
         except Exception:
             sigma_gaus_ps, err_gaus_ps = std_rob, std_rob / np.sqrt(2 * len(clean))
     else:
@@ -413,7 +423,7 @@ def main():
     photon_counts_by_energy = []
     edep_res_percent, edep_res_err_percent = [], []
 
-    # 1. Initialize as standard Python lists BEFORE the loop
+    # Initialize timing metrics as Python lists
     res_gaus_ps, err_gaus_ps = [], []
     res_fwhm_ps, err_fwhm_ps = [], []
     raw_fwhm_ps, err_raw_fwhm_ps = [], []
@@ -452,7 +462,7 @@ def main():
             edep_res_err_percent.append(np.nan)
             print(f"     -> [dE/dx] No showermax_edep_*.root found for this energy point")
 
-        # --- Single, Unified Timing Resolution Block ---
+        # Unified Timing Resolution Block
         if len(dt_data) >= 5:
             sg_g, err_g, fwhm_raw, sg_fwhm, err_fwhm = analyze_timing_distribution(dt_data)
             res_gaus_ps.append(sg_g)
@@ -461,7 +471,7 @@ def main():
             err_fwhm_ps.append(err_fwhm)
             
             raw_fwhm_ps.append(fwhm_raw)
-            err_raw_fwhm_ps.append(err_fwhm * 2.35482)  # Raw FWHM error
+            err_raw_fwhm_ps.append(err_fwhm * 2.35482)  # Raw FWHM uncertainty
             print(f"     -> [Timing] Events: {len(dt_data)} | Gauss Sigma: {sg_g:.2f} ± {err_g:.2f} ps "
                   f"| FWHM: {fwhm_raw:.2f} ps (Sigma_FWHM: {sg_fwhm:.2f} ± {err_fwhm:.2f} ps)")
         else:
@@ -474,19 +484,11 @@ def main():
 
         print(f"     -> Events: {len(photon_counts)} | Mean Photons: {mean_N:.1f} | Resolution: {res:.2f}% ± {err:.2f}%")
 
-    # 2. Convert ALL lists to NumPy arrays AFTER the loop ends
-    res_gaus_ps = np.array(res_gaus_ps)
-    err_gaus_ps = np.array(err_gaus_ps)
-    res_fwhm_ps = np.array(res_fwhm_ps)
-    err_fwhm_ps = np.array(err_fwhm_ps)
-    raw_fwhm_ps = np.array(raw_fwhm_ps)
-    err_raw_fwhm_ps = np.array(err_raw_fwhm_ps)  # <-- Placed OUTSIDE the loop!
-    
-
     if not energies_gev:
         print("[-] No valid data to plot.")
         return
 
+    # Convert all list metrics to NumPy arrays after loop completion
     energies_gev = np.array(energies_gev)
     res_percent = np.array(res_percent)
     res_err_percent = np.array(res_err_percent)
@@ -499,6 +501,7 @@ def main():
     res_fwhm_ps = np.array(res_fwhm_ps)
     err_fwhm_ps = np.array(err_fwhm_ps)
     raw_fwhm_ps = np.array(raw_fwhm_ps)
+    err_raw_fwhm_ps = np.array(err_raw_fwhm_ps)
 
     # Fits for Energy Resolution
     popt_sim = [15.92, 0.0, 122.8]
@@ -516,9 +519,10 @@ def main():
         print(f" [+] Fit Warning: curve_fit failed for energy ({e}). Using default seed.")
 
     # Fits for Timing Resolution
-    popt_gaus, popt_fwhm = None, None
-    valid_timing = np.isfinite(res_gaus_ps)
+    popt_gaus, popt_raw_fwhm = None, None
+    valid_timing = np.isfinite(res_gaus_ps) & np.isfinite(raw_fwhm_ps)
     if valid_timing.sum() >= 2:
+        # 1. Fit Gaussian Core
         try:
             popt_gaus, _ = curve_fit(
                 timing_fit_func, energies_gev[valid_timing], res_gaus_ps[valid_timing],
@@ -527,13 +531,14 @@ def main():
         except Exception as e:
             print(f" [+] Fit Warning: timing curve_fit (Gaussian) failed ({e}).")
 
+        # 2. Fit Raw FWHM
         try:
-            popt_fwhm, _ = curve_fit(
-                timing_fit_func, energies_gev[valid_timing], res_fwhm_ps[valid_timing],
-                sigma=err_fwhm_ps[valid_timing], p0=[15.0, 200.0], bounds=([0.0, 0.0], [100.0, 1000.0])
+            popt_raw_fwhm, _ = curve_fit(
+                timing_fit_func, energies_gev[valid_timing], raw_fwhm_ps[valid_timing],
+                sigma=err_raw_fwhm_ps[valid_timing], p0=[15.0, 200.0], bounds=([0.0, 0.0], [100.0, 1000.0])
             )
         except Exception as e:
-            print(f" [+] Fit Warning: timing curve_fit (FWHM) failed ({e}).")
+            print(f" [+] Fit Warning: timing curve_fit (Raw FWHM) failed ({e}).")
 
     # Calibrated Energy Analysis
     mean_yields_arr = np.array(mean_yields)
@@ -586,6 +591,7 @@ def main():
         "Time_Resolution_FWHM_Equivalent_ps": res_fwhm_ps,
         "Time_Resolution_FWHM_Equivalent_Err_ps": err_fwhm_ps,
         "Raw_FWHM_ps": raw_fwhm_ps,
+        "Raw_FWHM_Err_ps": err_raw_fwhm_ps,
     })
     df_summary.to_csv(out_dir / "sweep_4T_summary.csv", index=False)
 
@@ -650,7 +656,7 @@ def main():
             label=f'{TIMING_REF_CURVE["label"]}'
         )
 
-        # 2. Gaussian Fit Data Points + Curve
+        # 2. Gaussian Core Points & Fit Curve
         lbl_g = "Sim (Gaussian Core)"
         if popt_gaus is not None:
             lbl_g += f": {popt_gaus[0]:.2f} $\\oplus$ {popt_gaus[1]:.2f} / $\\sqrt{{E}}$ ps"
@@ -661,8 +667,12 @@ def main():
             fmt='o', color='#1f77b4', ecolor='#1f77b4', capsize=3, elinewidth=1.2, label=lbl_g
         )
 
-        
-        # 3. Raw FWHM overlay points with error bars
+        # 3. Raw FWHM Points & Fit Curve
+        lbl_raw = "Sim Raw FWHM"
+        if popt_raw_fwhm is not None:
+            lbl_raw += f": {popt_raw_fwhm[0]:.2f} $\\oplus$ {popt_raw_fwhm[1]:.2f} / $\\sqrt{{E}}$ ps"
+            plt.plot(e_smooth, timing_fit_func(e_smooth, *popt_raw_fwhm), color='purple', linestyle='--', lw=1.8)
+
         plt.errorbar(
             energies_gev[valid_timing], 
             raw_fwhm_ps[valid_timing], 
@@ -672,7 +682,7 @@ def main():
             ecolor='purple', 
             capsize=3, 
             elinewidth=1.2, 
-            label='Sim Raw FWHM (ps)'
+            label=lbl_raw
         )
 
         plt.title('Time Resolution vs Beam Energy', fontsize=16, pad=12)
