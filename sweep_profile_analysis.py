@@ -994,10 +994,10 @@ def main():
             fig_tcurve.savefig(two_end_dir / f"{mod}_two_end_resolution_vs_energy.png", dpi=200)
             plt.close(fig_tcurve)
 
-        # ── GRAPH 6: SINGLE & DUAL-ENDED RECONSTRUCTION VS TRUTH ──────────────────
-        # Expanded to 1x4 to include the Coincidence Averaging
-        fig_se, axs_se = plt.subplots(1, 4, figsize=(24, 5.5))
-        ax_dw, ax_up, ax_dual, ax_truth_se = axs_se
+        # ── GRAPH 6: SINGLE-ENDED RECONSTRUCTION VS TRUTH ───────────────────────
+        # Converted to 1x3 by removing the Coincidence Averaging panel
+        fig_se, axs_se = plt.subplots(1, 3, figsize=(18, 5.5))
+        ax_dw, ax_up, ax_truth_se = axs_se
 
         layers_x = np.arange(1, _N_LYSO + 1)
 
@@ -1006,7 +1006,6 @@ def main():
 
             prof_dw = master_summary[mod][ekey].get("prompt_profile_dw", np.zeros(_N_LYSO))
             prof_up = master_summary[mod][ekey].get("prompt_profile_up", np.zeros(_N_LYSO))
-            prof_dual = master_summary[mod][ekey].get("prompt_profile_dual", np.zeros(_N_LYSO))
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
 
             # ── DIAGNOSTIC: peak-offset check (upstream + downstream) ─────────
@@ -1028,7 +1027,7 @@ def main():
                 print(f"    [{mod}:{ekey}] true={true_peak_layer}  "
                     f"upstream={upstream_peak_layer} (offset={up_offset})  "
                     f"downstream={downstream_peak_layer} (offset={dw_offset})")
-    # ────────────────────────────────────────────────────────────────
+            # ────────────────────────────────────────────────────────────────
             # Subplot 1: Downstream Single-Ended
             ax_dw.plot(layers_x, prof_dw, marker="o", linestyle="None", color=col, 
                        markersize=6, alpha=0.8, label=ekey)
@@ -1037,32 +1036,19 @@ def main():
             ax_up.plot(layers_x, prof_up, marker="o", linestyle="None", color=col, 
                        markersize=6, alpha=0.8, label=ekey)
 
-            # Subplot 3: Dual-Ended Coincidence (Averaged)
-            ax_dual.plot(layers_x, prof_dual, marker="o", linestyle="None", color=col, 
-                         markersize=6, alpha=0.8, label=ekey)
-            prof_dw_flipped = prof_dw[::-1]                      # mirror downstream into the upstream frame
-            prof_dual_empirical = (prof_dw_flipped + prof_up) / 2.0
-
-            ax_dual.plot(layers_x, prof_dual_empirical, marker="o", linestyle="None", color=col,
-             markersize=6, alpha=0.8, label=ekey)
-            # Subplot 4: DoseActor Truth
+            # Subplot 3: DoseActor Truth
             ax_truth_se.plot(layers_x, truth_prof, marker="s", linestyle="None", color=col, 
                              markersize=6, alpha=0.8, label=ekey)
 
-        # Standard formatting and layout for all 4 panels
+        # Standard formatting and layout for all 3 panels
         titles = [
             "Downstream Single-Ended Recon", 
             "Upstream Single-Ended Recon", 
-            "Dual-Ended Recon (Coincidence Avg)",
-            "Downstream Single-Ended Recon",
-            "Upstream Single-Ended Recon",
-            "Dual-Ended Recon (Mirrored DW + UP Avg)",   # renamed for clarity
             "DoseActor Truth Profile"
         ]
         y_labels = [
             "Reconstructed Photon Strikes", 
             "Reconstructed Photon Strikes", 
-            "Reconstructed Photon Strikes",
             "Mean Active Energy (MeV)"
         ]
 
@@ -1080,6 +1066,7 @@ def main():
         # Save to the prompt photon reconstruction directory
         fig_se.savefig(prompt_dir / f"{mod}_timing_reconstruction.png", dpi=200)
         plt.close(fig_se)
+
     print(f"\nProcessing complete! Reports saved directly inside: {out_dir.resolve()}")
 
 if __name__ == "__main__":
