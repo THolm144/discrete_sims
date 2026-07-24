@@ -490,14 +490,15 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             valid = (recon_layer_idx != -1) & (coinc_truth != -1)
             # Single-ended reconstruction based on time-of-flight from the sensor
             # Assuming t_0 is roughly the minimum global time in the event
-            t0 = np.min(gt_raw)
-            z_recon_dw = z_max_val - (t_dw_coinc - t0) * v_eff
-            z_recon_up = z_min_val + (t_up_coinc - t0) * v_eff
+           # Single-ended reconstruction using ALL downstream/upstream hits
+            # Assumes GlobalTime starts at 0 for each primary particle in Gate
+            t0 = 0.0 
+            z_recon_dw_all = z_max_val - (gt_raw_dw - t0) * v_eff
+            z_recon_up_all = z_min_val + (gt_raw_up - t0) * v_eff
 
-            layer_idx_dw = get_layer_idx_from_z(z_recon_dw, lyso_bounds)
-            layer_idx_up = get_layer_idx_from_z(z_recon_up, lyso_bounds)
+            layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
+            layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
 
-            # Accumulate valid hits
             valid_dw = (layer_idx_dw != -1)
             valid_up = (layer_idx_up != -1)
 
