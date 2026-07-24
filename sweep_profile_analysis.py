@@ -1061,7 +1061,6 @@ def main():
         # Save to the prompt photon reconstruction directory
         fig_se.savefig(prompt_dir / f"{mod}_timing_reconstruction.png", dpi=200)
         plt.close(fig_se)
-
     print(f"\nProcessing complete! Reports saved directly inside: {out_dir.resolve()}")
 
 if __name__ == "__main__":
