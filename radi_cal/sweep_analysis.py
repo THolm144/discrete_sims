@@ -494,24 +494,7 @@ def main():
     sim_curve = resolution_fit_func(e_smooth, *popt_sim)
     plt.plot(e_smooth, sim_curve, 'm--', lw=1.8)
 
-    # 2b. Calibrated-Energy Data Points + Fit (Cyan Circles) — same photon
-    #     data as the pink curve, but resolutioned on reconstructed energy
-    #     (N_photons -> E_reco via linear calibration) instead of raw counts.
-    if calib_mask.sum() >= 1:
-        if popt_calib is not None:
-            calib_label = (f'sim (calibrated energy): {popt_calib[0]:.2f}% $\\oplus$ '
-                            f'{popt_calib[1]:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {popt_calib[2]:.1f}%/E')
-        else:
-            calib_label = 'sim (calibrated energy)'
-        plt.errorbar(
-            energies_gev[calib_mask], res_calib_percent[calib_mask], yerr=res_calib_err_percent[calib_mask],
-            fmt='o', color='c', ecolor='c', capsize=3, elinewidth=1.2,
-            label=calib_label
-        )
-        if popt_calib is not None:
-            calib_curve = resolution_fit_func(e_smooth, *popt_calib)
-            plt.plot(e_smooth, calib_curve, 'c--', lw=1.8)
-
+    
     # 2c. Raw dE/dx Data Points + Fit (Green Triangles) — Walker's H1[28]
     #     analog: energy deposited directly in the shower-max LYSO layers,
     #     with NO optical transport / photon yield involved at all. This is
