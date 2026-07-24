@@ -529,26 +529,23 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
 
         # ─────────────────────────────────────────────────────────────────────
-        # SINGLE-ENDED RECONSTRUCTION (Pure Optical LocalTime)
+        # SINGLE-ENDED RECONSTRUCTION (Pure LocalTime, Raw Optical Mapping)
         # ─────────────────────────────────────────────────────────────────────
-        # LocalTime only tracks the photon from birth to the sensor.
-        # It does NOT include the particle's flight time, so we DO NOT use the 
-        # kinematic velocities. We map purely using v_eff.
-        
         lt_up_arr = lt[m_t_up]
         lt_dw_arr = lt[m_dw_opt]
 
-        # Upstream: sensor is at z_min. Photon travels (z_birth - z_min).
+        # 1. Upstream Mapping: Sensor is at z_min.
+        # The light traveled from Z back to z_min.
         z_recon_up_all = z_min_val + (lt_up_arr * v_eff)
 
-        # Downstream: sensor is at z_max. Photon travels (z_max - z_birth).
+        # 2. Downstream Mapping: Sensor is at z_max.
+        # The light traveled from Z forward to z_max.
         z_recon_dw_all = z_max_val - (lt_dw_arr * v_eff)
 
         layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
         layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
 
-        # This valid mask naturally filters out bounced photons, as their long 
-        # flight times will map them to z-coordinates way outside the calorimeter.
+        # Keep any hit that naturally maps inside the 1-30 layers.
         valid_dw = (layer_idx_dw != -1)
         valid_up = (layer_idx_up != -1)
 
