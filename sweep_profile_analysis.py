@@ -1018,18 +1018,20 @@ def main():
                        markersize=6, alpha=0.8, label=ekey)
 
             # Subplot 3: Dual-Ended Coincidence (Averaged)
-            ax_dual.plot(layers_x, prof_dual, marker="o", linestyle="None", color=col, 
-                         markersize=6, alpha=0.8, label=ekey)
+            prof_dw_flipped = prof_dw[::-1]                      # mirror downstream into the upstream frame
+            prof_dual_empirical = (prof_dw_flipped + prof_up) / 2.0
 
+            ax_dual.plot(layers_x, prof_dual_empirical, marker="o", linestyle="None", color=col,
+             markersize=6, alpha=0.8, label=ekey)
             # Subplot 4: DoseActor Truth
             ax_truth_se.plot(layers_x, truth_prof, marker="s", linestyle="None", color=col, 
                              markersize=6, alpha=0.8, label=ekey)
 
         # Standard formatting and layout for all 4 panels
         titles = [
-            "Downstream Single-Ended Recon", 
-            "Upstream Single-Ended Recon", 
-            "Dual-Ended Recon (Coincidence Avg)",
+            "Downstream Single-Ended Recon",
+            "Upstream Single-Ended Recon",
+            "Dual-Ended Recon (Mirrored DW + UP Avg)",   # renamed for clarity
             "DoseActor Truth Profile"
         ]
         y_labels = [
