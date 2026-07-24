@@ -1,9 +1,8 @@
-"""
-12_sweep_analysis_optimized.py
-=====================================
-Optimized version for aggregating timing-resolution, ToF-reconstruction, 
-and energy linearity results across 12 RADiCAL geometry variants.
-"""
+#12_sweep_analysis_optimized.py
+#=====================================
+#Optimized version for aggregating timing-resolution, ToF-reconstruction, 
+#and energy linearity results across 12 RADiCAL geometry variants.
+
 import argparse
 import datetime
 import pickle
@@ -633,7 +632,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
         gt, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
         proc = arrs["TrackCreatorProcess"]
-        is_wls = (proc == b"OpWLS") | (proc == "OpWLS")
 
         # Channel Mapping
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
@@ -646,15 +644,6 @@ def analyze_energy_batch(batch_dir: Path, is_hex: bool, module_name: str, verbos
         is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
         gt = np.where(near_dw, gt + t_offset_ns, gt)
         is_prompt = (gt >= _GT_LO_NS) & (gt <= _GT_HI_NS)
-
-        if verbose_label:
-            vals, counts_ = np.unique(proc, return_counts=True)
-            print(f"    [PROC-CHECK:{verbose_label}] unique TrackCreatorProcess values: "
-                f"{list(zip(vals[:10], counts_[:10]))}")
-            print(f"    [PROC-CHECK:{verbose_label}] is_optical frac: {is_optical.mean():.3f}, "
-                f"is_wls frac (of all hits): {is_wls.mean():.3f}, "
-                f"is_wls frac (of optical only): "
-                f"{(is_wls & is_optical).sum() / max(1, is_optical.sum()):.3f}")
 
         # 1. E-Type Channel Processing
         is_e = np.isin(channels, e_indices)
@@ -1133,144 +1122,70 @@ def main():
         plt.close(fig_time)
 
         # ─────────────────────────────────────────────────────────────────────
-        # 2. LONGITUDINAL PROFILE RECONSTRUCTION & RL-UNFOLDING
+        # 1B. COMBINED GAUSSIAN + FWHM TIMING RESOLUTION VS ENERGY (PER MODULE)
         # ─────────────────────────────────────────────────────────────────────
-        truth_curves_by_energy = {}  # E_gev -> normalized DoseActor profile (for overlay plot below)
+        energies_gauss, sigma_gauss_list = [], []
+        energies_fwhm, fwhm_list = [], []
 
         for ekey in energy_keys:
-            raw_profile = master_summary[mod][ekey]["tof_profile"]
-            sigma_t_ps = master_summary[mod][ekey]["sigma_t_ps"]
-            pitch_mm = master_summary[mod][ekey]["pitch_mm"]
-            lyso_thick = master_summary[mod][ekey]["lyso_thick"]
-            run_dirs_ek = master_summary[mod][ekey]["run_dirs"]
-
-            if np.sum(raw_profile) == 0:
+            E_val = extract_numerical_energy(ekey)
+            if E_val <= 0:
                 continue
 
-            gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
-            calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
-            lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
+            data = master_summary[mod][ekey].get("raw_bm_data", np.array([]))
+            if len(data) == 0:
+                continue
+            clean = clean_around_mode(data, window_ps=500.0)
+            if len(clean) < 5:
+                continue
 
-            raw_norm_disp = raw_profile / np.sum(raw_profile)
-            s_z = v_eff_for_module(mod) * (sigma_t_ps / 1000.0)
-            # 1. Calculate the spatial spread based on the prompt timing peak
-            s_z_prompt = v_eff_for_module(mod) * (sigma_t_ps / 1000.0)
-            base_sigma_layer = s_z_prompt / pitch_mm if pitch_mm > 0 else 1.0
+            sigma_t_ps = master_summary[mod][ekey].get("sigma_t_ps", 0.0)
+            if sigma_t_ps > 0:
+                energies_gauss.append(E_val)
+                sigma_gauss_list.append(sigma_t_ps)
 
-            # 2. HEURISTIC KERNEL INFLATION
-            # Scintillator decay time and extreme optical bouncing make the bulk light
-            # spread much wider than the prompt peak. We multiply the kernel to match reality.
-            # (Try values between 3.0 and 6.0; 4.0 is a solid starting point for LYSO/W)
-            HEURISTIC_DISPERSION_FACTOR = 1.0
+            fwhm_val = calculate_empirical_fwhm(clean, bins=80)
+            if fwhm_val > 0:
+                energies_fwhm.append(E_val)
+                fwhm_list.append(fwhm_val)
 
+        if len(energies_gauss) > 0 or len(energies_fwhm) > 0:
+            fig_cmb, ax_cmb = plt.subplots(figsize=(8, 6))
 
-            sigma_layer = base_sigma_layer * HEURISTIC_DISPERSION_FACTOR
+            def _fit_and_plot_timing(ax, energies, values, color, marker, series_label):
+                energies = np.array(energies, dtype=float)
+                values = np.array(values, dtype=float)
+                ax.plot(energies, values, marker, color=color, markersize=7,
+                        linestyle="None", label=series_label)
+                if len(energies) >= 3:
+                    try:
+                        popt, _ = curve_fit(
+                            timing_ref_curve, energies, values,
+                            p0=[200.0, 20.0], bounds=([0.0, 0.0], [2000.0, 500.0]),
+                            maxfev=10000,
+                        )
+                        stoch_f, const_f = popt
+                        x_smooth = np.linspace(min(energies) * 0.8, max(energies) * 1.1, 200)
+                        y_smooth = timing_ref_curve(x_smooth, stoch_f, const_f)
+                        ax.plot(x_smooth, y_smooth, linestyle="--", linewidth=2.0, color=color,
+                                label=f"{const_f:.2f} @ {stoch_f:.2f} / sqrtE")
+                    except Exception as e:
+                        print(f"  [WARNING] Timing-resolution fit failed for {mod} ({series_label}): {e}")
 
-            if utils is not None and hasattr(utils, 'rl_unfold'):
-                # Pass the inflated kernel to the algorithm
-                unf_norm_disp, unf_err_disp = utils.rl_unfold(raw_norm_disp, sigma_layer)
-            else:
-                unf_norm_disp = raw_norm_disp
-                unf_err_disp = np.zeros_like(raw_norm_disp)
+            _fit_and_plot_timing(ax_cmb, energies_gauss, sigma_gauss_list, "#1f77b4", "o", "Gaussian $\\sigma_t$ (Best Estimator)")
+            _fit_and_plot_timing(ax_cmb, energies_fwhm, fwhm_list, "#ff7f0e", "s", "Empirical FWHM")
 
-            truth_curve = None
-            if utils is not None:
-                fine_truth, _ = utils.load_calorimeter_mhd(run_dirs_ek, long_glob="run_Dose_edep.mhd")
-                if fine_truth is not None:
-                    truth_curve = rebin_fine_profile_to_layers(fine_truth, lyso_bounds, calor_thick_mm)
+            ax_cmb.set_xlabel("Beam Energy (GeV)", fontsize=11)
+            ax_cmb.set_ylabel("Time Resolution (ps)", fontsize=11)
+            ax_cmb.set_title(f"Timing Resolution vs Energy — {mod}", fontsize=13, fontweight="bold")
+            ax_cmb.grid(True, linestyle=":", alpha=0.6)
+            ax_cmb.legend(fontsize=9)
+            fig_cmb.tight_layout()
 
-            fig_prof, (ax_main, ax_ratio) = plt.subplots(
-                2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [3, 1]}, sharex=True
-            )
-
-            if truth_curve is not None and np.sum(truth_curve) > 0:
-                truth_norm_disp = truth_curve / np.sum(truth_curve)
-                truth_curves_by_energy[extract_numerical_energy(ekey)] = truth_norm_disp
-                ax_main.bar(layers, truth_norm_disp, color="#00bcd4", alpha=0.25, edgecolor="#00838f",
-                       linewidth=0.8, width=0.8, label="Sim Truth (DoseActor)")
-
-                sigma_bins = np.where(unf_err_disp > 0, unf_err_disp, 1e-4)
-                chi2 = np.sum(((unf_norm_disp - truth_norm_disp) / sigma_bins) ** 2)
-                ndf = len(unf_norm_disp)
-                reduced_chi2 = chi2 / ndf
-                mae = np.mean(np.abs(unf_norm_disp - truth_norm_disp)) * 100
-                fit_stats_label = f" (χ²/ndf={reduced_chi2:.2f}, MAE={mae:.1f}%)"
-
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    ratio = unf_norm_disp / truth_norm_disp
-                    ratio_err = unf_err_disp / truth_norm_disp
-
-                ax_ratio.errorbar(layers, ratio, yerr=ratio_err, color=mod_colors.get(mod, "black"),
-                                  fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5, elinewidth=0.8)
-                ax_ratio.axhline(1.0, color='black', linestyle='--', linewidth=0.8, alpha=0.6)
-                ax_ratio.set_ylabel("Unf / Truth", fontsize=8)
-                ax_ratio.set_ylim(0.4, 1.6)
-            else:
-                ax_ratio.text(0.5, 0.5, "No Reference Truth", ha="center", va="center", alpha=0.4, transform=ax_ratio.transAxes)
-                ax_ratio.set_ylim(0, 2)
-                fit_stats_label = ""
-
-            ax_main.plot(layers, raw_norm_disp, color="gray", linewidth=1.2, linestyle=":",
-                    marker=".", markersize=3.5, alpha=0.7, label="Raw ΔT Profile (blurred)")
-
-            ax_main.errorbar(layers, unf_norm_disp, yerr=unf_err_disp, color=mod_colors.get(mod, "black"),
-                        linewidth=1.8, marker="o", markersize=4.0, capsize=2.5, capthick=0.9,
-                        label=f"RL-Unfolded (σ_layer={sigma_layer:.2f}){fit_stats_label}")
-
-            ax_main.set_ylabel("Normalized Intensity", fontsize=10)
-            ax_main.set_title(f"Longitudinal Shower Profile — {mod} ({ekey})", fontsize=12, fontweight="bold")
-            ax_main.grid(True, linestyle=":", alpha=0.6)
-            ax_main.legend(fontsize=9)
-
-            ax_ratio.set_xlabel("Layer Number", fontsize=10)
-            ax_ratio.set_xticks(layers[::2])
-            ax_ratio.grid(True, linestyle=":", alpha=0.6)
-
-            fig_prof.tight_layout()
-            fig_prof.savefig(mod_dir / f"{mod}_{ekey}_profile.png", dpi=200)
-            plt.close(fig_prof)
-
-        # ─────────────────────────────────────────────────────────────────────
-        # 2B. LONGITUDINAL SHOWER PROFILE VS ENERGY — DoseActor TRUTH OVERLAY
-        # All energies overlaid on one axes, each fit with a Longo parametrization
-        # ─────────────────────────────────────────────────────────────────────
-        if len(truth_curves_by_energy) >= 2:
-            fig_ov, ax_ov = plt.subplots(figsize=(8, 6))
-            cmap = cm.get_cmap("rainbow", len(truth_curves_by_energy))
-            sorted_e = sorted(truth_curves_by_energy.keys())
-
-            for i, E_val in enumerate(sorted_e):
-                prof = truth_curves_by_energy[E_val]
-                color = cmap(i)
-
-                ax_ov.step(layers, prof, where="mid", color=color, alpha=0.5, linewidth=1.0,
-                           label=f"{E_val:g} GeV")
-
-                try:
-                    peak_idx = int(np.argmax(prof))
-                    p0 = [float(np.max(prof)), max(peak_idx * 0.3, 1.5), 0.3]
-                    popt, _ = curve_fit(
-                        longo_profile, layers, prof, p0=p0,
-                        bounds=([0.0, 0.5, 0.01], [np.max(prof) * 20.0, 40.0, 5.0]),
-                        maxfev=10000,
-                    )
-                    t_smooth = np.linspace(layers.min(), layers.max(), 300)
-                    ax_ov.plot(t_smooth, longo_profile(t_smooth, *popt), color=color, linewidth=1.8)
-                except Exception as e:
-                    print(f"  [WARNING] Longo fit failed for {mod} @ {E_val} GeV: {e}")
-
-            ax_ov.set_xlabel("LYSO layer", fontsize=11)
-            ax_ov.set_ylabel("normalized ⟨E⟩", fontsize=11)
-            ax_ov.set_title(f"Longitudinal shower profile vs energy — {mod}", fontsize=13, fontweight="bold")
-            ax_ov.grid(True, linestyle=":", alpha=0.6)
-            ax_ov.legend(title="Longo fit: $t^{\\alpha-1}e^{-\\beta t}$", fontsize=8, title_fontsize=9)
-            fig_ov.tight_layout()
-            fig_ov.savefig(mod_dir / f"{mod}_longitudinal_overlay.png", dpi=200)
-            plt.close(fig_ov)
-            print(f"[SUCCESS] Saved longitudinal overlay plot for {mod}")
-        else:
-            print(f"[WARNING] Not enough DoseActor truth curves to build longitudinal overlay for {mod}")
-
+            save_path_cmb = mod_dir / f"{mod}_timing_resolution_gauss_fwhm_vs_energy.png"
+            fig_cmb.savefig(save_path_cmb, dpi=200)
+            plt.close(fig_cmb)
+            print(f"[SUCCESS] Saved combined Gaussian+FWHM timing resolution plot to: {save_path_cmb.resolve()}")
 
         # ─────────────────────────────────────────────────────────────────────
         # 3-PRE. TRANSVERSE CHANNEL SUMMING (EVENT-BY-EVENT)
