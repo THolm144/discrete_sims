@@ -275,12 +275,15 @@ def get_bar_colors(ekey, idx):
     light_col = tuple(0.4 * c + 0.6 for c in rgb) # blend with white
     return base_col, light_col
 
-def get_layer_idx_from_z(z_vals, lyso_bounds):
-    """Map absolute z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
+def get_layer_idx_from_z(z_vals, layer_edges):
+    """Vectorized O(log N) layer mapping using binary search."""
+    bin_idx = np.searchsorted(layer_edges, z_vals)
+    # If it falls in an odd bin index (1, 3, 5...), it is inside a layer bounds
+    valid = (bin_idx % 2 == 1)
+    
     layer_idx = np.full(len(z_vals), -1, dtype=int)
-    for i, (z_lo, z_hi) in enumerate(lyso_bounds):
-        in_layer = (z_vals >= (z_lo - 0.5)) & (z_vals <= (z_hi + 0.5))
-        layer_idx[in_layer] = i
+    # Floor division by 2 converts odd indices (1, 3, 5) back to layer indices (0, 1, 2)
+    layer_idx[valid] = bin_idx[valid] // 2 
     return layer_idx
 
 
@@ -314,6 +317,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
+    # Flatten the [(lo, hi), (lo, hi)] list into [lo-0.5, hi+0.5, lo-0.5, hi+0.5...]
+    layer_edges = np.array([[lo - 0.5, hi + 0.5] for lo, hi in lyso_bounds]).flatten()
 
     z_min_calor, z_max_calor = lyso_bounds[0][0], lyso_bounds[-1][1]
     z_center_calor = (z_min_calor + z_max_calor) / 2.0
@@ -392,13 +397,18 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
         dx = x[:, np.newaxis] - cap_xy_map[:, 0]
         dy = y[:, np.newaxis] - cap_xy_map[:, 1]
-        channels = np.argmin(np.hypot(dx, dy), axis=1)
+        channels = np.argmin(dx**2 + dy**2, axis=1)  # Dropped expensive sqrt
 
         z_min_val, z_max_val = np.min(z), np.max(z)
         near_up = np.abs(z - z_min_val) < 5.0
         near_dw = np.abs(z - z_max_val) < 5.0
 
-        is_optical = (pn == b"opticalphoton") | (pn == "opticalphoton")
+        # Check dtype once, apply the correct mask
+        if len(pn) > 0:
+            target_str = b"opticalphoton" if isinstance(pn[0], bytes) else "opticalphoton"
+            is_optical = (pn == target_str)
+        else:
+            is_optical = np.zeros(0, dtype=bool)
 
         is_t = np.isin(channels, t_indices)
         m_t_up = is_t & is_optical & near_up
@@ -439,12 +449,26 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         gt_raw_dw = gt_raw[m_dw_opt]
 
         if len(ev_up) > 0 and len(ev_dw) > 0:
-            df_up = pd.DataFrame({'EventID': ev_up, 'GT': gt_raw_up})
-            tdc_dict = df_up.groupby('EventID')['GT'].quantile(ARRIVAL_QUANTILE).to_dict()
-            t_up_matched = np.array([tdc_dict.get(e, np.nan) for e in ev_dw], dtype=float)
-            coincidence_mask = ~np.isnan(t_up_matched)
-        else:
-            coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
+            # 1. Sort the upstream events to group them
+            sort_idx = np.argsort(ev_up)
+            ev_up_sorted, gt_up_sorted = ev_up[sort_idx], gt_raw_up[sort_idx]
+            
+            # 2. Find unique EventIDs and where they start/count
+            unique_ev, start_idx, counts = np.unique(ev_up_sorted, return_index=True, return_counts=True)
+            
+            # 3. Quickly approximate the quantile index for each group
+            quant_offsets = np.floor((counts - 1) * ARRIVAL_QUANTILE).astype(int)
+            tdc_vals = gt_up_sorted[start_idx + quant_offsets]
+            
+            # 4. Map upstream times to downstream events using fast binary search
+            match_idx = np.searchsorted(unique_ev, ev_dw)
+            
+            # Ensure the match is valid (since ev_dw might contain events not in unique_ev)
+            valid_match = (match_idx < len(unique_ev)) & (unique_ev[np.minimum(match_idx, len(unique_ev)-1)] == ev_dw)
+            
+            t_up_matched = np.full(len(ev_dw), np.nan)
+            t_up_matched[valid_match] = tdc_vals[match_idx[valid_match]]
+            coincidence_mask = valid_match
 
         if np.any(coincidence_mask):
             t_dw_coinc = gt_raw_dw[coincidence_mask]
