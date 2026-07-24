@@ -448,6 +448,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                 true_layer_idx = candidate
 
         # Dual-ended coincidence reconstruction
+        # Dual-ended coincidence reconstruction
         ev_up = ev[m_t_up].astype(np.int64)
         gt_raw_up = gt_raw[m_t_up]
         ev_dw = ev[m_dw_opt].astype(np.int64)
@@ -474,7 +475,28 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             t_up_matched = np.full(len(ev_dw), np.nan)
             t_up_matched[valid_match] = tdc_vals[match_idx[valid_match]]
             coincidence_mask = valid_match
+        else:
+            # CRITICAL FIX 1: Prevents variable bleed-over from the previous loop iteration
+            coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
 
+        # CRITICAL FIX 2: Single-ended reconstruction moved OUTSIDE the coincidence block
+        # Assumes GlobalTime starts at 0 for each primary particle in Gate
+        t0 = 0.0 
+        z_recon_dw_all = z_max_val - (gt_raw_dw - t0) * v_eff
+        z_recon_up_all = z_min_val + (gt_raw_up - t0) * v_eff
+
+        layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
+        layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
+
+        valid_dw = (layer_idx_dw != -1)
+        valid_up = (layer_idx_up != -1)
+
+        if np.any(valid_dw):
+            np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0 / lce[layer_idx_dw[valid_dw]])
+        if np.any(valid_up):
+            np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0 / lce[layer_idx_up[valid_up]])
+
+        # Now handle the dual-ended coincidences
         if np.any(coincidence_mask):
             t_dw_coinc = gt_raw_dw[coincidence_mask]
             t_up_coinc = t_up_matched[coincidence_mask]
@@ -486,26 +508,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
             coinc_truth = true_layer_idx[coincidence_mask] if true_layer_idx is not None else recon_layer_idx
 
-            # Both conditions required — this is the fix for the dropped filter.
             valid = (recon_layer_idx != -1) & (coinc_truth != -1)
-            # Single-ended reconstruction based on time-of-flight from the sensor
-            # Assuming t_0 is roughly the minimum global time in the event
-           # Single-ended reconstruction using ALL downstream/upstream hits
-            # Assumes GlobalTime starts at 0 for each primary particle in Gate
-            t0 = 0.0 
-            z_recon_dw_all = z_max_val - (gt_raw_dw - t0) * v_eff
-            z_recon_up_all = z_min_val + (gt_raw_up - t0) * v_eff
-
-            layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
-            layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
-
-            valid_dw = (layer_idx_dw != -1)
-            valid_up = (layer_idx_up != -1)
-
-            if np.any(valid_dw):
-                np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0 / lce[layer_idx_dw[valid_dw]])
-            if np.any(valid_up):
-                np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0 / lce[layer_idx_up[valid_up]])
 
             if np.any(valid):
                 v_recon = recon_layer_idx[valid]
@@ -515,9 +518,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                     v_truth = true_layer_idx[coincidence_mask][valid]
                     is_target = (v_recon == v_truth)
                 else:
-                    # No vertex branch available: fall back to a prompt-timing
-                    # cut (photons arriving close to their expected direct
-                    # travel time are "target", late/bounced ones are not).
+                    # No vertex branch available: fall back to a prompt-timing cut
                     t_expected_dw = (z_max_val - z_recon[valid]) / v_eff
                     t_actual_dw = t_dw_coinc[valid] - np.min(gt_raw)
                     is_target = np.abs(t_actual_dw - t_expected_dw) < 0.25
