@@ -531,17 +531,27 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         # ─────────────────────────────────────────────────────────────────────
         # SINGLE-ENDED RECONSTRUCTION (Kinematically Corrected, No LCE)
         # ─────────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # SINGLE-ENDED RECONSTRUCTION (Kinematically Corrected)
+        # ─────────────────────────────────────────────────────────────────────
         c_vac = 299.792
-        t0 = 0.0 
+
+        # CRITICAL FIX 1: Anchor the start time to the particle hitting the front face
+        # (This subtracts the time-of-flight from the particle gun to the calorimeter)
+        t_entry = np.min(lt) if len(lt) > 0 else 0.0 
+
+        # CRITICAL FIX 2: Use LocalTime to prevent chunk-to-chunk GlobalTime drift
+        lt_up_arr = lt[m_t_up]
+        lt_dw_arr = lt[m_dw_opt]
 
         # 1. Upstream Kinematics (Particle & Light move opposite)
         v_up_recon = (c_vac * v_eff) / (c_vac + v_eff)
-        z_recon_up_all = z_min_val + (gt_raw_up - t0) * v_up_recon
+        z_recon_up_all = z_min_val + (lt_up_arr - t_entry) * v_up_recon
 
         # 2. Downstream Kinematics (Particle & Light race parallel)
         v_dw_recon = (c_vac * v_eff) / (c_vac - v_eff)
         t_dw_max = (z_max_val - z_min_val) / v_eff
-        z_recon_dw_all = z_min_val + (t_dw_max - (gt_raw_dw - t0)) * v_dw_recon
+        z_recon_dw_all = z_min_val + (t_dw_max - (lt_dw_arr - t_entry)) * v_dw_recon
 
         layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
         layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
