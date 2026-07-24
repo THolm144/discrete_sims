@@ -426,7 +426,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if c is not None: dw_q_chunks.append(c)
 
         is_e = np.isin(channels, e_indices)
-        m_dw_opt = near_dw & is_optical & (is_e | is_t)
+        m_dw_opt = near_dw & is_optical & (is_e)
 
         gt_downstream_opt = gt_raw[m_dw_opt]
         lt_downstream_opt = lt[m_dw_opt]
