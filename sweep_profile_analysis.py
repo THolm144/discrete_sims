@@ -417,8 +417,8 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             is_optical = np.zeros(0, dtype=bool)
 
         is_t = np.isin(channels, t_indices)
-        m_t_up = is_t & is_optical & near_up
-        m_t_dw = is_t & is_optical & near_dw
+        m_t_up = is_e & is_optical & near_up
+        m_t_dw = is_e & is_optical & near_dw
 
         c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
         if c is not None: up_q_chunks.append(c)
