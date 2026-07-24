@@ -260,14 +260,14 @@ def _grouped(chunks, how):
 def get_bar_colors(ekey, idx):
     # Cohesive color families (Darker for target hits, lighter for bounced)
     energy_colors = {
-        "10GeV":  {"target": "#1f77b4", "bounced": "#e73d1f"}, # Blue
-        "25GeV":  {"target": "#1f77b4", "bounced": "#e08113"}, # Blue
-        "30GeV":  {"target": "#1f77b4", "bounced": "#d1b01d"}, # Blue
-        "50GeV":  {"target": "#ff7f0e", "bounced": "#114e0c"}, # Orange
-        "70GeV":  {"target": "#1f77b4", "bounced": "#0cddcc"}, # Blue
-        "90GeV":  {"target": "#1f77b4", "bounced": "#500bbe"}, # Blue
-        "100GeV": {"target": "#2ca02c", "bounced": "#7808d4"},  # Green
-        "150GeV":  {"target": "#1f77b4", "bounced": "#b30ae6"} # Blue
+        "10GeV":  {"target": "#f30808", "bounced": "#f08370"}, # Blue
+        "25GeV":  {"target": "#e66814", "bounced": "#d69f60"}, # Blue
+        "30GeV":  {"target": "#f3e306", "bounced": "#d1bb5a"}, # Blue
+        "50GeV":  {"target": "#36ff0e", "bounced": "#385735"}, # Orange
+        "70GeV":  {"target": "#1f8ab4", "bounced": "#8cd8d2"}, # Blue
+        "90GeV":  {"target": "#0f12db", "bounced": "#917ab6"}, # Blue
+        "100GeV": {"target": "#7f14e2", "bounced": "#696070"},  # Green
+        "150GeV":  {"target": "#db12ba", "bounced": "#d38fe7"} # Blue
     }
     if ekey in energy_colors:
         return energy_colors[ekey]["target"], energy_colors[ekey]["bounced"]
