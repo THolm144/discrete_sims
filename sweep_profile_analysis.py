@@ -529,33 +529,26 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
 
         # ─────────────────────────────────────────────────────────────────────
-        # SINGLE-ENDED RECONSTRUCTION (Kinematically Corrected, No LCE)
+        # SINGLE-ENDED RECONSTRUCTION (Pure Optical LocalTime)
         # ─────────────────────────────────────────────────────────────────────
-        # ─────────────────────────────────────────────────────────────────────
-        # SINGLE-ENDED RECONSTRUCTION (Kinematically Corrected)
-        # ─────────────────────────────────────────────────────────────────────
-        c_vac = 299.792
-
-        # CRITICAL FIX 1: Anchor the start time to the particle hitting the front face
-        # (This subtracts the time-of-flight from the particle gun to the calorimeter)
-        t_entry = np.min(lt) if len(lt) > 0 else 0.0 
-
-        # CRITICAL FIX 2: Use LocalTime to prevent chunk-to-chunk GlobalTime drift
+        # LocalTime only tracks the photon from birth to the sensor.
+        # It does NOT include the particle's flight time, so we DO NOT use the 
+        # kinematic velocities. We map purely using v_eff.
+        
         lt_up_arr = lt[m_t_up]
         lt_dw_arr = lt[m_dw_opt]
 
-        # 1. Upstream Kinematics (Particle & Light move opposite)
-        v_up_recon = (c_vac * v_eff) / (c_vac + v_eff)
-        z_recon_up_all = z_min_val + (lt_up_arr - t_entry) * v_up_recon
+        # Upstream: sensor is at z_min. Photon travels (z_birth - z_min).
+        z_recon_up_all = z_min_val + (lt_up_arr * v_eff)
 
-        # 2. Downstream Kinematics (Particle & Light race parallel)
-        v_dw_recon = (c_vac * v_eff) / (c_vac - v_eff)
-        t_dw_max = (z_max_val - z_min_val) / v_eff
-        z_recon_dw_all = z_min_val + (t_dw_max - (lt_dw_arr - t_entry)) * v_dw_recon
+        # Downstream: sensor is at z_max. Photon travels (z_max - z_birth).
+        z_recon_dw_all = z_max_val - (lt_dw_arr * v_eff)
 
         layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
         layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
 
+        # This valid mask naturally filters out bounced photons, as their long 
+        # flight times will map them to z-coordinates way outside the calorimeter.
         valid_dw = (layer_idx_dw != -1)
         valid_up = (layer_idx_up != -1)
 
