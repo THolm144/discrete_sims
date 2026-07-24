@@ -523,9 +523,9 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
                     t_actual_dw = t_dw_coinc[valid] - np.min(gt_raw)
                     is_target = np.abs(t_actual_dw - t_expected_dw) < 0.25
 
-                np.add.at(prompt_counts, v_recon, v_weights)
-                np.add.at(prompt_counts_target, v_recon[is_target], v_weights[is_target])
-                np.add.at(prompt_counts_bounced, v_recon[~is_target], v_weights[~is_target])
+                np.add.at(prompt_counts, v_recon)
+                np.add.at(prompt_counts_target, v_recon[is_target])
+                np.add.at(prompt_counts_bounced, v_recon[~is_target])
 
     # --- Two-ended timing ---
     up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
