@@ -98,7 +98,22 @@ BEAM_CONFIG = {
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOMETRY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+def _quantile_per_event(ev_arr, val_arr, quantile):
+    """
+    For each event, return the `quantile`-th earliest value (e.g. LocalTime)
+    plus a parallel array of the corresponding event IDs.
+    """
+    if len(ev_arr) == 0:
+        return np.array([]), np.array([])
 
+    sort_idx = np.argsort(ev_arr)
+    ev_sorted, val_sorted = ev_arr[sort_idx], val_arr[sort_idx]
+
+    unique_ev, start_idx, counts = np.unique(ev_sorted, return_index=True, return_counts=True)
+    quant_offsets = np.floor((counts - 1) * quantile).astype(int)
+    picked_vals = val_sorted[start_idx + quant_offsets]
+
+    return unique_ev, picked_vals
 def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
     bore_dz = (half_dz_mm + 0.1) * mm
     result   = base_vol

@@ -129,7 +129,22 @@ def get_lyso_layer_bounds(lyso_thick, calor_thick):
         bounds.append((z_start, z_end))
         current_z += gap_thick + (_W_THICK_MM if idx < _N_W else 0)
     return bounds
+def _quantile_per_event(ev_arr, val_arr, quantile):
+    """
+    For each event, return the `quantile`-th earliest value (e.g. LocalTime)
+    plus a parallel array of the corresponding event IDs.
+    """
+    if len(ev_arr) == 0:
+        return np.array([]), np.array([])
 
+    sort_idx = np.argsort(ev_arr)
+    ev_sorted, val_sorted = ev_arr[sort_idx], val_arr[sort_idx]
+
+    unique_ev, start_idx, counts = np.unique(ev_sorted, return_index=True, return_counts=True)
+    quant_offsets = np.floor((counts - 1) * quantile).astype(int)
+    picked_vals = val_sorted[start_idx + quant_offsets]
+
+    return unique_ev, picked_vals
 # ─────────────────────────────────────────────────────────────────────────────
 # DOSEACTOR MHD/RAW PARSER ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -483,68 +498,30 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
 
        
         # ─────────────────────────────────────────────────────────────────────
-        # SINGLE-ENDED RECONSTRUCTION (Pure LocalTime, Raw Optical Mapping)
+        # SINGLE-ENDED RECONSTRUCTION (Earliest-arrival LocalTime per event)
         # ─────────────────────────────────────────────────────────────────────
-        lt_up_arr = lt[m_t_up]
-        lt_dw_arr = lt[m_dw_opt]
-        
-        # 1. Upstream Mapping: Sensor is at z_min.
-        # The light traveled from Z back to z_min.
+        ev_up_raw = ev[m_t_up].astype(np.int64)
+        lt_up_raw = lt[m_t_up]
+        ev_dw_raw = ev[m_dw_opt].astype(np.int64)
+        lt_dw_raw = lt[m_dw_opt]
+
+        # Pick only the earliest ARRIVAL_QUANTILE fraction of hits, per event
+        _, lt_up_arr = _quantile_per_event(ev_up_raw, lt_up_raw, ARRIVAL_QUANTILE)
+        _, lt_dw_arr = _quantile_per_event(ev_dw_raw, lt_dw_raw, ARRIVAL_QUANTILE)
+
         z_recon_up_all = z_min_val + (lt_up_arr * v_eff)
-        
-        # 2. Downstream Mapping: Sensor is at z_max.
-        # The light traveled from Z forward to z_max.
         z_recon_dw_all = z_max_val - (lt_dw_arr * v_eff)
-        
+
         layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
         layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
-        
-        # Keep any hit that naturally maps inside the 1-30 layers.
+
         valid_dw = (layer_idx_dw != -1)
         valid_up = (layer_idx_up != -1)
-        
+
         if np.any(valid_dw):
             np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0)
         if np.any(valid_up):
             np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0)
-        # ─────────────────────────────────────────────────────────────────────
-        # DUAL-ENDED LOCALTIME COINCIDENCE (For 4-Panel Subplot)
-        # ─────────────────────────────────────────────────────────────────────
-        coincident_events_lt = np.intersect1d(ev_up, ev_dw)
-
-        if len(coincident_events_lt) > 0:
-            mask_up_c = np.isin(ev_up, coincident_events_lt)
-            mask_dw_c = np.isin(ev_dw, coincident_events_lt)
-            
-            ev_up_c = ev_up[mask_up_c]
-            z_up_c = z_recon_up_all[mask_up_c]
-            
-            ev_dw_c = ev_dw[mask_dw_c]
-            z_dw_c = z_recon_dw_all[mask_dw_c]
-
-            # Upstream Mean Z per event
-            unique_ev_up, inv_up, counts_up = np.unique(ev_up_c, return_inverse=True, return_counts=True)
-            z_up_mean = np.bincount(inv_up, weights=z_up_c) / counts_up
-            
-            # Downstream Mean Z per event
-            unique_ev_dw, inv_dw, counts_dw = np.unique(ev_dw_c, return_inverse=True, return_counts=True)
-            z_dw_mean = np.bincount(inv_dw, weights=z_dw_c) / counts_dw
-            
-            # Both arrays are sorted naturally by np.unique. Average them!
-            z_recon_dual_lt = (z_up_mean + z_dw_mean) / 2.0
-
-            layer_idx_dual_lt = get_layer_idx_from_z(z_recon_dual_lt, lyso_bounds)
-            valid_dual_lt = (layer_idx_dual_lt != -1)
-            
-            if np.any(valid_dual_lt):
-                np.add.at(prompt_counts_dual, layer_idx_dual_lt[valid_dual_lt], 1.0)
-
-        
-
-       
-
-        
-
         # ─────────────────────────────────────────────────────────────────────
         # DUAL-ENDED RECONSTRUCTION (No LCE Weights)
         # ─────────────────────────────────────────────────────────────────────
@@ -1019,9 +996,7 @@ def main():
 
             # Subplot 3: Dual-Ended Coincidence (Averaged)
             prof_dw_flipped = prof_dw[::-1]                      # mirror downstream into the upstream frame
-            prof_dw_norm = prof_dw / max(prof_dw.sum(), 1e-12)
-            prof_up_norm = prof_up / max(prof_up.sum(), 1e-12)
-            prof_dual_empirical = (prof_dw_norm[::-1] + prof_up_norm) / 2.0
+            prof_dual_empirical = (prof_dw_flipped + prof_up) / 2.0
 
             ax_dual.plot(layers_x, prof_dual_empirical, marker="o", linestyle="None", color=col,
              markersize=6, alpha=0.8, label=ekey)
