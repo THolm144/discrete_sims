@@ -416,7 +416,7 @@ def main():
     # Timing metrics arrays
     res_gaus_ps, err_gaus_ps = [], []
     res_fwhm_ps, err_fwhm_ps = [], []
-    raw_fwhm_ps = []
+    raw_fwhm_ps, err_raw_fwhm_ps = [], []
 
     for edir in energy_dirs:
         e_val = extract_numerical_energy(edir.name)
@@ -468,6 +468,23 @@ def main():
             res_fwhm_ps.append(np.nan)
             err_fwhm_ps.append(np.nan)
             raw_fwhm_ps.append(np.nan)
+
+        if len(dt_data) >= 5:
+            sg_g, err_g, fwhm_raw, sg_fwhm, err_fwhm = analyze_timing_distribution(dt_data)
+            res_gaus_ps.append(sg_g)
+            err_gaus_ps.append(err_g)
+            res_fwhm_ps.append(sg_fwhm)
+            err_fwhm_ps.append(err_fwhm)
+            
+            # Convert sigma_fwhm error back to raw FWHM error
+            raw_fwhm_ps.append(fwhm_raw)
+            err_raw_fwhm_ps.append(err_fwhm * 2.35482)
+        else:
+            # ... [fallback appending np.nan] ...
+            raw_fwhm_ps.append(np.nan)
+            err_raw_fwhm_ps.append(np.nan)
+
+        err_raw_fwhm_ps = np.array(err_raw_fwhm_ps)
 
         print(f"     -> Events: {len(photon_counts)} | Mean Photons: {mean_N:.1f} | Resolution: {res:.2f}% ± {err:.2f}%")
 
@@ -649,10 +666,18 @@ def main():
             fmt='o', color='#1f77b4', ecolor='#1f77b4', capsize=3, elinewidth=1.2, label=lbl_g
         )
 
-        # 3. Raw FWHM overlay points
-        plt.scatter(
-            energies_gev[valid_timing], raw_fwhm_ps[valid_timing], 
-            color='purple', marker='x', label='Sim Raw FWHM (ps)'
+        
+        # 3. Raw FWHM overlay points with error bars
+        plt.errorbar(
+            energies_gev[valid_timing], 
+            raw_fwhm_ps[valid_timing], 
+            yerr=err_raw_fwhm_ps[valid_timing],
+            fmt='x', 
+            color='purple', 
+            ecolor='purple', 
+            capsize=3, 
+            elinewidth=1.2, 
+            label='Sim Raw FWHM (ps)'
         )
 
         plt.title('Time Resolution vs Beam Energy', fontsize=16, pad=12)
