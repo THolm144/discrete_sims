@@ -280,15 +280,15 @@ def get_bar_colors(ekey, idx):
     light_col = tuple(0.4 * c + 0.6 for c in rgb) # blend with white
     return base_col, light_col
 
-def get_layer_idx_from_z(z_vals, layer_edges):
-    """Vectorized O(log N) layer mapping using binary search."""
-    bin_idx = np.searchsorted(layer_edges, z_vals)
-    # If it falls in an odd bin index (1, 3, 5...), it is inside a layer bounds
-    valid = (bin_idx % 2 == 1)
-    
+def get_layer_idx_from_z(z_vals, lyso_bounds):
+    """Map absolute z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
     layer_idx = np.full(len(z_vals), -1, dtype=int)
-    # Floor division by 2 converts odd indices (1, 3, 5) back to layer indices (0, 1, 2)
-    layer_idx[valid] = bin_idx[valid] // 2 
+    
+    for i, (z_lo, z_hi) in enumerate(lyso_bounds):
+        # We add a 0.5mm tolerance to catch edge-case precision errors
+        in_layer = (z_vals >= (z_lo - 0.5)) & (z_vals <= (z_hi + 0.5))
+        layer_idx[in_layer] = i
+        
     return layer_idx
 
 
