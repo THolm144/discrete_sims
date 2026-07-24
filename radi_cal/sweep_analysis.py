@@ -123,7 +123,6 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
     hname = f"h_{unique_id}"
     fname = f"f_{unique_id}"
 
-    # Dynamic rebinning (matching scan_resolution.C: bin_width ~ sg_robust / 5.0)
     hist_min = max(0, int(np.floor(median - 5.0 * sg_robust)))
     hist_max = int(np.ceil(median + 5.0 * sg_robust))
     bin_width = max(1.0, sg_robust / 5.0)
@@ -149,7 +148,6 @@ def robust_resolution(data, nsig=2.0, max_iters=4):
         if sg <= 0:
             break
 
-    # Core fit quality check (relative error on sigma < 25%)
     fit_ok = (mu > 0) and (sg > 0) and (sigma_err > 0) and (sigma_err / sg < 0.25)
     res_tuple = (100.0 * sg / mu, 100.0 * sigma_err / mu) if fit_ok else (fallback_res, fallback_err)
 
@@ -211,7 +209,7 @@ def analyze_timing_distribution(dt_data_ps, window_ps=500.0):
         x_right = bin_centers[-1]
 
     fwhm_ps = max(0.0, x_right - x_left)
-    sigma_fwhm_ps = fwhm_ps 
+    sigma_fwhm_ps = fwhm_ps / 2.35482
     err_fwhm_ps = sigma_fwhm_ps / np.sqrt(2.0 * len(clean))
 
     # 3. Gaussian Core Fit (Top 50% mask)
@@ -310,13 +308,11 @@ def analyze_energy_batch(batch_dir: Path, module_name: str = "dsb1_radi_cal_ener
         # Flat SiPM PDE
         FLAT_PDE = 0.40 
         is_detected = np.random.rand(len(gt)) < FLAT_PDE
-
         is_t = np.isin(channels, t_indices)
-        
+
         m_t_up_prompt = is_t & is_optical & near_up & is_prompt & is_detected
         m_t_dw_prompt = is_t & is_optical & near_dw & is_prompt & is_detected
 
-        # Quantile timing mask (unfiltered prompt window for raw arrival distribution)
         m_t_up_q = is_t & is_optical & near_up & is_detected
         m_t_dw_q = is_t & is_optical & near_dw & is_detected
 
@@ -326,7 +322,7 @@ def analyze_energy_batch(batch_dir: Path, module_name: str = "dsb1_radi_cal_ener
         c = _chunk_series(m_t_dw_prompt, gt, ev, run_tag)
         if c is not None: dw_t_hit_chunks.append(c)
 
-        # Quantile timing chunks (timestamps converted to picoseconds: gt * 1000.0)
+        # Quantile timing chunks (timestamps converted to picoseconds)
         c_q = _chunk_series(m_t_up_q, gt * 1000.0, ev, run_tag)
         if c_q is not None: up_t_q_chunks.append(c_q)
         c_q = _chunk_series(m_t_dw_q, gt * 1000.0, ev, run_tag)
@@ -335,6 +331,7 @@ def analyze_energy_batch(batch_dir: Path, module_name: str = "dsb1_radi_cal_ener
     # Photon Counts per event
     up_t_hits_per_ev = _grouped(up_t_hit_chunks, "count")
     dw_t_hits_per_ev = _grouped(dw_t_hit_chunks, "count")
+
     all_events = sorted(list(set(up_t_hits_per_ev.keys()) | set(dw_t_hits_per_ev.keys())))
     dw_t_total = np.array([dw_t_hits_per_ev.get(k, 0) + up_t_hits_per_ev.get(k, 0) for k in all_events])
 
@@ -347,7 +344,6 @@ def analyze_energy_batch(batch_dir: Path, module_name: str = "dsb1_radi_cal_ener
     delta_t_ps = np.array([(dw_q[e] - up_q[e]) / 2.0 for e in common_t_evs])
 
     return {"dw_t_total": dw_t_total, "delta_t_ps": delta_t_ps}
-
 
 def analyze_showermax_edep_batch(batch_dir: Path):
     edep_files = sorted(batch_dir.rglob("showermax_edep_*.root"))
@@ -375,7 +371,6 @@ def analyze_showermax_edep_batch(batch_dir: Path):
         return None
 
     return np.array(list(edep_sum_per_ev.values()))
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN EXECUTION
@@ -450,9 +445,12 @@ def main():
             res_e, err_e = robust_resolution(edep_MeV)
             edep_res_percent.append(res_e)
             edep_res_err_percent.append(err_e)
+            print(f"     -> [dE/dx] Events: {len(edep_MeV)} | Mean Edep: {np.mean(edep_MeV):.2f} MeV "
+                  f"| Resolution: {res_e:.2f}% ± {err_e:.2f}%")
         else:
             edep_res_percent.append(np.nan)
             edep_res_err_percent.append(np.nan)
+            print(f"     -> [dE/dx] No showermax_edep_*.root found for this energy point")
 
         # Timing Resolution Calculations
         if len(dt_data) >= 5:
@@ -480,23 +478,30 @@ def main():
     energies_gev = np.array(energies_gev)
     res_percent = np.array(res_percent)
     res_err_percent = np.array(res_err_percent)
-    
+    edep_res_percent = np.array(edep_res_percent)
+    edep_res_err_percent = np.array(edep_res_err_percent)
+    edep_mask = np.isfinite(edep_res_percent)
+
     res_gaus_ps = np.array(res_gaus_ps)
     err_gaus_ps = np.array(err_gaus_ps)
     res_fwhm_ps = np.array(res_fwhm_ps)
     err_fwhm_ps = np.array(err_fwhm_ps)
     raw_fwhm_ps = np.array(raw_fwhm_ps)
 
-    # Fits for Energy
+    # Fits for Energy Resolution
     popt_sim = [15.92, 0.0, 122.8]
     try:
         popt, _ = curve_fit(
-            resolution_fit_func, energies_gev, res_percent, sigma=res_err_percent, 
-            p0=[12.0, 50.0, 30.0], bounds=([0.0, 0.0, 0.0], [30.0, 150.0, 100.0])
+            resolution_fit_func, 
+            energies_gev, 
+            res_percent, 
+            sigma=res_err_percent, 
+            p0=[12.0, 50.0, 30.0], 
+            bounds=([0.0, 0.0, 0.0], [30.0, 150.0, 100.0])
         )
         popt_sim = popt
     except Exception as e:
-        print(f" [+] Fit Warning: curve_fit failed for energy ({e}).")
+        print(f" [+] Fit Warning: curve_fit failed for energy ({e}). Using default seed.")
 
     # Fits for Timing Resolution
     popt_gaus, popt_fwhm = None, None
@@ -521,6 +526,8 @@ def main():
     # Calibrated Energy Analysis
     mean_yields_arr = np.array(mean_yields)
     calib_slope, calib_intercept = np.polyfit(energies_gev, mean_yields_arr, 1)
+    print(f" [+] Calibration: N_photons = {calib_slope:.3f} * E_GeV + {calib_intercept:.3f}")
+
     res_calib_percent, res_calib_err_percent = [], []
     for e_val, photon_counts in zip(energies_gev, photon_counts_by_energy):
         e_reco = (np.asarray(photon_counts, dtype=float) - calib_intercept) / calib_slope
@@ -535,8 +542,24 @@ def main():
 
     res_calib_percent = np.array(res_calib_percent)
     res_calib_err_percent = np.array(res_calib_err_percent)
+    calib_mask = np.isfinite(res_calib_percent)
 
-    # Save summary DataFrame
+    # Raw dE/dx Fit Curve
+    popt_edep = None
+    if edep_mask.sum() >= 3:
+        try:
+            popt_edep, _ = curve_fit(
+                resolution_fit_func,
+                energies_gev[edep_mask],
+                edep_res_percent[edep_mask],
+                sigma=edep_res_err_percent[edep_mask],
+                p0=[10.0, 50.0, 30.0],
+                bounds=([0.0, 0.0, 0.0], [30.0, 150.0, 100.0])
+            )
+        except Exception as e:
+            print(f" [+] dE/dx fit warning: curve_fit failed ({e}).")
+
+    # Save Summary DataFrame
     df_summary = pd.DataFrame({
         "Energy_GeV": energies_gev,
         "Mean_Photons": mean_yields,
@@ -544,6 +567,8 @@ def main():
         "Energy_Resolution_Err_Percent": res_err_percent,
         "Calibrated_Energy_Resolution_Percent": res_calib_percent,
         "Calibrated_Energy_Resolution_Err_Percent": res_calib_err_percent,
+        "ShowerMax_dEdx_Resolution_Percent": edep_res_percent,
+        "ShowerMax_dEdx_Resolution_Err_Percent": edep_res_err_percent,
         "Time_Resolution_Gauss_ps": res_gaus_ps,
         "Time_Resolution_Gauss_Err_ps": err_gaus_ps,
         "Time_Resolution_FWHM_Equivalent_ps": res_fwhm_ps,
@@ -556,14 +581,28 @@ def main():
     # PLOT 1: ENERGY RESOLUTION
     # ─────────────────────────────────────────────────────────────────────────
     plt.figure(figsize=(9, 6.5))
+
     plt.errorbar(
         energies_gev, res_percent, yerr=res_err_percent,
         fmt='s', color='m', ecolor='m', capsize=3, elinewidth=1.2,
         label=f'sim (photon count): {popt_sim[0]:.2f}% $\\oplus$ {popt_sim[1]:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {popt_sim[2]:.1f}%/E'
     )
+
     e_smooth = np.linspace(max(0.5, min(energies_gev) * 0.8), max(energies_gev) * 1.1, 200)
     sim_curve = resolution_fit_func(e_smooth, *popt_sim)
     plt.plot(e_smooth, sim_curve, 'm--', lw=1.8)
+
+    if edep_mask.sum() >= 1:
+        edep_label = (f'sim (raw dE/dx): {popt_edep[0]:.2f}% $\\oplus$ '
+                      f'{popt_edep[1]:.1f}%/$\\sqrt{{E}}$ $\\oplus$ {popt_edep[2]:.1f}%/E' 
+                      if popt_edep is not None else 'sim (raw dE/dx)')
+        plt.errorbar(
+            energies_gev[edep_mask], edep_res_percent[edep_mask], yerr=edep_res_err_percent[edep_mask],
+            fmt='^', color='g', ecolor='g', capsize=3, elinewidth=1.2, label=edep_label
+        )
+        if popt_edep is not None:
+            edep_curve = resolution_fit_func(e_smooth, *popt_edep)
+            plt.plot(e_smooth, edep_curve, 'g--', lw=1.8)
 
     for label, params in ENERGY_REF_CURVES.items():
         ref_curve = resolution_fit_func(e_smooth, params["c"], params["s"], params["n"])
@@ -580,28 +619,29 @@ def main():
     plt.grid(True, which='both', linestyle=':', color='gray', alpha=0.6)
     plt.legend(loc='upper right', fontsize=11, frameon=False)
     plt.tight_layout()
+
     plot_path_e = out_dir / "showermax_energy_resolution_4T.png"
     plt.savefig(plot_path_e, dpi=300)
     plt.close()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # PLOT 2: TIME RESOLUTION (MATCHING PAPER GRAPH WITH FITS)
+    # PLOT 2: TIME RESOLUTION
     # ─────────────────────────────────────────────────────────────────────────
     if valid_timing.sum() >= 1:
         plt.figure(figsize=(9, 6.5))
 
-        # 1. Paper Reference Curve (Orange)
+        # Paper Reference Curve
         c_ref, s_ref = TIMING_REF_CURVE["c"], TIMING_REF_CURVE["s"]
         t_ref_curve = timing_fit_func(e_smooth, c_ref, s_ref)
         plt.plot(
             e_smooth, t_ref_curve, color=TIMING_REF_CURVE["color"], lw=2.0,
-            label=f'{TIMING_REF_CURVE["label"]}: {c_ref:.2f} $\\oplus$ {s_ref:.2f} / $\\sqrt{{E}}$'
+            label=f'{TIMING_REF_CURVE["label"]}'
         )
 
-        # 2. Gaussian Fit Data Points + Fitted Curve (Blue Dots)
+        # Gaussian Fit Data Points + Curve
         lbl_g = "Sim (Gaussian Core)"
         if popt_gaus is not None:
-            lbl_g += f": {popt_gaus[0]:.2f} $\\oplus$ {popt_gaus[1]:.2f} / $\\sqrt{{E}}$"
+            lbl_g += f": {popt_gaus[0]:.2f} $\\oplus$ {popt_gaus[1]:.2f} / $\\sqrt{{E}}$ ps"
             plt.plot(e_smooth, timing_fit_func(e_smooth, *popt_gaus), 'b--', lw=1.8)
 
         plt.errorbar(
@@ -609,10 +649,10 @@ def main():
             fmt='o', color='#1f77b4', ecolor='#1f77b4', capsize=3, elinewidth=1.2, label=lbl_g
         )
 
-        # 3. Empirical FWHM Data Points + Fitted Curve (Green Squares)
-        lbl_f = "Sim (FWHM )"
+        # Empirical FWHM / 2.355 Data Points + Curve
+        lbl_f = "Sim (FWHM / 2.355)"
         if popt_fwhm is not None:
-            lbl_f += f": {popt_fwhm[0]:.2f} $\\oplus$ {popt_fwhm[1]:.2f} / $\\sqrt{{E}}$"
+            lbl_f += f": {popt_fwhm[0]:.2f} $\\oplus$ {popt_fwhm[1]:.2f} / $\\sqrt{{E}}$ ps"
             plt.plot(e_smooth, timing_fit_func(e_smooth, *popt_fwhm), 'g:', lw=1.8)
 
         plt.errorbar(
@@ -620,25 +660,26 @@ def main():
             fmt='s', color='#2ca02c', ecolor='#2ca02c', capsize=3, elinewidth=1.2, label=lbl_f
         )
 
+        # Raw FWHM overlay points
+        plt.scatter(
+            energies_gev[valid_timing], raw_fwhm_ps[valid_timing], 
+            color='purple', marker='x', label='Sim Raw FWHM (ps)'
+        )
+
         plt.title('Time Resolution vs Beam Energy', fontsize=16, pad=12)
-        plt.xlabel(r'Beam Energy  (GeV)', fontsize=14)
-        plt.ylabel(r'Time Resolution  (ps)', fontsize=14)
+        plt.xlabel(r'Beam Energy (GeV)', fontsize=14)
+        plt.ylabel(r'Time Resolution (ps)', fontsize=14)
         plt.xlim(min(energies_gev) * 0.8, max(energies_gev) * 1.08)
         
-        # Adjust Y limits dynamically to accommodate reference + data
-        max_y = max(np.max(t_ref_curve), np.max(res_gaus_ps[valid_timing])) * 1.15
+        max_y = max(np.max(t_ref_curve), np.max(raw_fwhm_ps[valid_timing])) * 1.15
         plt.ylim(0, max_y)
         plt.grid(True, which='both', linestyle=':', color='gray', alpha=0.6)
-        plt.legend(loc='upper right', fontsize=11, frameon=False)
+        plt.legend(loc='upper right', fontsize=10, frameon=False)
         plt.tight_layout()
 
         plot_path_t = out_dir / "time_resolution_4T.png"
         plt.savefig(plot_path_t, dpi=300)
         plt.close()
-        print(f" [✓] Time Resolution Plot: {plot_path_t.resolve()}")
-
-    print(f"\n [✓] Results saved to {out_dir.resolve()}")
-    print(f" [✓] Summary CSV: {(out_dir / 'sweep_4T_summary.csv').resolve()}")
 
 if __name__ == "__main__":
     main()
