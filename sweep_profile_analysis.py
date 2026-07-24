@@ -363,6 +363,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     prompt_counts_bounced = np.zeros(_N_LYSO)
     prompt_counts_up = np.zeros(_N_LYSO)
     prompt_counts_dw = np.zeros(_N_LYSO)
+    prompt_counts_dual = np.zeros(_N_LYSO)
     total_events_processed = 0
 
     vertex_branch_names = ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]
@@ -488,13 +489,48 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
         layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
 
+       # Keep any hit that naturally maps inside the 1-30 layers.
         valid_dw = (layer_idx_dw != -1)
         valid_up = (layer_idx_up != -1)
 
         if np.any(valid_dw):
-            np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0 / 1)
+            np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0)
         if np.any(valid_up):
-            np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0 / 1)
+            np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # DUAL-ENDED LOCALTIME COINCIDENCE (For 4-Panel Subplot)
+        # ─────────────────────────────────────────────────────────────────────
+        coincident_events_lt = np.intersect1d(ev_up, ev_dw)
+
+        if len(coincident_events_lt) > 0:
+            mask_up_c = np.isin(ev_up, coincident_events_lt)
+            mask_dw_c = np.isin(ev_dw, coincident_events_lt)
+            
+            ev_up_c = ev_up[mask_up_c]
+            z_up_c = z_recon_up_all[mask_up_c]
+            
+            ev_dw_c = ev_dw[mask_dw_c]
+            z_dw_c = z_recon_dw_all[mask_dw_c]
+
+            # Upstream Mean Z per event
+            unique_ev_up, inv_up, counts_up = np.unique(ev_up_c, return_inverse=True, return_counts=True)
+            z_up_mean = np.bincount(inv_up, weights=z_up_c) / counts_up
+            
+            # Downstream Mean Z per event
+            unique_ev_dw, inv_dw, counts_dw = np.unique(ev_dw_c, return_inverse=True, return_counts=True)
+            z_dw_mean = np.bincount(inv_dw, weights=z_dw_c) / counts_dw
+            
+            # Both arrays are sorted naturally by np.unique. Average them!
+            z_recon_dual_lt = (z_up_mean + z_dw_mean) / 2.0
+
+            layer_idx_dual_lt = get_layer_idx_from_z(z_recon_dual_lt, lyso_bounds)
+            valid_dual_lt = (layer_idx_dual_lt != -1)
+            
+            if np.any(valid_dual_lt):
+                np.add.at(prompt_counts_dual, layer_idx_dual_lt[valid_dual_lt], 1.0)
+
+        
 
         # ─────────────────────────────────────────────────────────────────────
         # DUAL-ENDED COINCIDENCE MAPPING
@@ -626,6 +662,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         "run_dirs": sorted(run_dirs),
         "prompt_profile_dw": prompt_counts_dw / events_denom,
         "prompt_profile_up": prompt_counts_up / events_denom,
+        "prompt_profile_dual": prompt_counts_dual / events_denom,
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
