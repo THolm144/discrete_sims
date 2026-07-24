@@ -857,6 +857,10 @@ def main():
             target_profile = master_summary[mod][ekey].get("prompt_profile_target", np.zeros(_N_LYSO))
             bounced_profile = master_summary[mod][ekey].get("prompt_profile_bounced", np.zeros(_N_LYSO))
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
+            true_peak_layer = np.argmax(truth_prof) + 1   # +1 since layers_x starts at 1
+            upstream_peak_layer = layers_x[np.argmax(prof_up)]
+            offset = upstream_peak_layer - true_peak_layer
+            print(f"{ekey}: true={true_peak_layer}, upstream={upstream_peak_layer}, offset={offset}")
 
             col_target, col_bounced = get_bar_colors(ekey, idx)
 
