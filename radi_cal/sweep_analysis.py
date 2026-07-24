@@ -211,7 +211,7 @@ def analyze_timing_distribution(dt_data_ps, window_ps=500.0):
         x_right = bin_centers[-1]
 
     fwhm_ps = max(0.0, x_right - x_left)
-    sigma_fwhm_ps = fwhm_ps / 2.35482
+    sigma_fwhm_ps = fwhm_ps 
     err_fwhm_ps = sigma_fwhm_ps / np.sqrt(2.0 * len(clean))
 
     # 3. Gaussian Core Fit (Top 50% mask)
@@ -610,7 +610,7 @@ def main():
         )
 
         # 3. Empirical FWHM Data Points + Fitted Curve (Green Squares)
-        lbl_f = "Sim (FWHM / 2.355)"
+        lbl_f = "Sim (FWHM )"
         if popt_fwhm is not None:
             lbl_f += f": {popt_fwhm[0]:.2f} $\\oplus$ {popt_fwhm[1]:.2f} / $\\sqrt{{E}}$"
             plt.plot(e_smooth, timing_fit_func(e_smooth, *popt_fwhm), 'g:', lw=1.8)
