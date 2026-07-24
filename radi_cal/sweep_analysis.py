@@ -630,7 +630,7 @@ def main():
     if valid_timing.sum() >= 1:
         plt.figure(figsize=(9, 6.5))
 
-        # Paper Reference Curve
+        # 1. Paper Reference Curve
         c_ref, s_ref = TIMING_REF_CURVE["c"], TIMING_REF_CURVE["s"]
         t_ref_curve = timing_fit_func(e_smooth, c_ref, s_ref)
         plt.plot(
@@ -638,7 +638,7 @@ def main():
             label=f'{TIMING_REF_CURVE["label"]}'
         )
 
-        # Gaussian Fit Data Points + Curve
+        # 2. Gaussian Fit Data Points + Curve
         lbl_g = "Sim (Gaussian Core)"
         if popt_gaus is not None:
             lbl_g += f": {popt_gaus[0]:.2f} $\\oplus$ {popt_gaus[1]:.2f} / $\\sqrt{{E}}$ ps"
@@ -649,18 +649,7 @@ def main():
             fmt='o', color='#1f77b4', ecolor='#1f77b4', capsize=3, elinewidth=1.2, label=lbl_g
         )
 
-        # Empirical FWHM / 2.355 Data Points + Curve
-        lbl_f = "Sim (FWHM / 2.355)"
-        if popt_fwhm is not None:
-            lbl_f += f": {popt_fwhm[0]:.2f} $\\oplus$ {popt_fwhm[1]:.2f} / $\\sqrt{{E}}$ ps"
-            plt.plot(e_smooth, timing_fit_func(e_smooth, *popt_fwhm), 'g:', lw=1.8)
-
-        plt.errorbar(
-            energies_gev[valid_timing], res_fwhm_ps[valid_timing], yerr=err_fwhm_ps[valid_timing],
-            fmt='s', color='#2ca02c', ecolor='#2ca02c', capsize=3, elinewidth=1.2, label=lbl_f
-        )
-
-        # Raw FWHM overlay points
+        # 3. Raw FWHM overlay points
         plt.scatter(
             energies_gev[valid_timing], raw_fwhm_ps[valid_timing], 
             color='purple', marker='x', label='Sim Raw FWHM (ps)'
