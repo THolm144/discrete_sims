@@ -413,7 +413,7 @@ def main():
     photon_counts_by_energy = []
     edep_res_percent, edep_res_err_percent = [], []
 
-    # Timing metrics arrays
+    # 1. Initialize as standard Python lists BEFORE the loop
     res_gaus_ps, err_gaus_ps = [], []
     res_fwhm_ps, err_fwhm_ps = [], []
     raw_fwhm_ps, err_raw_fwhm_ps = [], []
@@ -452,14 +452,16 @@ def main():
             edep_res_err_percent.append(np.nan)
             print(f"     -> [dE/dx] No showermax_edep_*.root found for this energy point")
 
-        # Timing Resolution Calculations
+        # --- Single, Unified Timing Resolution Block ---
         if len(dt_data) >= 5:
             sg_g, err_g, fwhm_raw, sg_fwhm, err_fwhm = analyze_timing_distribution(dt_data)
             res_gaus_ps.append(sg_g)
             err_gaus_ps.append(err_g)
             res_fwhm_ps.append(sg_fwhm)
             err_fwhm_ps.append(err_fwhm)
+            
             raw_fwhm_ps.append(fwhm_raw)
+            err_raw_fwhm_ps.append(err_fwhm * 2.35482)  # Raw FWHM error
             print(f"     -> [Timing] Events: {len(dt_data)} | Gauss Sigma: {sg_g:.2f} ± {err_g:.2f} ps "
                   f"| FWHM: {fwhm_raw:.2f} ps (Sigma_FWHM: {sg_fwhm:.2f} ± {err_fwhm:.2f} ps)")
         else:
@@ -468,25 +470,18 @@ def main():
             res_fwhm_ps.append(np.nan)
             err_fwhm_ps.append(np.nan)
             raw_fwhm_ps.append(np.nan)
-
-        if len(dt_data) >= 5:
-            sg_g, err_g, fwhm_raw, sg_fwhm, err_fwhm = analyze_timing_distribution(dt_data)
-            res_gaus_ps.append(sg_g)
-            err_gaus_ps.append(err_g)
-            res_fwhm_ps.append(sg_fwhm)
-            err_fwhm_ps.append(err_fwhm)
-            
-            # Convert sigma_fwhm error back to raw FWHM error
-            raw_fwhm_ps.append(fwhm_raw)
-            err_raw_fwhm_ps.append(err_fwhm * 2.35482)
-        else:
-            # ... [fallback appending np.nan] ...
-            raw_fwhm_ps.append(np.nan)
             err_raw_fwhm_ps.append(np.nan)
 
-        err_raw_fwhm_ps = np.array(err_raw_fwhm_ps)
-
         print(f"     -> Events: {len(photon_counts)} | Mean Photons: {mean_N:.1f} | Resolution: {res:.2f}% ± {err:.2f}%")
+
+    # 2. Convert ALL lists to NumPy arrays AFTER the loop ends
+    res_gaus_ps = np.array(res_gaus_ps)
+    err_gaus_ps = np.array(err_gaus_ps)
+    res_fwhm_ps = np.array(res_fwhm_ps)
+    err_fwhm_ps = np.array(err_fwhm_ps)
+    raw_fwhm_ps = np.array(raw_fwhm_ps)
+    err_raw_fwhm_ps = np.array(err_raw_fwhm_ps)  # <-- Placed OUTSIDE the loop!
+    
 
     if not energies_gev:
         print("[-] No valid data to plot.")
