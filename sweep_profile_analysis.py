@@ -355,7 +355,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     distances = np.array([
         np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) for z_lo, z_hi in lyso_bounds
     ])
-    lce = np.exp(-distances / lambda_eff)
+    lce = 1
 
     # --- Accumulators ---
     prompt_counts = np.zeros(_N_LYSO)
