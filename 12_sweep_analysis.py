@@ -500,7 +500,7 @@ def compute_event_reconstructed_energy(prompt_counts_per_event, lyso_bounds, det
 
 
 
-def plot_energy_resolution(energy_points, raw_resolutions, raw_resolution_errors, active_sipms, baseline_sipms=64):
+def plot_energy_resolution(energy_points, raw_resolutions, raw_resolution_errors, baseline_sipms=64):
     """
     Plots the energy resolution and adds a theoretical line correcting 
     for the reduced number of SiPMs.
@@ -509,7 +509,7 @@ def plot_energy_resolution(energy_points, raw_resolutions, raw_resolution_errors
 
     # 1. Plot the raw data (from the reduced SiPM configuration)
     plt.errorbar(energy_points, raw_resolutions, yerr=raw_resolution_errors, 
-                 fmt='o', label=f'Simulated Data ({active_sipms} SiPMs)', color='blue')
+                 fmt='o', label=f'Simulated Data)', color='blue')
 
     # -------------------------------------------------------------------
     # NEW: Calculate and plot the corrected baseline resolution line
