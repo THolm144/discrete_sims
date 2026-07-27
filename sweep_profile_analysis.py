@@ -4,6 +4,8 @@ unified_profile_analysis.py
 Advanced spatial, temporal, and prompt reconstruction analysis for RADiCal 
 geometry variants, utilizing native Gate DoseActor (.mhd) truth extraction 
 and natural timestamp/numerical directory sorting.
+
+Optimized: Vectorized Z-layer mapping, integer PDG comparisons, and deferred Pandas grouping.
 """
 import argparse
 import pickle
@@ -14,8 +16,6 @@ import numpy as np
 import pandas as pd
 import uproot
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -59,7 +59,6 @@ BOUNCE_FACTOR = {
 }
 
 # Map the effective attenuation length (in mm) to each module type
-# Map the validated simulated effective attenuation length (in mm) to each module type
 EFFECTIVE_ATT_LENGTH = {
     "radi_cal_energy":        2428.38,   # BCF92 simulated waveguide lambda_eff
     "radi_cal_triple":        2428.38,
@@ -71,7 +70,6 @@ EFFECTIVE_ATT_LENGTH = {
     "dsb1_rc_hex_triple":     2890.35,
 
     # LuAG:Ce: Use 140.0 mm if you updated your configuration to the real 200 mm bulk.
-    # If you are still using the old 5000 mm bulk configurations, change this to 10200.26.
     "luagce_radi_cal_energy": 10200.26,     
     "luagce_radi_cal_triple": 10200.26,
     "luagce_rc_hex":          10200.26,
@@ -194,103 +192,81 @@ def rebin_fine_profile_to_layers(fine_profile, lyso_bounds, calor_thick_mm):
     return layer_profile
 
 # ─────────────────────────────────────────────────────────────────────────────
-# COINCIDENCE FIT UTILITIES
+# CORE ANALYSIS ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
-def standard_gaussian(x, A, mu, sigma):
-    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-
-def fit_gaussian_to_peak(data, n_bins=40):
-    if len(data) < 8:
-        return 0.0, float(np.median(data)) if len(data) else 0.0, float(np.std(data)) if len(data) else 0.0
-    spread = max(np.std(data), 1.0)
-    lo, hi = float(np.min(data)), float(np.max(data))
-    if hi <= lo: hi = lo + 1.0
-
-    counts, edges = np.histogram(data, bins=n_bins, range=(lo, hi), density=True)
-    mids = 0.5 * (edges[:-1] + edges[1:])
-    smoothed = gaussian_filter1d(counts.astype(float), sigma=2.0)
-    peak_idx = int(np.argmax(smoothed))
-    mu0, A0 = float(mids[peak_idx]), float(smoothed[peak_idx])
-
-    try:
-        popt, _ = curve_fit(
-            standard_gaussian, mids, counts,
-            p0=[A0, mu0, spread],
-            bounds=([0.0, lo, 1e-6], [A0 * 10.0 + 1.0, hi, (hi - lo)]),
-            maxfev=10000,
-        )
-        return float(popt[0]), float(popt[1]), float(popt[2])
-    except Exception:
-        return A0, mu0, spread
-
-def clean_around_mode(arr, window_ps=500.0):
-    if len(arr) == 0: return arr
-    counts, edges = np.histogram(arr, bins=40, density=True)
-    peak_bin = np.argmax(gaussian_filter1d(counts.astype(float), sigma=2.0))
-    mode_center = 0.5 * (edges[peak_bin] + edges[peak_bin + 1])
-    return arr[np.abs(arr - mode_center) < window_ps]
-
 def extract_numerical_energy(label: str) -> float:
     try:
         return float(''.join(c for c in label if c.isdigit() or c == '.'))
     except ValueError:
         return 0.0
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CORE ANALYSIS ENGINE
-# ─────────────────────────────────────────────────────────────────────────────
-def _chunk_series(mask, values, ev, run_tag):
+def _chunk_raw(mask, values, ev, run_tag):
+    """Deferred grouping: Gather numpy arrays instead of building Pandas objects in the loop."""
+    if not np.any(mask):
+        return None
     n = int(mask.sum())
-    if n == 0: return None
-    idx = pd.MultiIndex.from_arrays([np.full(n, run_tag, dtype=object), ev[mask].astype(np.int64)])
-    return pd.Series(values[mask], index=idx)
+    return (np.full(n, run_tag, dtype=object), ev[mask].astype(np.int64), values[mask])
 
-def _grouped(chunks, how):
+def _grouped_raw(chunks, how):
+    """Concatenate raw chunks and build the Pandas grouping exactly once."""
     if not chunks: return {}
-    s = pd.concat(chunks)
+    
+    run_tags = np.concatenate([c[0] for c in chunks])
+    evs = np.concatenate([c[1] for c in chunks])
+    vals = np.concatenate([c[2] for c in chunks])
+    
+    idx = pd.MultiIndex.from_arrays([run_tags, evs])
+    s = pd.Series(vals, index=idx)
     g = s.groupby(level=[0, 1])
+    
     if how == "min":
-        s = g.min()
+        res = g.min()
     elif how == "count":
-        s = g.count()
+        res = g.count()
     else:
-        s = g.quantile(how)
-    return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in s.items()}
+        res = g.quantile(how)
+        
+    return {(k[0], int(k[1])): (int(v) if how == "count" else float(v)) for k, v in res.items()}
+
 
 def get_bar_colors(ekey, idx):
     # Cohesive color families (Darker for target hits, lighter for bounced)
     energy_colors = {
-        "10GeV":  {"target": "#f30808", "bounced": "#f08370"}, # Blue
-        "25GeV":  {"target": "#e66814", "bounced": "#d69f60"}, # Blue
-        "30GeV":  {"target": "#f3e306", "bounced": "#d1bb5a"}, # Blue
-        "50GeV":  {"target": "#36ff0e", "bounced": "#385735"}, # Orange
-        "70GeV":  {"target": "#1f8ab4", "bounced": "#8cd8d2"}, # Blue
-        "90GeV":  {"target": "#0f12db", "bounced": "#917ab6"}, # Blue
-        "100GeV": {"target": "#7f14e2", "bounced": "#696070"},  # Green
-        "150GeV":  {"target": "#db12ba", "bounced": "#d38fe7"} # Blue
+        "10GeV":  {"target": "#f30808", "bounced": "#f08370"}, 
+        "25GeV":  {"target": "#e66814", "bounced": "#d69f60"}, 
+        "30GeV":  {"target": "#f3e306", "bounced": "#d1bb5a"}, 
+        "50GeV":  {"target": "#36ff0e", "bounced": "#385735"}, 
+        "70GeV":  {"target": "#1f8ab4", "bounced": "#8cd8d2"}, 
+        "90GeV":  {"target": "#0f12db", "bounced": "#917ab6"}, 
+        "100GeV": {"target": "#7f14e2", "bounced": "#696070"}, 
+        "150GeV": {"target": "#db12ba", "bounced": "#d38fe7"} 
     }
     if ekey in energy_colors:
         return energy_colors[ekey]["target"], energy_colors[ekey]["bounced"]
 
-    # Fallback palette builder
     import matplotlib.colors as mcolors
     base_colors = list(mcolors.TABLEAU_COLORS.values())
     base_col = base_colors[idx % len(base_colors)]
     rgb = mcolors.to_rgb(base_col)
-    light_col = tuple(0.4 * c + 0.6 for c in rgb) # blend with white
+    light_col = tuple(0.4 * c + 0.6 for c in rgb) 
     return base_col, light_col
 
 def get_layer_idx_from_z(z_vals, lyso_bounds):
-    """Map absolute z coordinates (mm) to layer indices (0..29). Returns -1 for out-of-bounds hits."""
+    """Vectorized layer mapping using binary search. Bypasses Python for-loop entirely."""
+    if len(z_vals) == 0: 
+        return np.array([], dtype=int)
+        
+    # Flatten into 1D array: [lo0-0.5, hi0+0.5, lo1-0.5, hi1+0.5, ...]
+    flat_bounds = np.array([[lo - 0.5, hi + 0.5] for lo, hi in lyso_bounds]).flatten()
+    
+    idx = np.searchsorted(flat_bounds, z_vals)
     layer_idx = np.full(len(z_vals), -1, dtype=int)
-
-    for i, (z_lo, z_hi) in enumerate(lyso_bounds):
-        # We add a 0.5mm tolerance to catch edge-case precision errors
-        in_layer = (z_vals >= (z_lo - 0.5)) & (z_vals <= (z_hi + 0.5))
-        layer_idx[in_layer] = i
-
+    
+    # Hits falling inside a layer bound generate an odd index
+    in_layer_mask = (idx % 2 == 1)
+    layer_idx[in_layer_mask] = idx[in_layer_mask] // 2
+    
     return layer_idx
-
 
 def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbose_label: str = ""):
     hit_files = sorted(batch_dir.rglob("detector_hits_*.root"), key=get_natural_sort_key)
@@ -322,12 +298,7 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     gap_thick_mm = lyso_thick + 2 * _TYVEK_THICK_MM
     calor_thick_mm = (_N_LYSO * gap_thick_mm) + (_N_W * _W_THICK_MM)
     lyso_bounds = get_lyso_layer_bounds(lyso_thick, calor_thick_mm)
-    # Flatten the [(lo, hi), (lo, hi)] list into [lo-0.5, hi+0.5, lo-0.5, hi+0.5...]
-    layer_edges = np.array([[lo - 0.5, hi + 0.5] for lo, hi in lyso_bounds]).flatten()
-
-    z_min_calor, z_max_calor = lyso_bounds[0][0], lyso_bounds[-1][1]
-    z_center_calor = (z_min_calor + z_max_calor) / 2.0
-
+    
     cap_xy_map = HEX_CAP_XY if is_hex else SQUARE_CAP_XY
     t_indices = list({1, 3, 5} if is_hex else {0, 1})
     e_indices = list({0, 2, 4} if is_hex else {2, 3})
@@ -350,54 +321,34 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
     gt_counts = np.zeros(500)
     lt_counts = np.zeros(500)
 
-    # --- Light collection efficiency vs layer depth ---
-    lambda_eff = 120.0  # mm
-    distances = np.array([
-        np.abs(detected_z_sensor - ((z_lo + z_hi) / 2.0)) for z_lo, z_hi in lyso_bounds
-    ])
-
-
     # --- Accumulators ---
-    prompt_counts = np.zeros(_N_LYSO)
-    prompt_counts_target = np.zeros(_N_LYSO)
-    prompt_counts_bounced = np.zeros(_N_LYSO)
     prompt_counts_up = np.zeros(_N_LYSO)
     prompt_counts_dw = np.zeros(_N_LYSO)
-    prompt_counts_dual = np.zeros(_N_LYSO)
     total_events_processed = 0
-
-    vertex_branch_names = ["vertex_z", "vertexPosition_Z", "sourcePosZ", "pos_z_birth", "Vertex_Z"]
 
     for fpath in hit_files:
         run_tag = fpath.parent.name
 
-        # Everything that needs the open file — arrays AND branch lookups —
-        # happens inside this `with` block. `tree` never gets touched again
-        # once the file is closed.
         try:
             with uproot.open(fpath) as f:
                 tk = next((k for k in f.keys() if "detector_hits" in k.split(";")[0]), None)
                 if not tk: continue
                 tree = f[tk]
                 if tree.num_entries == 0: continue
-                arrs = tree.arrays(
-                    ["Position_X", "Position_Y", "Position_Z", "GlobalTime",
-                     "LocalTime", "EventID", "ParticleName"], library="np"
-                )
+                
                 branch_keys = set(tree.keys())
-                vertex_z_arr = None
-                for branch_name in vertex_branch_names:
-                    if branch_name in branch_keys:
-                        try:
-                            vertex_z_arr = tree[branch_name].array(library="np")
-                            break
-                        except Exception:
-                            vertex_z_arr = None
+                
+                # OPTIMIZATION: Check for PDGEncoding to do blazing-fast integer comparisons
+                has_pdg = "PDGEncoding" in branch_keys
+                branches_to_load = ["Position_X", "Position_Y", "Position_Z", "GlobalTime", "LocalTime", "EventID"]
+                branches_to_load.append("PDGEncoding" if has_pdg else "ParticleName")
+                
+                arrs = tree.arrays(branches_to_load, library="np")
         except Exception:
             continue
 
         x, y, z = arrs["Position_X"], arrs["Position_Y"], arrs["Position_Z"]
-        gt_raw, lt, ev, pn = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"], arrs["ParticleName"]
+        gt_raw, lt, ev = arrs["GlobalTime"], arrs["LocalTime"], arrs["EventID"]
 
         total_events_processed += len(np.unique(ev))
 
@@ -409,25 +360,32 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         near_up = np.abs(z - z_min_val) < 5.0
         near_dw = np.abs(z - z_max_val) < 5.0
 
-        # Check dtype once, apply the correct mask
-        if len(pn) > 0:
-            target_str = b"opticalphoton" if isinstance(pn[0], bytes) else "opticalphoton"
-            is_optical = (pn == target_str)
+        # FAST OPTICAL CHECK
+        if has_pdg:
+            # Standard Geant4: Optical Photons have PDG == 0
+            is_optical = (arrs["PDGEncoding"] == 0)
         else:
-            is_optical = np.zeros(0, dtype=bool)
+            pn = arrs["ParticleName"]
+            if len(pn) > 0:
+                target_str = b"opticalphoton" if isinstance(pn[0], bytes) else "opticalphoton"
+                is_optical = (pn == target_str)
+            else:
+                is_optical = np.zeros(0, dtype=bool)
 
         is_t = np.isin(channels, t_indices)
         is_e = np.isin(channels, e_indices)
+        
         m_t_up = is_e & is_optical & near_up
         m_t_dw = is_e & is_optical & near_dw
 
-        c = _chunk_series(m_t_up, lt * 1000.0, ev, run_tag)
-        if c is not None: up_q_chunks.append(c)
-        c = _chunk_series(m_t_dw, lt * 1000.0, ev, run_tag)
-        if c is not None: dw_q_chunks.append(c)
+        # Use defered chunk builder
+        c_up = _chunk_raw(m_t_up, lt * 1000.0, ev, run_tag)
+        if c_up is not None: up_q_chunks.append(c_up)
+        
+        c_dw = _chunk_raw(m_t_dw, lt * 1000.0, ev, run_tag)
+        if c_dw is not None: dw_q_chunks.append(c_dw)
 
-        is_e = np.isin(channels, e_indices)
-        m_dw_opt = near_dw & is_optical & (is_e)
+        m_dw_opt = near_dw & is_optical & is_e
 
         gt_downstream_opt = gt_raw[m_dw_opt]
         lt_downstream_opt = lt[m_dw_opt]
@@ -440,48 +398,6 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         if len(lt_downstream_opt) == 0:
             continue
 
-        # True birth layer, if a vertex branch was found (computed from the
-        # in-memory array captured above — no file access needed here)
-        true_layer_idx = None
-        if vertex_z_arr is not None:
-            bz = vertex_z_arr[m_dw_opt]
-            candidate = get_layer_idx_from_z(bz, lyso_bounds)
-            if np.any(candidate != -1):
-                true_layer_idx = candidate
-
-        # Dual-ended coincidence reconstruction
-        # Dual-ended coincidence reconstruction
-        ev_up = ev[m_t_up].astype(np.int64)
-        gt_raw_up = gt_raw[m_t_up]
-        ev_dw = ev[m_dw_opt].astype(np.int64)
-        gt_raw_dw = gt_raw[m_dw_opt]
-
-        if len(ev_up) > 0 and len(ev_dw) > 0:
-            # 1. Sort the upstream events to group them
-            sort_idx = np.argsort(ev_up)
-            ev_up_sorted, gt_up_sorted = ev_up[sort_idx], gt_raw_up[sort_idx]
-
-            # 2. Find unique EventIDs and where they start/count
-            unique_ev, start_idx, counts = np.unique(ev_up_sorted, return_index=True, return_counts=True)
-
-            # 3. Quickly approximate the quantile index for each group
-            quant_offsets = np.floor((counts - 1) * ARRIVAL_QUANTILE).astype(int)
-            tdc_vals = gt_up_sorted[start_idx + quant_offsets]
-
-            # 4. Map upstream times to downstream events using fast binary search
-            match_idx = np.searchsorted(unique_ev, ev_dw)
-
-            # Ensure the match is valid (since ev_dw might contain events not in unique_ev)
-            valid_match = (match_idx < len(unique_ev)) & (unique_ev[np.minimum(match_idx, len(unique_ev)-1)] == ev_dw)
-
-            t_up_matched = np.full(len(ev_dw), np.nan)
-            t_up_matched[valid_match] = tdc_vals[match_idx[valid_match]]
-            coincidence_mask = valid_match
-        else:
-            # CRITICAL FIX 1: Prevents variable bleed-over from the previous loop iteration
-            coincidence_mask = np.zeros(len(ev_dw), dtype=bool)
-
-
         # ─────────────────────────────────────────────────────────────────────
         # SINGLE-ENDED RECONSTRUCTION (Pure LocalTime, Raw Optical Mapping)
         # ─────────────────────────────────────────────────────────────────────
@@ -489,17 +405,15 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         lt_dw_arr = lt[m_dw_opt]
 
         # 1. Upstream Mapping: Sensor is at z_min.
-        # The light traveled from Z back to z_min.
         z_recon_up_all = z_min_val + (lt_up_arr * v_eff)
 
         # 2. Downstream Mapping: Sensor is at z_max.
-        # The light traveled from Z forward to z_max.
         z_recon_dw_all = z_max_val - (lt_dw_arr * v_eff)
 
+        # Uses the blazing-fast searchsorted algorithm internally now
         layer_idx_dw = get_layer_idx_from_z(z_recon_dw_all, lyso_bounds)
         layer_idx_up = get_layer_idx_from_z(z_recon_up_all, lyso_bounds)
 
-        # Keep any hit that naturally maps inside the 1-30 layers.
         valid_dw = (layer_idx_dw != -1)
         valid_up = (layer_idx_up != -1)
 
@@ -507,82 +421,11 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
             np.add.at(prompt_counts_dw, layer_idx_dw[valid_dw], 1.0)
         if np.any(valid_up):
             np.add.at(prompt_counts_up, layer_idx_up[valid_up], 1.0)
-        # ─────────────────────────────────────────────────────────────────────
-        # DUAL-ENDED LOCALTIME COINCIDENCE (For 4-Panel Subplot)
-        # ─────────────────────────────────────────────────────────────────────
-        coincident_events_lt = np.intersect1d(ev_up, ev_dw)
 
-        if len(coincident_events_lt) > 0:
-            mask_up_c = np.isin(ev_up, coincident_events_lt)
-            mask_dw_c = np.isin(ev_dw, coincident_events_lt)
-
-            ev_up_c = ev_up[mask_up_c]
-            z_up_c = z_recon_up_all[mask_up_c]
-
-            ev_dw_c = ev_dw[mask_dw_c]
-            z_dw_c = z_recon_dw_all[mask_dw_c]
-
-            # Upstream Mean Z per event
-            unique_ev_up, inv_up, counts_up = np.unique(ev_up_c, return_inverse=True, return_counts=True)
-            z_up_mean = np.bincount(inv_up, weights=z_up_c) / counts_up
-
-            # Downstream Mean Z per event
-            unique_ev_dw, inv_dw, counts_dw = np.unique(ev_dw_c, return_inverse=True, return_counts=True)
-            z_dw_mean = np.bincount(inv_dw, weights=z_dw_c) / counts_dw
-
-            # Both arrays are sorted naturally by np.unique. Average them!
-            z_recon_dual_lt = (z_up_mean + z_dw_mean) / 2.0
-
-            layer_idx_dual_lt = get_layer_idx_from_z(z_recon_dual_lt, lyso_bounds)
-            valid_dual_lt = (layer_idx_dual_lt != -1)
-
-            if np.any(valid_dual_lt):
-                np.add.at(prompt_counts_dual, layer_idx_dual_lt[valid_dual_lt], 1.0)
-
-
-
-
-
-
-
-        # ─────────────────────────────────────────────────────────────────────
-        # DUAL-ENDED RECONSTRUCTION (No LCE Weights)
-        # ─────────────────────────────────────────────────────────────────────
-        if np.any(coincidence_mask):
-            t_dw_coinc = gt_raw_dw[coincidence_mask]
-            t_up_coinc = t_up_matched[coincidence_mask]
-
-            # t_up arrives earlier for hits born near z_min, so (t_dw - t_up)
-            # is positive there — single, unambiguous reconstruction line.
-            z_recon = z_center_calor - (v_eff * (t_up_coinc - t_dw_coinc)) / 2.0
-            recon_layer_idx = get_layer_idx_from_z(z_recon, lyso_bounds)
-
-            coinc_truth = true_layer_idx[coincidence_mask] if true_layer_idx is not None else recon_layer_idx
-
-            valid = (recon_layer_idx != -1) & (coinc_truth != -1)
-
-            if np.any(valid):
-                v_recon = recon_layer_idx[valid]
-
-                if true_layer_idx is not None:
-                    v_truth = true_layer_idx[coincidence_mask][valid]
-                    is_target = (v_recon == v_truth)
-                else:
-                    # No vertex branch available: fall back to a prompt-timing cut
-                    t_expected_dw = (z_max_val - z_recon[valid]) / v_eff
-                    t_actual_dw = t_dw_coinc[valid] - np.min(gt_raw)
-                    is_target = np.abs(t_actual_dw - t_expected_dw) < 0.25
-
-                # Raw unweighted additions
-                np.add.at(prompt_counts, v_recon, 1.0)
-                np.add.at(prompt_counts_target, v_recon[is_target], 1.0)
-                np.add.at(prompt_counts_bounced, v_recon[~is_target], 1.0)
-
-    # --- Two-ended timing ---
-    up_q = _grouped(up_q_chunks, ARRIVAL_QUANTILE)
-    dw_q = _grouped(dw_q_chunks, ARRIVAL_QUANTILE)
+    # --- Two-ended timing using deferred grouping ---
+    up_q = _grouped_raw(up_q_chunks, ARRIVAL_QUANTILE)
+    dw_q = _grouped_raw(dw_q_chunks, ARRIVAL_QUANTILE)
     common_t_evs = set(up_q) & set(dw_q)
-    t_two_end_list = [(dw_q[e] + up_q[e]) / 2.0 for e in common_t_evs]
 
     # --- Normalization ---
     events_denom = max(1, total_events_processed)
@@ -594,30 +437,19 @@ def analyze_profile_batch(batch_dir: Path, is_hex: bool, module_name: str, verbo
         mean_truth_profile = np.zeros(_N_LYSO)
         active_edep_list = []
 
-    norm_prompt = prompt_counts / events_denom
-    norm_target = prompt_counts_target / events_denom
-    norm_bounced = prompt_counts_bounced / events_denom
-
     if verbose_label:
         print(f"    [{verbose_label}] {len(run_dirs)} runs, {len(common_t_evs)} double-coincidences, "
               f"DoseActor Truth Mean: {np.mean(active_edep_list) if active_edep_list else 0.0:.2f} MeV/run")
 
     return {
-        "active_edep_total": np.array(active_edep_list),
         "truth_layer_profile": mean_truth_profile,
         "gt_counts": gt_counts,
         "gt_bins": gt_bins,
         "lt_counts": lt_counts,
         "lt_bins": lt_bins,
-        "prompt_profile": norm_prompt,
-        "prompt_profile_target": norm_target,
-        "prompt_profile_bounced": norm_bounced,
-        "t_two_end_raw": np.array(t_two_end_list),
-        "n_t_coincidences": len(common_t_evs),
         "run_dirs": sorted(run_dirs),
         "prompt_profile_dw": prompt_counts_dw / events_denom,
         "prompt_profile_up": prompt_counts_up / events_denom,
-        "prompt_profile_dual": prompt_counts_dual / events_denom,
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -632,13 +464,11 @@ def main():
     ]
 
     out_dir = base_dir / "profile_analysis"
-    energy_dir = out_dir / "energy_performance"
     global_dir = out_dir / "globaltime"
     local_dir = out_dir / "localtime"
     prompt_dir = out_dir / "prompt_photon_reconstruction"
-    two_end_dir = out_dir / "two_end_timing"
 
-    for d in [energy_dir, global_dir, local_dir, prompt_dir, two_end_dir]:
+    for d in [global_dir, local_dir, prompt_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     master_summary = {mod: {} for mod in modules}
@@ -650,7 +480,6 @@ def main():
             mod_path = base_dir / mod 
             if not mod_path.exists(): continue
 
-        # UPGRADE: Natural numeric sorting guarantees sweep_12 is identified as the latest directory
         sweeps = sorted(mod_path.glob("sweep_*"), key=get_natural_sort_key)
         if not sweeps: continue
         target_sweep = sweeps[-1]
@@ -663,18 +492,6 @@ def main():
             if res is not None:
                 master_summary[mod][edir.name] = res
 
-    # Visual settings
-    mod_colors = {
-        "radi_cal_energy": "#f708af", "radi_cal_triple": "#f708af", "rc_hex": "#f708af", "rc_hex_triple": "#f708af",
-        "dsb1_radi_cal_energy": "#04207e", "dsb1_radi_cal_triple": "#04207e", "dsb1_rc_hex": "#04207e", "dsb1_rc_hex_triple": "#04207e",
-        "luagce_radi_cal_energy": "#fa0707", "luagce_radi_cal_triple": "#fa0707", "luagce_rc_hex": "#fa0707", "luagce_rc_hex_triple": "#fa0707",
-    }
-    mod_markers = {
-        "radi_cal_energy": "s", "radi_cal_triple": "s", "rc_hex": "h", "rc_hex_triple": "h",
-        "dsb1_radi_cal_energy": "s", "dsb1_radi_cal_triple": "s", "dsb1_rc_hex": "h", "dsb1_rc_hex_triple": "h",
-        "luagce_radi_cal_energy": "s", "luagce_radi_cal_triple": "s", "luagce_rc_hex": "h", "luagce_rc_hex_triple": "h",
-    }
-
     # ─────────────────────────────────────────────────────────────────────────
     # GRAPH GENERATION PIPELINE
     # ─────────────────────────────────────────────────────────────────────────
@@ -682,77 +499,6 @@ def main():
         if mod not in master_summary or not master_summary[mod]: continue
         energy_keys = sorted(master_summary[mod].keys(), key=extract_numerical_energy)
         if not energy_keys: continue
-
-        # ── GRAPH 1: ENERGY PERFORMANCE (Using True DoseActor Energy) ─────────
-        energies_gev, mu_e_list, res_e_list, mu_e_err, res_e_err = [], [], [], [], []
-
-        for ekey in energy_keys:
-            E_val = extract_numerical_energy(ekey)
-            if E_val <= 0: continue
-
-            active_edeps = master_summary[mod][ekey].get("active_edep_total", np.array([]))
-            if len(active_edeps) < 2: continue  # MHD statistics might be lower (one per run)
-
-            # Standard fitting for dose totals
-            _, mu_val, sigma_val = fit_gaussian_to_peak(active_edeps, n_bins=10)
-
-            if mu_val > 0:
-                energies_gev.append(E_val)
-                mu_e_list.append(mu_val)
-                res_e_list.append(sigma_val / mu_val)
-                mu_e_err.append(sigma_val / np.sqrt(len(active_edeps)))
-                res_e_err.append((sigma_val / mu_val) * (1.0 / np.sqrt(len(active_edeps))))
-
-        if len(energies_gev) >= 3:
-            energies_gev = np.array(energies_gev)
-            mu_e_list = np.array(mu_e_list)
-            res_e_list = np.array(res_e_list)
-
-            fig_er, (ax_lin, ax_res) = plt.subplots(1, 2, figsize=(14, 5))
-
-            def linear_func(x, m, b): return m * x + b
-            popt_lin, _ = curve_fit(linear_func, energies_gev, mu_e_list)
-
-            ax_lin.errorbar(energies_gev, mu_e_list, yerr=mu_e_err, fmt=mod_markers.get(mod, 'o'),
-                            color=mod_colors.get(mod, 'black'), label=f"DoseActor ({mod})")
-            x_lin_smooth = np.linspace(0, max(energies_gev) * 1.1, 100)
-            ax_lin.plot(x_lin_smooth, linear_func(x_lin_smooth, *popt_lin),
-                        color="black", linestyle="--", label=f"Fit: {popt_lin[0]:.3e} MeV/GeV")
-
-            ax_lin.set_xlabel("Beam Energy (GeV)", fontweight="bold")
-            ax_lin.set_ylabel("Integrated Dose Energy (MeV)", fontweight="bold")
-            ax_lin.set_title("Calorimeter Energy Linearity", fontsize=11, fontweight="bold")
-            ax_lin.grid(True, linestyle=":", alpha=0.6)
-            ax_lin.legend(fontsize=9)
-
-            def resolution_func(E, c, s, n):
-                return np.sqrt(c ** 2 + (s / np.sqrt(E)) ** 2 + (n / E) ** 2)
-
-            try:
-                popt_res, _ = curve_fit(resolution_func, energies_gev, res_e_list,
-                                        p0=[0.02, 0.15, 0.01], bounds=(0, [2.0, 10.0, 10.0]))
-                c_f, s_f, n_f = popt_res
-                fit_label = f"Fit: {c_f * 100:.2f}% $\\oplus$ {s_f * 100:.2f}%/$\\sqrt{{E}}$ $\\oplus$ {n_f * 100:.2f}%/E"
-            except Exception:
-                popt_res = [0.0, 0.0, 0.0]
-                fit_label = "Fit failed"
-
-            ax_res.errorbar(energies_gev, res_e_list, yerr=res_e_err, fmt=mod_markers.get(mod, 'o'),
-                            color=mod_colors.get(mod, 'black'), label="Resolution")
-            x_res_smooth = np.linspace(min(energies_gev) * 0.8, max(energies_gev) * 1.1, 100)
-            ax_res.plot(x_res_smooth, resolution_func(x_res_smooth, *popt_res),
-                        color="black", linestyle="--", label=fit_label)
-
-            ax_res.set_xlabel("Beam Energy (GeV)", fontweight="bold")
-            ax_res.set_ylabel(r"$\sigma_E / E_{meas}$", fontweight="bold")
-            ax_res.set_title("Calorimeter Energy Resolution", fontsize=11, fontweight="bold")
-            ax_res.grid(True, linestyle=":", alpha=0.6)
-            ax_res.legend(fontsize=9)
-
-            fig_er.suptitle(f"Active Gate DoseActor Calorimetry — {mod}", fontsize=12, fontweight="bold")
-            fig_er.tight_layout()
-            fig_er.savefig(energy_dir / f"{mod}_energy_performance.png", dpi=200)
-            plt.close(fig_er)
 
         # ── GRAPH 2: GLOBAL TIME VS STRIP STRIKES ─────────────────────────────
         fig_gt, ax_gt = plt.subplots(figsize=(8, 5))
@@ -771,38 +517,29 @@ def main():
         fig_gt.savefig(global_dir / f"{mod}_globaltime.png", dpi=200)
         plt.close(fig_gt)
 
-       # ── GRAPH 3: LOCAL TIME (Pure Optical Travel Time) ───────────────────
+        # ── GRAPH 3: LOCAL TIME (Pure Optical Travel Time) ───────────────────
         fig_lt, ax_lt = plt.subplots(figsize=(8, 5))
 
         for idx, ekey in enumerate(energy_keys):
             lt_counts = master_summary[mod][ekey]["lt_counts"]
             lt_bins = master_summary[mod][ekey]["lt_bins"]
 
-            # Convert bin edges to bin centers
             bin_centers = 0.5 * (lt_bins[:-1] + lt_bins[1:])
-
-            # 1. Use scipy.signal.find_peaks to isolate prominent local peaks
-            # We filter for peaks with a prominence of at least 10% of the maximum height
             peaks, _ = find_peaks(lt_counts, prominence=np.max(lt_counts) * 0.1)
 
             if len(peaks) == 0:
-                # Fallback if the peak is incredibly sharp and misses prominence criteria
                 primary_peak_idx = np.argmax(lt_counts)
             else:
-                # Sort found peaks by count height and grab the absolute largest (the true wavefront)
                 primary_peak_idx = peaks[np.argsort(lt_counts[peaks])[-1]]
 
             peak_time = bin_centers[primary_peak_idx]
             peak_intensity = lt_counts[primary_peak_idx]
 
-            # 2. Plot the main distribution curve (now linear!)
             line, = ax_lt.plot(bin_centers, lt_counts, label=f"{ekey} (Peak: {peak_time:.3f} ns)", alpha=0.85)
             color = line.get_color()
 
-            # 3. Mark the peak point with a distinct star
             ax_lt.scatter(peak_time, peak_intensity, marker="*", color=color, s=120, edgecolor="black", zorder=5)
 
-            # 4. Annotate the peak value with alternating offsets to prevent overlapping text
             x_offset = 20 if idx % 2 == 0 else -95
             y_offset = 15 if idx % 2 == 0 else -25
 
@@ -820,182 +557,15 @@ def main():
         ax_lt.set_xlabel("Local Arrival Time (ns)", fontweight="bold")
         ax_lt.set_ylabel("Photon Strikes", fontweight="bold")
         ax_lt.set_title(f"Local Arrival Time Distribution (Linear) — {mod}", fontsize=11, fontweight="bold")
-        ax_lt.set_yscale("linear") # Explicitly linear!
+        ax_lt.set_yscale("linear") 
         ax_lt.grid(True, linestyle=":", alpha=0.5)
         ax_lt.legend(title="Beam Components", loc="upper right")
 
         fig_lt.tight_layout()
-        fig_lt.savefig(prompt_dir / f"{mod}_localtime_spectra.png", dpi=200)
+        fig_lt.savefig(local_dir / f"{mod}_localtime_spectra.png", dpi=200)
         plt.close(fig_lt)
 
-        # ── GRAPH 4: PROMPT PHOTON LONGITUDINAL RECONSTRUCTION ────────────────
-        # Using a 2x2 grid to prevent the subplots from becoming squashed horizontally
-        fig_rec, axs = plt.subplots(2, 2, figsize=(15, 10.5))
-        ax_target = axs[0, 0]
-        ax_bounced = axs[0, 1]
-        ax_both = axs[1, 0]
-        ax_truth = axs[1, 1]
-
-        # Create secondary y-axes to cleanly overlay truth energy dots onto photon count plots
-        ax_target_twin = ax_target.twinx()
-        ax_bounced_twin = ax_bounced.twinx()
-        ax_both_twin = ax_both.twinx()
-
-        layers_x = np.arange(1, _N_LYSO + 1)
-
-        # Set up spacing parameters to stack and group the bars side-by-side
-        n_energies = len(energy_keys)
-        total_width = 0.8
-        width = total_width / max(1, n_energies)
-
-        for idx, ekey in enumerate(energy_keys):
-            # Calculate grouped horizontal shift
-            offset = (idx - (n_energies - 1) / 2.0) * width
-            x_coords = layers_x + offset
-
-            # Fetch the profiles
-            target_profile = master_summary[mod][ekey].get("prompt_profile_target", np.zeros(_N_LYSO))
-            bounced_profile = master_summary[mod][ekey].get("prompt_profile_bounced", np.zeros(_N_LYSO))
-            truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
-            
-
-            col_target, col_bounced = get_bar_colors(ekey, idx)
-
-            # Panel 1: Target-Only Photons (Reconstructed) + Truth Overlay
-            ax_target.bar(x_coords, target_profile, width=width, color=col_target,
-                          edgecolor="black", linewidth=0.3, alpha=0.9, label=ekey)
-            ax_target_twin.plot(layers_x, truth_prof, marker="o", linestyle="None", 
-                                color=col_target, markersize=5, alpha=0.75, 
-                                markeredgecolor="black", markeredgewidth=0.5)
-
-            # Panel 2: Bounced-Only Photons (Reconstructed) + Truth Overlay
-            ax_bounced.bar(x_coords, bounced_profile, width=width, color=col_bounced,
-                           edgecolor="black", linewidth=0.3, alpha=0.9, label=ekey)
-            ax_bounced_twin.plot(layers_x, truth_prof, marker="o", linestyle="None", 
-                                 color=col_target, markersize=5, alpha=0.75, 
-                                 markeredgecolor="black", markeredgewidth=0.5)
-
-            # Panel 3: Combined Profile (Stacked Reconstructed) + Truth Overlay
-            ax_both.bar(x_coords, target_profile, width=width, color=col_target, 
-                        edgecolor="black", linewidth=0.3, alpha=0.9, label=f"{ekey} (Target)")
-            ax_both.bar(x_coords, bounced_profile, width=width, bottom=target_profile, 
-                        color=col_bounced, edgecolor="black", linewidth=0.3, alpha=0.6, label=f"{ekey} (Bounced)")
-            ax_both_twin.plot(layers_x, truth_prof, marker="o", linestyle="None", 
-                              color=col_target, markersize=5, alpha=0.75, 
-                              markeredgecolor="black", markeredgewidth=0.5)
-
-            # Panel 4: Simulated Truth (MHD Dose)
-            ax_truth.plot(layers_x, truth_prof, marker="s", markersize=4, label=ekey, alpha=0.8)
-
-        # Apply standard formatting and axis labels
-        for ax in [ax_target, ax_bounced, ax_both]:
-            ax.set_xlabel("LYSO Layer Number", fontweight="bold")
-            ax.set_xlim(0, _N_LYSO + 1)
-            ax.grid(True, linestyle=":", alpha=0.5)
-
-        # Label the secondary twin axes cleanly to denote the truth dots
-        for twin_ax in [ax_target_twin, ax_bounced_twin, ax_both_twin]:
-            twin_ax.set_ylabel("Truth Energy Deposition [Dots] (MeV)", color="dimgray", fontsize=9)
-            twin_ax.tick_params(axis='y', labelcolor="dimgray")
-
-        # Panel 1 titles & legends
-        ax_target.set_ylabel("Target Prompt Photon Strikes", fontweight="bold")
-        ax_target.set_title("Reconstructed: Target-Only", fontsize=11, fontweight="bold")
-        ax_target.legend(title="Beam Energy", fontsize=8, loc="upper left")
-
-        # Panel 2 titles & legends
-        ax_bounced.set_ylabel("Bounced Prompt Photon Strikes", fontweight="bold")
-        ax_bounced.set_title("Reconstructed: Bounced-Only", fontsize=11, fontweight="bold")
-        ax_bounced.legend(title="Beam Energy", fontsize=8, loc="upper left")
-
-        # Panel 3 titles & legends
-        ax_both.set_ylabel("Total Prompt Photon Strikes", fontweight="bold")
-        ax_both.set_title("Reconstructed: Combined Profile", fontsize=11, fontweight="bold")
-        handles, labels = ax_both.get_legend_handles_labels()
-        ax_both.legend(handles, labels, title="Beam Components", fontsize=8, loc="upper left")
-
-        # Panel 4 titles & legends
-        ax_truth.set_xlabel("LYSO Layer Number", fontweight="bold")
-        ax_truth.set_ylabel("Mean Active Energy Deposited (MeV / Event)", fontweight="bold")
-        ax_truth.set_title("Simulated Truth Shower Profile (DoseActor MHD)", fontsize=11, fontweight="bold")
-        ax_truth.set_xlim(0, _N_LYSO + 1)
-        ax_truth.grid(True, linestyle=":", alpha=0.5)
-        ax_truth.legend(title="Beam Energy", fontsize=8, loc="upper left")
-
-        fig_rec.suptitle(f"Longitudinal Shower Profiles — {mod}", fontsize=13, fontweight="bold")
-        fig_rec.tight_layout()
-        fig_rec.savefig(prompt_dir / f"{mod}_prompt_reconstruction_vs_truth.png", dpi=200)
-        plt.close(fig_rec)
-
-        # ── GRAPH 5: TWO-ENDED FIBER TIMING ───────────────────────────────────
-        ncols = 2 if len(energy_keys) >= 2 else 1
-        nrows = int(np.ceil(len(energy_keys) / ncols))
-        fig_two, axs_two = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows), squeeze=False)
-        axs_two = axs_two.flatten()
-
-        plotted_count = 0
-        t_res_x, t_res_y, t_res_yerr = [], [], []
-
-        for idx, ekey in enumerate(energy_keys):
-            ax = axs_two[idx]
-            raw_t = master_summary[mod][ekey].get("t_two_end_raw", np.array([]))
-            n_ev = master_summary[mod][ekey].get("n_t_coincidences", 0)
-
-            if len(raw_t) >= 8:
-                plotted_count += 1
-                clean_t = clean_around_mode(raw_t, window_ps=500.0)
-                clean_t = clean_t - np.median(clean_t) # Zero alignment
-                _, mu_f, sigma_f = fit_gaussian_to_peak(clean_t)
-
-                t_res_x.append(extract_numerical_energy(ekey))
-                t_res_y.append(sigma_f)
-                t_res_yerr.append(sigma_f / np.sqrt(2 * n_ev))
-
-                lo, hi = -250.0, 250.0
-                counts, edges, _ = ax.hist(clean_t, bins=50, range=(lo, hi),
-                                           color=mod_colors.get(mod, "#f708af"), alpha=0.6, edgecolor="black")
-
-                bin_mids = 0.5 * (edges[:-1] + edges[1:])
-                x_fit = np.linspace(lo, hi, 200)
-                y_fit = counts.max() * np.exp(-0.5 * ((x_fit - mu_f) / sigma_f) ** 2)
-
-                ax.plot(x_fit, y_fit, color="black", linestyle="--", linewidth=1.8,
-                        label=f"Gaussian Fit\n$\\sigma_{{coinc}}$ = {sigma_f:.1f} ps")
-                ax.set_title(f"Coincidence Spectrum — {ekey}", fontsize=10, fontweight="bold")
-                ax.set_xlabel(r"$(t_{up} + t_{down})/2 - \mathrm{offset}$ (ps)", fontsize=9)
-                ax.set_xlim(lo, hi)
-                ax.legend(fontsize=8, loc="upper right")
-                ax.grid(True, linestyle=":", alpha=0.5)
-
-        for idx in range(plotted_count, len(axs_two)):
-            fig_two.delaxes(axs_two[idx])
-
-        if plotted_count > 0:
-            fig_two.suptitle(f"Double-Ended Coincidence Spectra — {mod}", fontsize=11, fontweight="bold", y=0.98)
-            fig_two.tight_layout()
-            fig_two.savefig(two_end_dir / f"{mod}_two_end_distributions.png", dpi=200)
-        plt.close(fig_two)
-
-        # Plot Coincidence Jitter Curve
-        if len(t_res_x) >= 2:
-            fig_tcurve, ax_tcurve = plt.subplots(figsize=(7, 5))
-            ax_tcurve.errorbar(t_res_x, t_res_y, yerr=t_res_yerr, fmt="o-",
-                               color=mod_colors.get(mod, "black"), marker=mod_markers.get(mod, "o"),
-                               linewidth=2, markersize=6, capsize=4, label=f"Coincidence Resolution ({mod})")
-            ax_tcurve.set_xlabel("Beam Energy (GeV)", fontweight="bold")
-            ax_tcurve.set_ylabel(r"Timing Coincidence Resolution $\sigma_{coinc}$ (ps)", fontweight="bold")
-            ax_tcurve.set_title(f"Two-Ended Fiber Coincidence Resolution — {mod}", fontsize=11, fontweight="bold")
-            ax_tcurve.set_xscale("log")
-            ax_tcurve.set_xticks([25, 50, 100, 200])
-            ax_tcurve.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-            ax_tcurve.grid(True, linestyle=":", alpha=0.6)
-            ax_tcurve.legend()
-            fig_tcurve.tight_layout()
-            fig_tcurve.savefig(two_end_dir / f"{mod}_two_end_resolution_vs_energy.png", dpi=200)
-            plt.close(fig_tcurve)
-
         # ── GRAPH 6: SINGLE-ENDED RECONSTRUCTION VS TRUTH ───────────────────────
-        # Converted to 1x3 by removing the Coincidence Averaging panel
         fig_se, axs_se = plt.subplots(1, 3, figsize=(18, 5.5))
         ax_dw, ax_up, ax_truth_se = axs_se
 
@@ -1008,7 +578,7 @@ def main():
             prof_up = master_summary[mod][ekey].get("prompt_profile_up", np.zeros(_N_LYSO))
             truth_prof = master_summary[mod][ekey]["truth_layer_profile"]
 
-            # ── DIAGNOSTIC: peak-offset check (upstream + downstream) ─────────
+            # DIAGNOSTIC: peak-offset check (upstream + downstream)
             if np.any(truth_prof):
                 true_peak_layer = layers_x[np.argmax(truth_prof)]
 
@@ -1027,7 +597,7 @@ def main():
                 print(f"    [{mod}:{ekey}] true={true_peak_layer}  "
                     f"upstream={upstream_peak_layer} (offset={up_offset})  "
                     f"downstream={downstream_peak_layer} (offset={dw_offset})")
-            # ────────────────────────────────────────────────────────────────
+
             # Subplot 1: Downstream Single-Ended
             ax_dw.plot(layers_x, prof_dw, marker="o", linestyle="None", color=col, 
                        markersize=6, alpha=0.8, label=ekey)
@@ -1040,7 +610,6 @@ def main():
             ax_truth_se.plot(layers_x, truth_prof, marker="s", linestyle="None", color=col, 
                              markersize=6, alpha=0.8, label=ekey)
 
-        # Standard formatting and layout for all 3 panels
         titles = [
             "Downstream Single-Ended Recon", 
             "Upstream Single-Ended Recon", 
