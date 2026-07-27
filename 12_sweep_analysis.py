@@ -384,7 +384,7 @@ def calculate_empirical_fwhm(data, bins=100):
 # Timing resolution: sigma_t(E) [ps] = sqrt( (stoch/sqrt(E))^2 + const^2 )
 TIMING_REF_CURVES = {
     "DATA (test beam)":        {"stoch": 181.0, "const": 34.9, "color": "black",   "ls": "-"},
-    "paper (arXiv:2401.01747)": {"stoch": 256.0, "const": 17.5, "color": "gray",    "ls": "--"},
+    "Perez-Lara, Wetzel, et al (arXiv:2401.01747)": {"stoch": 256.0, "const": 17.5, "color": "gray",    "ls": "--"},
 }
 
 def timing_ref_curve(E_gev, stoch, const):
@@ -395,7 +395,7 @@ def timing_ref_curve(E_gev, stoch, const):
 # Percent constants converted to fractions (i.e. /100) so they overlay directly
 # on this script's existing res_e_list (sigma/mu, dimensionless).
 ENERGY_REF_CURVES = {
-    "paper Fig 17": {"c": 9.31 / 100.0, "s": 52.04 / 100.0, "n": 31.62 / 100.0, "color": "gray", "ls": "--"},
+    "Perez-Lara, Wetzel et al Fig 17": {"c": 9.31 / 100.0, "s": 52.04 / 100.0, "n": 31.62 / 100.0, "color": "gray", "ls": "--"},
 }
 # DATA sum_lg band from test beam, given as a flat 11-19% range (no explicit
 # energy dependence was shown), plotted as a shaded horizontal band.
