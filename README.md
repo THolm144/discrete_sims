@@ -1,57 +1,3 @@
-# Discrete Sims
-
-A collection of Monte Carlo simulation and analysis tools for studying scintillation detector response using **OpenGATE**. This repository contains utilities for detector simulation, calibration, attenuation studies, timing analysis, and profile reconstruction developed as part of research into radiation detector performance.
-
-The codebase is organized around a typical simulation workflow:
-
-```
-Detector Geometry
-        │
-        ▼
- OpenGATE Simulation
-        │
-        ▼
-  ROOT Output Files
-        │
-        ▼
- Python Analysis
-        │
- ┌──────┼────────┐
- │      │        │
- ▼      ▼        ▼
-Timing  Energy  Calibration
-Analysis Analysis  & Response
-        │
-        ▼
-   Figures & Reports
-```
-
----
-
-## Features
-
-- Monte Carlo detector simulations using OpenGATE
-- Detector timing and energy analysis
-- Automated parameter sweep analysis
-- Publication-quality plotting and diagnostics
-
----
-
-## Repository Structure
-
-```
-.
-├── analysis/                  # Analysis utilities
-├── calibration/               # Calibration data and scripts
-├── configs/                   # Simulation configuration files
-├── profiles/                  # Detector profile utilities
-├── worlds/                    # OpenGATE detector geometries
-├── *.py                       # Simulation and analysis scripts
-├── GateMaterials.db           # Material database
-├── Materials*.xml             # Material definitions
-└── Surfaces*.xml              # Optical surface definitions
-```
-
 The project is still under active development, so the directory structure and organization may evolve over time.
 
 ---
@@ -65,8 +11,10 @@ The project primarily relies on
 - NumPy
 - SciPy
 - Matplotlib
-- Uproot
+- Uproot (ROOT file I/O for hit/PhaseSpace trees, without requiring a full ROOT install)
+- ROOT / PyROOT (used for Minuit-based Gaussian fits in the sweep analysis)
 - pandas
+- itk and/or SimpleITK (reading DoseActor `.mhd` volumes)
 - pathlib
 
 Some scripts may require additional scientific Python packages depending on the analysis being performed.
@@ -88,9 +36,13 @@ Install the required Python packages
 pip install -r requirements.txt
 ```
 
-If a `requirements.txt` file is not yet available, install the dependencies manually.
+If a `requirements.txt` file is not yet available, install the dependencies manually, e.g.:
 
-You will also need a working installation of **OpenGATE** compatible with your simulation environment.
+```bash
+pip install numpy scipy matplotlib uproot pandas itk SimpleITK
+```
+
+You will also need a working installation of **OpenGATE** compatible with your simulation environment. ROOT/PyROOT is typically installed separately (e.g. via a conda-forge `root` package or a system/CVMFS stack), since it isn't pip-installable everywhere.
 
 ---
 
@@ -98,11 +50,23 @@ You will also need a working installation of **OpenGATE** compatible with your s
 
 1. Configure detector geometry and materials.
 2. Run an OpenGATE simulation.
-3. Produce ROOT output files.
+3. Produce ROOT output files (and DoseActor `.mhd` volumes).
 4. Analyze detector response using the supplied Python scripts.
-5. Generate plots, calibration products, and summary statistics.
+5. Generate plots and summary statistics.
 
-Depending on the study, additional calibration or reconstruction steps may be performed.
+For the full RADiCAL sweep specifically:
+
+```bash
+# Launch/collect the full multi-module RADiCAL sweep (geometries × wavelength shifters × beam energies)
+./run_12_sweep.sh
+
+# Sync raw output from a remote cluster to the local analysis machine
+./sync.sh        # or rsync_job.sh, depending on target
+
+# Analyze
+python 12_sweep_analysis.py
+python 12_sweep_analysis.py --from-cache master_summary_<timestamp>.pkl   # re-plot from a cached summary
+```
 
 ---
 
@@ -110,9 +74,7 @@ Depending on the study, additional calibration or reconstruction steps may be pe
 
 Current analyses include work related to
 
-
 - detector timing performance
-- energy calibration
 - profile reconstruction
 - parameter sweeps
 - diagnostic plotting
@@ -147,6 +109,49 @@ Most generated files are intended to be excluded from version control and reprod
 
 ---
 
+## Current Work
+
+### ScintX Simulation
+Simulation of the conditions at the University of Iowa FLASH beam facility. This project models the response of the patented **ScintillatorX** material and compares the simulated response with experimental measurements to determine its light yield.
+
+### Quartz/Iron Calorimeter Simulation
+Tests the concept of extracting additional information from a CMS-style calorimeter by adding a Cherenkov-only detector consisting of an iron absorber followed by a grid of quartz cubes instrumented with SiPMs. The simulation evaluates whether the detector can reconstruct the longitudinal shower profile by measuring the number of SiPM hits as a function of increasing iron thickness.
+
+### RADiCAL Simulations
+A collection of proof-of-concept simulations exploring several proposed iterations of the RADiCAL shashlik-style calorimeter.
+
+#### Geometries
+- **Original Model**
+  - See square standard, but all T-type fibres.
+- **Standard Square**
+  - Baseline module.
+  - Contains four capillaries:
+    - **2 T-type** fibers with wavelength shifter only at shower maximum.
+    - **2 E-type** fibers with wavelength shifter along the entire fiber.
+- **Triple Square**
+  - Same geometry as the Standard Square.
+  - LYSO scintillator blocks are **3× thicker**.
+- **Standard Hexagon**
+  - Hexagonal module.
+  - Contains:
+    - **3 T-type** fibers.
+    - **3 E-type** fibers.
+- **Triple Hexagon**
+  - Same geometry as the Standard Hexagon.
+  - LYSO scintillator blocks are **3× thicker**.
+
+#### Wavelength-Shifting Fibers
+
+Each geometry is simulated with the following wavelength shifters:
+
+- **DSB1**
+- **BCF92**
+- **LuAG:Ce**
+
+Crossing the 2 square/hexagon geometries (standard and triple-thickness) with the 3 wavelength shifters gives the 12 module variants processed together by `12_sweep_analysis.py`. For each variant, optical photons are classified as Scintillation or Cerenkov via `TrackCreatorProcess`, T-type and E-type fiber hits are read out separately from ROOT `detector_hits_*.root` PhaseSpace trees, and double-ended (upstream/downstream) timing is used to reconstruct time-of-flight, shower depth, and a depth-corrected (light-collection-efficiency-corrected) event energy. Results (timing resolution vs. energy, energy resolution vs. energy, longitudinal shower profiles) are plotted per module and compared across modules, including overlays against test-beam data and a reference paper (arXiv:2401.01747).
+
+---
+
 ## Development Status
 
 This repository is an active research project rather than a finalized software package. The codebase continues to evolve as new detector studies and analysis methods are developed.
@@ -161,48 +166,6 @@ Future improvements include
 - example datasets and tutorials
 
 ---
-
-## Current Work
-
-### ScintX Simulation
-Simulation of the conditions at the University of Iowa FLASH beam facility. This project models the response of the patented **ScintillatorX** material and compares the simulated response with experimental measurements to determine its light yield.
-
-### Quartz/Iron Calorimeter Simulation
-Tests the concept of extracting additional information from a CMS-style calorimeter by adding a Cherenkov-only detector consisting of an iron absorber followed by a grid of quartz cubes instrumented with SiPMs. The simulation evaluates whether the detector can reconstruct the longitudinal shower profile by measuring the number of SiPM hits as a function of increasing iron thickness.
-
-### RADiCAL Simulations
-A collection of proof-of-concept simulations exploring several proposed iterations of the RADiCAL shashlik-style calorimeter.
-
-#### Geometries
-- **Original Model**
-   - See square standard, but all t-type fibres
-- **Standard Square**
-  - Baseline module.
-  - Contains four capillaries:
-    - **2 T-type** fibers with wavelength shifter only at shower maximum.
-    - **2 E-type** fibers with wavelength shifter along the entire fiber.
-
-- **Triple Square**
-  - Same geometry as the Standard Square.
-  - LYSO scintillator blocks are **3× thicker**.
-
-- **Standard Hexagon**
-  - Hexagonal module.
-  - Contains:
-    - **3 T-type** fibers.
-    - **3 E-type** fibers.
-
-- **Triple Hexagon**
-  - Same geometry as the Standard Hexagon.
-  - LYSO scintillator blocks are **3× thicker**.
-
-#### Wavelength-Shifting Fibers
-
-Each geometry is simulated with the following wavelength shifters:
-
-- **DSB1**
-- **BCF92**
-- **LuAG:Ce**
 
 ## Contributing
 
