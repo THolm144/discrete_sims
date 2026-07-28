@@ -1634,13 +1634,18 @@ def main():
 
             if len(energies_gev_t) >= 3:
                 try:
-                    popt_res_t, _ = curve_fit(
-                        resolution_func_2param, energies_gev_t, target_res_t,
-                        sigma=target_err_t, absolute_sigma=True,
-                        p0=[0.08, 0.50, 0.10], bounds=([0.0, 0.0, 0.0], [1.0, 5.0, 5.0])
+                    popt_t, _ = curve_fit(
+                        resolution_func_2param, 
+                        energies_gev_t, 
+                        res_t_list,
+                        sigma=res_t_err, 
+                        absolute_sigma=True,
+                        p0=[0.05, 0.80],                # Initial guess: 5% constant, 80% stochastic
+                        bounds=([0.0, 0.0], [1.0, 5.0]) # Bounds for (c, s)
                     )
-                    c_ft, s_ft, n_ft = popt_res_t
-                    fit_label_t = f"Fit: {c_ft*100:.2f}% $\\oplus$ {s_ft*100:.2f}%/$\\sqrt{{E}}$ $\\oplus$ {n_ft*100:.2f}%/E"
+
+                    c_fit, s_fit = popt_t
+                    fit_label = f"Fit: {c_fit * 100:.2f}% $\\oplus$ {s_fit * 100:.2f}%/$\\sqrt{{E}}$"
                 except Exception as e:
                     print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
                     fit_label_t = "Fit failed"
