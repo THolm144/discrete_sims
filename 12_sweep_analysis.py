@@ -1431,7 +1431,70 @@ def main():
                     res_t_list.append(res_t_val)
                     mu_t_err.append(mu_val * res_t_val / np.sqrt(len(t_eval_data)))
                     res_t_err.append(res_t_err_val)
+        # ─────────────────────────────────────────────────────────────────────
+    # 3b-PLOT. SHOWER-MAX (T-TYPE) FIT & RESOLUTION PLOT
+    # ─────────────────────────────────────────────────────────────────────
+    if len(energies_gev_t) >= 2:
+        fig_t, ax_t = plt.subplots(figsize=(8, 6))
 
+        energies_t_arr = np.array(energies_gev_t, dtype=float)
+        res_t_arr = np.array(res_t_list, dtype=float)
+        res_t_err_arr = np.array(res_t_err, dtype=float)
+
+        # 1. Plot Red Simulation Data Points
+        ax_t.errorbar(
+            energies_t_arr, res_t_arr, yerr=res_t_err_arr,
+            fmt="o", color="red", ecolor="red", capsize=3, elinewidth=1.5,
+            label="Sim Data (T-type, PDE=40%)"
+        )
+
+        # 2. Linearized 2-Parameter Fit: Y = c^2 + s^2 / E
+        X_t = 1.0 / energies_t_arr
+        Y_t = res_t_arr ** 2
+        Y_t_err = 2.0 * res_t_arr * res_t_err_arr  # Error propagation: d(y^2) = 2*y*dy
+
+        def linear_res_sq(x, c_sq, s_sq):
+            return c_sq + s_sq * x
+
+        try:
+            popt_t, _ = curve_fit(
+                linear_res_sq, X_t, Y_t,
+                sigma=Y_t_err, absolute_sigma=True,
+                p0=[0.002, 0.85],                    # Initial guess: c = 4.5%, s = 92%
+                bounds=([0.0001, 0.01], [0.1, 4.0])   # Force c >= 1.0% to prevent vanishing gradient
+            )
+            c_fit = np.sqrt(popt_t[0])
+            s_fit = np.sqrt(popt_t[1])
+            fit_label = f"Fit: {c_fit * 100:.2f}% $\\oplus$ {s_fit * 100:.2f}%/$\\sqrt{{E}}$"
+
+            # Generate smooth red fit curve
+            x_smooth = np.linspace(min(energies_t_arr) * 0.8, max(energies_t_arr) * 1.1, 200)
+            y_fit_smooth = np.sqrt(c_fit**2 + (s_fit / np.sqrt(x_smooth))**2)
+
+            # Draw the missing red dashed fit line
+            ax_t.plot(x_smooth, y_fit_smooth, "r--", linewidth=2.0, label=fit_label)
+
+        except Exception as e:
+            print(f"[FIT ERROR] T-type resolution curve fit failed: {e}")
+
+        # 3. Overlay Paper Reference Curve (Fig 17)
+        x_paper = np.linspace(min(energies_t_arr) * 0.8, max(energies_t_arr) * 1.1, 200)
+        c_p, s_p, n_p = 0.0931, 0.5204, 0.3162
+        y_paper = np.sqrt(c_p**2 + (s_p / np.sqrt(x_paper))**2 + (n_p / x_paper)**2)
+        ax_t.plot(x_paper, y_paper, "k:", linewidth=2.0, label=r"Paper Fig 17 ($9.31\% \oplus 52.04\%/\sqrt{E} \oplus 31.62\%/E$)")
+
+        # Aesthetics
+        ax_t.set_xlabel("Beam Energy (GeV)", fontsize=11)
+        ax_t.set_ylabel(r"$\sigma_E / E_{meas}$", fontsize=11)
+        ax_t.set_title(f"Shower-max Energy Resolution (T-type, Raw, PDE=40%) — {mod}", fontsize=13, fontweight="bold")
+        ax_t.grid(True, linestyle=":", alpha=0.6)
+        ax_t.legend(fontsize=9, loc="upper right")
+
+        fig_t.tight_layout()
+        save_path_t = mod_dir / f"{mod}_shower_max_energy_resolution.png"
+        fig_t.savefig(save_path_t, dpi=200)
+        plt.close(fig_t)
+        print(f"[SUCCESS] Saved T-type resolution plot to: {save_path_t.resolve()}")
         # ─────────────────────────────────────────────────────────────────────
         # 3c. EXPORT MEAN PHOTON COUNTS & GENERATE HISTOGRAM FIT PANELS
         # ─────────────────────────────────────────────────────────────────────
