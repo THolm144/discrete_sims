@@ -518,11 +518,7 @@ def plot_energy_resolution(energy_points, raw_resolutions, raw_resolution_errors
     # We multiply the resolution by sqrt(active / baseline) to project 
     # what the resolution would recover to if fully instrumented.
 
-    coverage_ratio = active_sipms / baseline_sipms
-    correction_factor = np.sqrt(coverage_ratio)
-
-    corrected_resolutions = [res * correction_factor for res in raw_resolutions]
-    corrected_errors = [err * correction_factor for err in raw_resolution_errors]
+   
 
    
 
@@ -1466,9 +1462,9 @@ def main():
         def gaussian_fit_func(x, amp, mu, sig):
             return amp * np.exp(-0.5 * ((x - mu) / sig) ** 2)
 
-        # 3. 3-Parameter Resolution Model Function Definition (c ⊕ s/√E ⊕ n/E)
-        def resolution_func_3param(E, c, s, n):
-            return np.sqrt(c**2 + (s / np.sqrt(E))**2 + (n / E)**2)
+        # 2-Parameter Resolution Model (Constant ⊕ Stochastic)
+        def resolution_func_2param(E, c, s):
+            return np.sqrt(c**2 + (s / np.sqrt(E))**2)
 
         # 4. Histogram Subplot Panel Generator Function Definition
         def plot_photon_histograms(channel_type, target_energies, summary_key, mu_list, res_list):
@@ -1639,7 +1635,7 @@ def main():
             if len(energies_gev_t) >= 3:
                 try:
                     popt_res_t, _ = curve_fit(
-                        resolution_func_3param, energies_gev_t, target_res_t,
+                        resolution_func_2param, energies_gev_t, target_res_t,
                         sigma=target_err_t, absolute_sigma=True,
                         p0=[0.08, 0.50, 0.10], bounds=([0.0, 0.0, 0.0], [1.0, 5.0, 5.0])
                     )
@@ -1660,7 +1656,7 @@ def main():
             # 2. Plot Fitted Resolution Curve
             x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
             if popt_res_t is not None:
-                ax_sm.plot(x_sm_smooth, resolution_func_3param(x_sm_smooth, *popt_res_t),
+                ax_sm.plot(x_sm_smooth, resolution_func_2param(x_sm_smooth, *popt_res_t),
                            color=mod_colors.get(mod, 'black'), linestyle='--', linewidth=2.0,
                            label=fit_label_t)
 
