@@ -1684,39 +1684,43 @@ def main():
         # 3d. T-TYPE SHOWER-MAX RESOLUTION PLOT (RAW DATA FIT WITH PDE)
         # ─────────────────────────────────────────────────────────────────────
         if len(energies_gev_t) >= 1:
-            energies_gev_t = np.array(energies_gev_t)
-            res_t_list = np.array(res_t_list)
-            res_t_err_arr = np.array(res_t_err)
-
-            target_res_t = res_t_list
-            target_err_t = res_t_err_arr
+            energies_gev_t = np.array(energies_gev_t, dtype=float)
+            res_t_list = np.array(res_t_list, dtype=float)
+            res_t_err_arr = np.array(res_t_err, dtype=float)
 
             popt_res_t = None
-            c_ft, s_ft, n_ft = 0.0, 0.0, 0.0
             fit_label_t = "Fit failed"
 
             if len(energies_gev_t) >= 3:
+                # Linearized variable transformation: Y = c^2 + s^2 * (1/E)
+                X_t = 1.0 / energies_gev_t
+                Y_t = res_t_list ** 2
+                Y_t_err = 2.0 * res_t_list * res_t_err_arr  # Error propagation: d(y^2) = 2*y*dy
+
+                def linear_res_sq(x, c_sq, s_sq):
+                    return c_sq + s_sq * x
+
                 try:
-                    popt_t, _ = curve_fit(
-                        resolution_func_2param, 
-                        energies_gev_t, 
-                        res_t_list,
-                        sigma=res_t_err, 
-                        absolute_sigma=True,
-                        p0=[0.05, 0.80],                # Initial guess: 5% constant, 80% stochastic
-                        bounds=([0.0, 0.0], [1.0, 5.0]) # Bounds for (c, s)
+                    popt_sq, _ = curve_fit(
+                        linear_res_sq, X_t, Y_t,
+                        sigma=Y_t_err, absolute_sigma=True,
+                        p0=[0.002, 0.85],                   # Initial guess: c = 4.5%, s = 92%
+                        bounds=([0.0001, 0.01], [0.1, 4.0])  # Lower bound c >= 1.0%
                     )
 
-                    c_fit, s_fit = popt_t
-                    fit_label = f"Fit: {c_fit * 100:.2f}% $\\oplus$ {s_fit * 100:.2f}%/$\\sqrt{{E}}$"
+                    c_fit = np.sqrt(popt_sq[0])
+                    s_fit = np.sqrt(popt_sq[1])
+                    
+                    popt_res_t = (c_fit, s_fit)  # <--- FIX: Properly assign to popt_res_t!
+                    fit_label_t = f"Fit: {c_fit * 100:.2f}% $\\oplus$ {s_fit * 100:.2f}%/$\\sqrt{{E}}$"
+
                 except Exception as e:
                     print(f"  [WARNING] T-type resolution fit failed for {mod}: {e}")
-                    fit_label_t = "Fit failed"
 
             fig_sm, ax_sm = plt.subplots(figsize=(8, 6))
 
             # 1. Plot Actual Raw Simulation Data (T-type with PDE applied)
-            ax_sm.errorbar(energies_gev_t, target_res_t, yerr=target_err_t,
+            ax_sm.errorbar(energies_gev_t, res_t_list, yerr=res_t_err_arr,
                            fmt=mod_markers.get(mod, 's'), color=mod_colors.get(mod, 'black'),
                            markersize=6, capsize=3, elinewidth=1.2,
                            label=f"Sim Data (T-type, PDE={SIPM_PDE*100:.0f}%)")
@@ -1724,8 +1728,11 @@ def main():
             # 2. Plot Fitted Resolution Curve
             x_sm_smooth = np.linspace(min(energies_gev_t) * 0.8, max(energies_gev_t) * 1.1, 200)
             if popt_res_t is not None:
-                ax_sm.plot(x_sm_smooth, resolution_func_2param(x_sm_smooth, *popt_res_t),
-                           color=mod_colors.get(mod, 'black'), linestyle='--', linewidth=2.0,
+                c_f, s_f = popt_res_t
+                y_sm_smooth = np.sqrt(c_f**2 + (s_f / np.sqrt(x_sm_smooth))**2)
+                
+                ax_sm.plot(x_sm_smooth, y_sm_smooth,
+                           color="red", linestyle='--', linewidth=2.0,
                            label=fit_label_t)
 
             # 3. Paper Fig 17 Reference Curve Overlay
