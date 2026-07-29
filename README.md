@@ -130,7 +130,7 @@ A collection of proof-of-concept simulations exploring several proposed iteratio
     - **2 E-type** fibers with wavelength shifter along the entire fiber.
 - **Triple Square**
   - Same geometry as the Standard Square.
-  - LYSO scintillator blocks are **3× thicker**.
+  - LYSO scintillator blocks are **3× thicker** at shower max (layer 8).
 - **Standard Hexagon**
   - Hexagonal module.
   - Contains:
@@ -138,7 +138,7 @@ A collection of proof-of-concept simulations exploring several proposed iteratio
     - **3 E-type** fibers.
 - **Triple Hexagon**
   - Same geometry as the Standard Hexagon.
-  - LYSO scintillator blocks are **3× thicker**.
+  - LYSO scintillator blocks are **3× thicker** at shower max (layer 8).
 
 #### Wavelength-Shifting Fibers
 
