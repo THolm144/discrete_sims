@@ -10,7 +10,7 @@ PHYSICS_LIST="QGSP_BERT_EMV"
 # Spawns 1 process per energy x 10 internal C++ threads = 40 cores maxed out
 ENERGIES=(10000000 30000000 50000000 90000000)
 COUNTS=(4000 4000 4000 4000 )
-THREADS=15 # threads per process, not total threads. Total threads = THREADS * number of processes
+THREADS=30 # threads per process, not total threads. Total threads = THREADS * number of processes
 
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")

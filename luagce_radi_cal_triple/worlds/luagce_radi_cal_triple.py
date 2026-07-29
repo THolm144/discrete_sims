@@ -6,8 +6,11 @@ RADiCAL Shashlik calorimeter — square variant.
 Stack:  29 Tyvek-wrapped LYSO plates interleaved with 28 tungsten absorbers.
         LYSO | W | LYSO | W | … | W | LYSO
 
-MATCHED VERSION: Uses the staggered drill clearance logic proven in rc_hex.py
-to eliminate tracking exceptions while keeping flat sibling tracking under "world".
+UPDATED VERSION:
+- Layer 8 (shower max): 4.5 mm LYSO thickness.
+- Layers 1-7, 9-29: 1.5 mm LYSO thickness.
+- Dynamic calculation of gap sizes, active Z-ranges, total calorimeter depth,
+  capillary length, and WLS filament positioning for Layer 8.
 """
 
 import numpy as np
@@ -31,46 +34,64 @@ TARGET_VOLUME_NAME = "calorimeter"
 # GEOMETRY CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-_LYSO_XY_MM      = 14.0
-_LYSO_THICK_MM   = 4.5                    
-_TYVEK_THICK_MM  = 0.2032           
-_W_THICK_MM      = 2.5
-_N_LYSO          = 29
-_N_W             = 28
+_LYSO_XY_MM            = 14.0
+_LYSO_THICK_DEFAULT_MM = 1.5                    
+_LYSO_THICK_SHOWER_MM  = 4.5                    
+_TYVEK_THICK_MM        = 0.2032           
+_W_THICK_MM            = 2.5
+_N_LYSO                = 29
+_N_W                   = 28
 
-_GAP_THICK_MM    = _LYSO_THICK_MM + 2 * _TYVEK_THICK_MM   
-_CALOR_XY_MM     = _LYSO_XY_MM    + 2 * _TYVEK_THICK_MM   
-_CALOR_THICK_MM  = _N_LYSO * _GAP_THICK_MM + _N_W * _W_THICK_MM  
+_SHOWER_LAYER_IDX      = 7  # Layer 8 (0-indexed = 7)
+
+def _get_lyso_thick(i: int) -> float:
+    return _LYSO_THICK_SHOWER_MM if i == _SHOWER_LAYER_IDX else _LYSO_THICK_DEFAULT_MM
+
+def _get_gap_thick(i: int) -> float:
+    return _get_lyso_thick(i) + 2 * _TYVEK_THICK_MM
+
+_CALOR_THICK_MM  = sum(_get_gap_thick(i) for i in range(_N_LYSO)) + _N_W * _W_THICK_MM  
+_CALOR_XY_MM     = _LYSO_XY_MM + 2 * _TYVEK_THICK_MM   
 
 _CAP_OUTER_MM    = 1.150 / 2              
 _CAP_INNER_MM    = 0.950 / 2              
 
 _CAP_LENGTH_MM   = _CALOR_THICK_MM + 57.7144
 
-_HOLE_OFFSET_MM   = 3.5      
+_HOLE_OFFSET_MM  = 3.5      
 
 _FILAMENT_R_MM   = 0.900 / 2             
 
-# ── Shower-max band (T-type bore region) ──────────────────────────────────────
-_SHOWER_FIRST    = 7                    
-_SHOWER_LAST     = 9                    
-_LAYER_PITCH_MM  = _GAP_THICK_MM + _W_THICK_MM
-_FIRST_CTR_MM    = _GAP_THICK_MM/2 + _SHOWER_FIRST * _LAYER_PITCH_MM
-_LAST_CTR_MM     = _GAP_THICK_MM/2 + _SHOWER_LAST  * _LAYER_PITCH_MM
+# ── Dynamic Z-layer indexing & shower-max band computation ────────────────────
+_z_curr = 0.0
+_GAP_Z_FRONTS = []
+_GAP_Z_BACKS = []
+ACTIVE_Z_RANGES_MM = []
 
-_BAND_FRONT_MM   = _FIRST_CTR_MM - _GAP_THICK_MM/2
-_BAND_BACK_MM    = _LAST_CTR_MM  + _GAP_THICK_MM/2
+for _i in range(_N_LYSO):
+    _g_thick = _get_gap_thick(_i)
+    _l_thick = _get_lyso_thick(_i)
+    
+    _GAP_Z_FRONTS.append(_z_curr)
+    _GAP_Z_BACKS.append(_z_curr + _g_thick)
+    
+    ACTIVE_Z_RANGES_MM.append([_z_curr + _TYVEK_THICK_MM, _z_curr + _TYVEK_THICK_MM + _l_thick])
+    
+    _z_curr += _g_thick + (_W_THICK_MM if _i < _N_W else 0.0)
 
+# Filament for T-type capillary located at Layer 8
+_BAND_FRONT_MM   = _GAP_Z_FRONTS[_SHOWER_LAYER_IDX]
+_BAND_BACK_MM    = _GAP_Z_BACKS[_SHOWER_LAYER_IDX]
 _FILAMENT_LEN_MM = _BAND_BACK_MM - _BAND_FRONT_MM             
-_FILAMENT_Z_MM   = -_CALOR_THICK_MM/2 + 0.5 * (_BAND_FRONT_MM + _BAND_BACK_MM)
+_FILAMENT_Z_MM   = -_CALOR_THICK_MM / 2 + 0.5 * (_BAND_FRONT_MM + _BAND_BACK_MM)
 
 # ── SiPM / card geometry ──────────────────────────────────────────────────────
 _SIPM_XY_MM      = 1.2
 _SIPM_THICK_MM   = 0.3
 _CARD_THICK_MM   = 1.6
 _CARD_HOLE_R_MM  = 2.0
-_SIPM_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM/2
-_CARD_Z_MM       = _CAP_LENGTH_MM/2 + _SIPM_THICK_MM + 0.1 + _CARD_THICK_MM/2
+_SIPM_Z_MM       = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM / 2
+_CARD_Z_MM       = _CAP_LENGTH_MM / 2 + _SIPM_THICK_MM + 0.1 + _CARD_THICK_MM / 2
 
 _WORLD_XY_MM     = 1.5 * _CALOR_XY_MM
 _WORLD_Z_MM      = 1.5 * max(_CAP_LENGTH_MM, _CALOR_THICK_MM)
@@ -84,11 +105,10 @@ _CAP_POSITIONS_MM = [
 _E_TYPE_INDICES  = {2, 3}
 _T_TYPE_INDICES  = {0, 1}
 
-PHANTOM_CM       = [_CALOR_XY_MM/10, _CALOR_XY_MM/10, _CALOR_THICK_MM/10]
+PHANTOM_CM       = [_CALOR_XY_MM / 10, _CALOR_XY_MM / 10, _CALOR_THICK_MM / 10]
 EXPECTED_DEDX    = 1.0
 ACTIVATE_CALORIMETER_SETTINGS = True
 CALORIMETER_Z_RES_MM  = 0.1
-ACTIVE_Z_RANGES_MM    = [[0.0, _CALOR_THICK_MM]]
 TIMING_TRIGGER_THRESHOLD = 1
 
 DETECTOR_VOLUME_NAMES = [
@@ -101,7 +121,7 @@ DETECTOR_VOLUME_NAMES = [
 BEAM_CONFIG = {
     "direction": [0, 0, 1],
     "target_cm": [0, 0, 0],
-    "offset_cm": _SIPM_Z_MM/10 + 2.0,
+    "offset_cm": _SIPM_Z_MM / 10 + 2.0,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +134,7 @@ def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         bore      = vol_module.TubsVolume(name=f"{name}_bore_{i}")
         bore.rmin = 0.0
-        bore.rmax =  (_CAP_OUTER_MM + clearance) * mm  # Uses your staggered clearance logic
+        bore.rmax = (_CAP_OUTER_MM + clearance) * mm
         bore.dz   = bore_dz
         result    = vol_module.subtract_volumes(
             result, bore,
@@ -124,22 +144,22 @@ def _drill_holes(base_vol, name, half_dz_mm, mm, clearance=0.010):
     return result
 
 
-def _make_gap(name, mm):
+def _make_gap(name, mm, gap_thick_mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
-    base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _GAP_THICK_MM * mm]
-    return _drill_holes(base, name, _GAP_THICK_MM/2, mm, clearance=0.012)
+    base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, gap_thick_mm * mm]
+    return _drill_holes(base, name, gap_thick_mm / 2, mm, clearance=0.012)
 
 
-def _make_lyso(name, mm):
+def _make_lyso(name, mm, lyso_thick_mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
-    base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, _LYSO_THICK_MM * mm]
-    return _drill_holes(base, name, _LYSO_THICK_MM/2, mm, clearance=0.014)
+    base.size = [_LYSO_XY_MM * mm, _LYSO_XY_MM * mm, lyso_thick_mm * mm]
+    return _drill_holes(base, name, lyso_thick_mm / 2, mm, clearance=0.014)
 
 
 def _make_abso(name, mm):
     base      = vol_module.BoxVolume(name=f"{name}_box")
     base.size = [_CALOR_XY_MM * mm, _CALOR_XY_MM * mm, _W_THICK_MM * mm]
-    return _drill_holes(base, name, _W_THICK_MM/2, mm, clearance=0.012)
+    return _drill_holes(base, name, _W_THICK_MM / 2, mm, clearance=0.012)
 
 
 def _build_capillaries(sim, mm):
@@ -148,7 +168,6 @@ def _build_capillaries(sim, mm):
 
     for i, (cx, cy) in enumerate(_CAP_POSITIONS_MM):
         if i in _E_TYPE_INDICES:
-            # Reverted to world sibling pattern matching your rc_hex.py reference
             sleeve             = sim.add_volume("Tubs", f"cap_{i}_active_sleeve")
             sleeve.mother      = "world"
             sleeve.rmin        = _FILAMENT_R_MM * mm
@@ -263,7 +282,7 @@ def build_world(sim, units):
 
     calor_base      = vol_module.BoxVolume(name="calorimeter_box")
     calor_base.size = [(_CALOR_XY_MM + 0.020) * mm, (_CALOR_XY_MM + 0.020) * mm, (_CALOR_THICK_MM + 0.020) * mm]
-    calor_vol       = _drill_holes(calor_base, "calorimeter", (_CALOR_THICK_MM + 0.020)/2, mm, clearance=0.010)
+    calor_vol       = _drill_holes(calor_base, "calorimeter", (_CALOR_THICK_MM + 0.020) / 2, mm, clearance=0.010)
     calor_vol.name        = TARGET_VOLUME_NAME
     calor_vol.mother      = "world"
     calor_vol.material    = "G4_AIR"
@@ -273,35 +292,39 @@ def build_world(sim, units):
     _build_capillaries(sim, mm)
     _build_sipms(sim, mm)
 
-    z_pos = -_CALOR_THICK_MM / 2
+    z_cursor = -_CALOR_THICK_MM / 2
 
     for i in range(_N_LYSO):
-        z_pos   += _GAP_THICK_MM / 2
-        gap_vol  = _make_gap(f"gap_{i}", mm)
+        lyso_thick = _get_lyso_thick(i)
+        gap_thick  = _get_gap_thick(i)
+
+        z_pos_gap = z_cursor + (gap_thick / 2)
+        gap_vol   = _make_gap(f"gap_{i}", mm, gap_thick)
         gap_vol.name        = f"gap_{i}"
         gap_vol.mother      = TARGET_VOLUME_NAME
         gap_vol.material    = "Tyvek"
-        gap_vol.translation = [0, 0, z_pos * mm]
+        gap_vol.translation = [0, 0, z_pos_gap * mm]
         sim.add_volume(gap_vol)
 
-        lyso_vol             = _make_lyso(f"lyso_{i}", mm)
+        lyso_vol             = _make_lyso(f"lyso_{i}", mm, lyso_thick)
         lyso_vol.name        = f"lyso_{i}"
         lyso_vol.mother      = f"gap_{i}"
         lyso_vol.material    = "LYSO"
         lyso_vol.translation = [0, 0, 0]
         sim.add_volume(lyso_vol)
 
-        z_pos += _GAP_THICK_MM / 2
+        z_cursor += gap_thick
 
         if i < _N_W:
-            z_pos   += _W_THICK_MM / 2
+            z_pos_w = z_cursor + (_W_THICK_MM / 2)
             abso_vol = _make_abso(f"abso_{i}", mm)
             abso_vol.name        = f"abso_{i}"
             abso_vol.mother      = TARGET_VOLUME_NAME
             abso_vol.material    = "Tungsten"
-            abso_vol.translation = [0, 0, z_pos * mm]
+            abso_vol.translation = [0, 0, z_pos_w * mm]
             sim.add_volume(abso_vol)
-            z_pos += _W_THICK_MM / 2
+
+            z_cursor += _W_THICK_MM
 
     return sim
 
@@ -319,8 +342,6 @@ def add_optical_surfaces(sim, units):
         if lyso_name in vols and gap_name in vols:
             sim.physics_manager.add_optical_surface(lyso_name, gap_name, "Tyvek")
             sim.physics_manager.add_optical_surface(gap_name, lyso_name, "Tyvek")
-            
-    
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -356,12 +377,15 @@ def analyze(batch_dir, run_dirs, meta, utils):
         current_z   = 0.0   
 
         for idx in range(_N_LYSO):
+            lyso_thick = _get_lyso_thick(idx)
+            gap_thick  = _get_gap_thick(idx)
+
             z_start = current_z + _TYVEK_THICK_MM
-            z_end   = z_start   + _LYSO_THICK_MM
+            z_end   = z_start   + lyso_thick
             i0 = max(0, min(int(round(z_start / dz_mm)), len(avg)))
             i1 = max(0, min(int(round(z_end   / dz_mm)), len(avg)))
             layer_edeps.append(float(np.sum(avg[i0:i1])))
-            current_z += _GAP_THICK_MM + (_W_THICK_MM if idx < _N_W else 0)
+            current_z += gap_thick + (_W_THICK_MM if idx < _N_W else 0)
 
         fig, ax = plt.subplots(figsize=(10, 4.5))
         ax.bar(range(1, _N_LYSO + 1), layer_edeps,
@@ -414,11 +438,11 @@ def _aggregate_batch(batch_dir, run_dirs, meta, utils):
         out = batch_dir / "analyzed_longitudinal.txt"
         if active_ranges:
             energies = [
-                np.sum(avg[int(round(zs/dz_mm)):int(round(ze/dz_mm))])
+                np.sum(avg[int(round(zs / dz_mm)):int(round(ze / dz_mm))])
                 for zs, ze in active_ranges
             ]
             np.savetxt(str(out),
-                       np.c_[np.arange(len(energies))+1, energies],
+                       np.c_[np.arange(len(energies)) + 1, energies],
                        fmt="%d %.6e")
         else:
             np.savetxt(str(out),
@@ -430,7 +454,7 @@ def get_geometry_primitives() -> list[dict]:
     prims = [{
         "type":   "box",
         "center": [0.0, 0.0, 0.0],
-        "half":   [_CALOR_XY_MM/20, _CALOR_XY_MM/20, _CALOR_THICK_MM/20],
+        "half":   [_CALOR_XY_MM / 20, _CALOR_XY_MM / 20, _CALOR_THICK_MM / 20],
         "color":  "#00ffcc",
         "alpha":  0.15,
     }]
@@ -438,9 +462,9 @@ def get_geometry_primitives() -> list[dict]:
         color = "#ff9900" if i in _E_TYPE_INDICES else "#00cfff"
         prims.append({
             "type":   "tube",
-            "center": [cx/10, cy/10, 0.0],
-            "rmax":   _CAP_OUTER_MM/10,
-            "height": _CAP_LENGTH_MM/10,
+            "center": [cx / 10, cy / 10, 0.0],
+            "rmax":   _CAP_OUTER_MM / 10,
+            "height": _CAP_LENGTH_MM / 10,
             "color":  color,   
             "alpha":  0.35,
         })
